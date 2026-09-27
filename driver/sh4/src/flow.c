@@ -417,4 +417,3 @@ int afx_sfx_flow_upload(const afx_sfx_flow_t *recipe, afx_asset_t *out) {
     if (!recipe || recipe->flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_LANES)) return -AFX_BAD_COMMAND;
     return afx_external_flow_upload(recipe, out);
 }
-
