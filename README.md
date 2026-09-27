@@ -1,4 +1,4 @@
-# AICAflow DKR Edition 0.1.2
+# AICAflow DKR Edition 0.1.3
 
 This is the minimal AICAflow source distribution needed by the Dreamcast port
 of Diddy Kong Racing. It contains the AICA firmware, SH-4 host library, and
@@ -21,8 +21,8 @@ Extract this archive next to the DKR checkout, then point `AICAFLOW_ROOT` at
 the extracted directory:
 
 ```sh
-make -f Makefile.dc -j8 AICAFLOW_ROOT=../aicaflow-dkr-0.1.0 dkracing.elf
-make -f Makefile.dc -j8 AICAFLOW_ROOT=../aicaflow-dkr-0.1.0 cdi
+make -f Makefile.dc -j8 AICAFLOW_ROOT=/path/to/aicaflow-dkr dkracing.elf
+make -f Makefile.dc -j8 AICAFLOW_ROOT=/path/to/aicaflow-dkr cdi
 ```
 
 The first command builds the normal dc-tool-IP ELF. The second produces a CDI
