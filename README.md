@@ -1,4 +1,4 @@
-# AICAflow DKR Edition 0.1.3
+# AICAflow DKR Edition 0.1.4
 
 This is the minimal AICAflow source distribution needed by the Dreamcast port
 of Diddy Kong Racing. It contains the AICA firmware, SH-4 host library, and
@@ -9,6 +9,16 @@ It is released under the [MIT License](LICENSE).
 It deliberately does **not** contain the editor, tuner, general MIDI tools,
 other importers, examples, DSP labs, recordings, or unrelated documentation.
 
+## Documentation
+
+- [DKR integration](docs/INTEGRATION.md): runtime ownership and build paths.
+- [N64 import](docs/N64_IMPORT.md): DKR's offline AFB/AFC asset pipeline.
+- [Lifetime](docs/LIFETIME.md): SFX, bank and instance ownership rules.
+- [Changes](CHANGELOG.md): release-specific compatibility notes.
+
+The public headers are the API reference: `aicaflow/host.h` owns the runtime
+API and `aicaflow/sfx_bank.h` owns the AFB1/AFC1 loader API.
+
 ## Requirements
 
 - KallistiOS with `kos-cc`, `arm-eabi-gcc`, and `arm-eabi-objcopy`
@@ -17,15 +27,19 @@ other importers, examples, DSP labs, recordings, or unrelated documentation.
 
 ## Use with DKR
 
-Extract this archive next to the DKR checkout, then point `AICAFLOW_ROOT` at
-the extracted directory:
+DKR pins this repository as `third_party/aicaflow`. A clone should use
+submodules:
 
 ```sh
-make -f Makefile.dc -j8 AICAFLOW_ROOT=/path/to/aicaflow-dkr dkracing.elf
-make -f Makefile.dc -j8 AICAFLOW_ROOT=/path/to/aicaflow-dkr cdi
+git clone --recurse-submodules git@github.com:dfchil/Diddy-Kong-Racing.git
+cd Diddy-Kong-Racing
+source ../enDJinn/environ.sh
+python3 -m pip install mido
+make -f Makefile.dc -j8 dkracing.elf
 ```
 
-The first command builds the normal dc-tool-IP ELF. The second produces a CDI
+For an archive-only checkout, extract it as `third_party/aicaflow/` in the DKR
+tree, then use the same command. `make -f Makefile.dc -j8 cdi` produces a CDI
 and uses the `/cd` asset mount internally.
 
 `MANIFEST.sha256` lists every shipped source file and its SHA-256 digest.
