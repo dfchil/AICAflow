@@ -1,0 +1,6 @@
+/driver/arm7/build/
+/driver/arm7/aicaflow.drv
+/driver/arm7/aicaflow.elf
+/driver/arm7/aicaflow.map
+/driver/sh4/build/
+/driver/sh4/libaicaflow_host.a
