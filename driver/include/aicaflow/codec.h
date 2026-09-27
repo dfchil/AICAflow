@@ -1,6 +1,6 @@
 #ifndef AICAFLOW_CODEC_H
 #define AICAFLOW_CODEC_H
-#include "aicaflow_protocol.h"
+#include <aicaflow/protocol.h>
 
 /* Wire data may be unaligned. Never cast input bytes to these C structs. */
 static inline uint16_t afx_read16(const uint8_t *p) {

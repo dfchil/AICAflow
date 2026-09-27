@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <aicaflow_protocol.h>
+#include <aicaflow/protocol.h>
 #include <aicaflow/dsp.h>
 
 #ifdef __cplusplus
@@ -209,27 +209,11 @@ int afx_instance_status(afx_instance_t instance, afx_instance_status_t *out_stat
 /* Refreshes ARM-owned instance observations; returns 0 even when none changed. */
 int afx_update(void);
 
-/* ABI-1 slot calls remain rejected; never translate them into current commands. */
-int afx_flow_activate(uint8_t slot, afx_asset_t flow_asset);
-int afx_flow_play(uint8_t slot);
-int afx_flow_stop(uint8_t slot);
-int afx_flow_pause(uint8_t slot);
-int afx_flow_resume(uint8_t slot);
-int afx_flow_release_completed(uint8_t slot);
-int afx_flow_set_channel_reg16(uint8_t slot, uint8_t local_channel,
-                              uint8_t reg_index, uint16_t value);
-int afx_flow_set_channel_reg32(uint8_t slot, uint8_t local_channel,
-                              uint8_t reg_index, uint32_t value);
-int afx_master_volume(uint8_t volume);
-int afx_poll_events(uint32_t *out_flow_done_mask);
-
 volatile afx_status_t *afx_status(void);
 uint32_t afx_status_heartbeat(void);
 uint32_t afx_status_timer_ticks(void);
 /* Largest executor lateness, in AICA timer ticks, since this firmware boot. */
 uint32_t afx_status_max_lateness(void);
-
-int afx_push_cmd(uint32_t cmd, uint32_t arg0, uint32_t arg1, uint32_t arg2);
 
 #ifdef __cplusplus
 }

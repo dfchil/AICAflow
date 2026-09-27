@@ -1,5 +1,5 @@
-#include "aicaflow_codec.h"
-#include "aicaflow_dsp_room.h"
+#include <aicaflow/codec.h>
+#include <aicaflow/dsp_room.h>
 
 /* The timer FIQ only advances AFX_AICA_TIMER_TICK_ADDR. Stream work stays in
  * this normal ARM context, which keeps the explicitly reserved FIQ stack free

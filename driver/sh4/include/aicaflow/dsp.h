@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <aicaflow_protocol.h>
+#include <aicaflow/protocol.h>
 
 /*
  * AICA DSP program authoring API

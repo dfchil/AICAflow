@@ -1,3 +1,4 @@
+/* Shared host/firmware wire ABI. */
 #ifndef AICAFLOW_PROTOCOL_H
 #define AICAFLOW_PROTOCOL_H
 

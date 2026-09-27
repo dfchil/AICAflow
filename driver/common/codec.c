@@ -1,4 +1,4 @@
-#include "aicaflow_codec.h"
+#include <aicaflow/codec.h>
 #include <string.h>
 
 afx_result_t afx_encode_event(uint8_t *out, uint32_t capacity, const afx_event_t *e,

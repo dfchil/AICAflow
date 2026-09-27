@@ -16,13 +16,13 @@ $(TARGET): $(ELF)
 $(ELF): $(OBJS) build/aicaflow.ld
 	$(ARM_CC) $(ARM_CFLAGS) $(ARM_LDFLAGS) -o $@ $(OBJS)
 
-build/aicaflow.ld: aicaflow.ld.S ../include/aicaflow_protocol.h | build
+build/aicaflow.ld: aicaflow.ld.S ../include/aicaflow/protocol.h | build
 	$(ARM_CC) -E -P -x assembler-with-cpp -I../include $< -o $@
 
-build/crt0.o: crt0.s ../include/aicaflow_protocol.h | build
+build/crt0.o: crt0.s ../include/aicaflow/protocol.h | build
 	$(ARM_CC) $(ARM_CFLAGS) -x assembler-with-cpp -I../include -c -o $@ $<
 
-build/driver.o: driver.c ../include/aicaflow_dsp_room.h ../include/aicaflow_protocol.h ../include/aicaflow_codec.h | build
+build/driver.o: driver.c ../include/aicaflow/dsp_room.h ../include/aicaflow/protocol.h ../include/aicaflow/codec.h | build
 	$(ARM_CC) $(ARM_CFLAGS) -fstack-usage -I../include -c -o $@ $<
 
 build:

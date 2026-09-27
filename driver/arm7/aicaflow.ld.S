@@ -1,4 +1,4 @@
-#include "aicaflow_protocol.h"
+#include "aicaflow/protocol.h"
 OUTPUT_ARCH(arm)
 ENTRY(reset)
 SECTIONS {
