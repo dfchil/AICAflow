@@ -4,3 +4,4 @@
 /driver/arm7/aicaflow.map
 /driver/sh4/build/
 /driver/sh4/libaicaflow_host.a
+/tools/__pycache__/

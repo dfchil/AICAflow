@@ -1,4 +1,4 @@
-# AICAflow DKR Edition 0.1.1
+# AICAflow DKR Edition 0.1.2
 
 This is the minimal AICAflow source distribution needed by the Dreamcast port
 of Diddy Kong Racing. It contains the AICA firmware, SH-4 host library, and
