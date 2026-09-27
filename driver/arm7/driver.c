@@ -1,5 +1,4 @@
 #include <aicaflow/codec.h>
-#include <aicaflow/dsp_room.h>
 
 /* The timer FIQ only advances AFX_AICA_TIMER_TICK_ADDR. Stream work stays in
  * this normal ARM context, which keeps the explicitly reserved FIQ stack free
@@ -79,18 +78,6 @@ static void dsp_nop(void) {
         dsp_write(0x3408u + i * 16u, 2);
         dsp_write(0x340cu + i * 16u, 0);
     }
-}
-static void dsp_enable(void) {
-    dsp_disable();
-    /* RBL=3: 64K words. Packed-float silence is 0x6000, not zero. */
-    dsp_write(0x2804u, (3u << 13) | (AFX_DSP_BASE >> 11));
-    volatile uint32_t *delay = (volatile uint32_t *)AFX_DSP_BASE;
-    for (uint32_t i = 0; i < AFX_DSP_BYTES / 4u; ++i) delay[i] = 0x60006000u;
-    for (uint32_t i = 0; i < 128u; ++i) dsp_write(0x3000u + i * 4u, afx_dsp_room[512u + i]);
-    for (uint32_t i = 0; i < 64u; ++i) dsp_write(0x3200u + i * 4u, afx_dsp_room[640u + i]);
-    for (uint32_t i = 0; i < 512u; ++i) dsp_write(0x3400u + i * 4u, afx_dsp_room[i]);
-    dsp_owner = AFX_DSP_SCENE_REFERENCE;
-    dsp_returns(1);
 }
 static uint32_t stack_free(uint32_t low, uint32_t high) {
     uint32_t current = low;
@@ -694,17 +681,15 @@ static void scene_result(uint32_t sequence, uint32_t result) {
     STATUS->dsp_sequence = sequence;
 }
 static void dsp_control(uint32_t opcode, uint32_t reference, uint32_t sequence, uint32_t flags) {
-    if (reference != AFX_DSP_SCENE_REFERENCE || flags > 1u) {
+    if (reference != AFX_DSP_SCENE_REFERENCE || flags != 1u) {
         scene_result(sequence, AFX_BAD_COMMAND);
         return;
     }
     if (opcode == AFX_CMD_DSP_ENABLE) {
-        if (flags) {
-            dsp_disable();
-            dsp_nop();
-            dsp_write(0x2804u, (3u << 13) | (AFX_DSP_BASE >> 11));
-            dsp_owner = AFX_DSP_SCENE_REFERENCE; /* Prepared silently for program upload. */
-        } else dsp_enable();
+        dsp_disable();
+        dsp_nop();
+        dsp_write(0x2804u, (3u << 13) | (AFX_DSP_BASE >> 11));
+        dsp_owner = AFX_DSP_SCENE_REFERENCE; /* Prepared silently for program upload. */
     } else if (dsp_owner == AFX_DSP_SCENE_REFERENCE) dsp_disable();
     else {
         scene_result(sequence, AFX_BUSY);

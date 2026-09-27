@@ -22,7 +22,7 @@ build/aicaflow.ld: aicaflow.ld.S ../include/aicaflow/protocol.h | build
 build/crt0.o: crt0.s ../include/aicaflow/protocol.h | build
 	$(ARM_CC) $(ARM_CFLAGS) -x assembler-with-cpp -I../include -c -o $@ $<
 
-build/driver.o: driver.c ../include/aicaflow/dsp_room.h ../include/aicaflow/protocol.h ../include/aicaflow/codec.h | build
+build/driver.o: driver.c ../include/aicaflow/protocol.h ../include/aicaflow/codec.h | build
 	$(ARM_CC) $(ARM_CFLAGS) -fstack-usage -I../include -c -o $@ $<
 
 build:

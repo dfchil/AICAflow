@@ -24,8 +24,9 @@ is in `driver/sh4/include/aicaflow/sfx_bank.h`.
 1. Embed `driver/arm7/aicaflow.drv`, then call `afx_init` once.
 2. Load resident SFX with `afx_sfx_bank_load_file`; load shared music samples
    with `afx_sfx_bank_load_samples_file` and one AFC1 control stream per song.
-3. Call `afx_dsp_scene_enable` after initialisation and `afx_update` regularly
-   from the audio thread.
+3. Build the game-owned DSP image with `<aicaflow/dsp.h>`, upload it with
+   `afx_dsp_scene_program`, and call `afx_update` regularly from the audio
+   thread.
 4. Before a level allocates its heap, prepare its music control flow and scene
    SFX bank. Stop instances, recycle them, then release old scene banks when
    the level ends.

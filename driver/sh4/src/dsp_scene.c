@@ -16,20 +16,6 @@ static int scene_command(uint32_t opcode, uint32_t flags) {
     }
     return -AFX_TIMEOUT;
 }
-int afx_dsp_scene_enable(void) {
-    HOST_GUARD(-AFX_BUSY);
-    if (g_dsp_scene) return -AFX_BUSY;
-    int result = scene_command(AFX_CMD_DSP_ENABLE, 0);
-    if (!result) g_dsp_scene = true;
-    return result;
-}
-int afx_dsp_scene_prepare(void) {
-    HOST_GUARD(-AFX_BUSY);
-    if (g_dsp_scene) return -AFX_BUSY;
-    int result = scene_command(AFX_CMD_DSP_ENABLE, 1);
-    if (!result) g_dsp_scene = true;
-    return result;
-}
 int afx_dsp_scene_program(const void *data, uint32_t bytes) {
     HOST_GUARD(-AFX_BUSY);
     const uint8_t *program = data;

@@ -195,11 +195,9 @@ int afx_instance_tempo(afx_instance_t instance, uint16_t scale_q8_8);
 int afx_instance_lanes_set(afx_instance_t instance, uint32_t modifier,
                            uint8_t first_lane, uint32_t mask, const uint8_t values[32]);
 /* The one AICA DSP program belongs to the loaded scene, never to a flow.
- * Enable installs the verified room; prepare leaves a silent program ready for
- * afx_dsp_scene_program(). Build a runtime image with <aicaflow/dsp.h>.
- * Scene teardown alone disables it and clears delay RAM. */
-int afx_dsp_scene_enable(void);
-int afx_dsp_scene_prepare(void);
+ * Build a runtime image with <aicaflow/dsp.h>; this operation prepares,
+ * validates and uploads it atomically. Scene teardown disables it and clears
+ * delay RAM. */
 int afx_dsp_scene_program(const void *program, uint32_t bytes);
 /* Gates the current scene program’s stereo returns without replacing its state. */
 int afx_dsp_scene_returns(bool enabled);
