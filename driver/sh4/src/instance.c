@@ -115,7 +115,7 @@ int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
     afx_activation_t activation = {
         .image_base = flow->addr, .image_size = flow->size,
         .stream_offset = flow->header.stream_offset, .stream_size = flow->header.stream_size,
-        .setups_offset = flow->header.setups_offset, .setup_count = flow->header.setup_count,
+        .setups_offset = 0, .setup_count = flow->header.setup_count,
         .channel_map = map_address, .required_channels = count,
         .flags = flow->header.flags & (AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC |
                                        AFX_FLAG_MUSIC_CHORUS | AFX_FLAG_LANES),
@@ -250,10 +250,17 @@ static int checkpoint_states(const afx_asset_slot_t *flow, uint32_t tick,
         if (!(out[i].fields[AFX_FIELD_CONTROL] & 0x400u)) {
             uint32_t relative = ((out[i].fields[AFX_FIELD_CONTROL] & 0x7fu) << 16) |
                                 out[i].fields[AFX_FIELD_SAMPLE_LOW];
-            if (relative >= flow->size || flow->addr > AFX_ASSET_LIMIT - relative) {
+            const afx_asset_slot_t *samples = flow;
+            if (flow->dependency_count == 1u) {
+                uint32_t dependency;
+                if (!resolve_asset(flow->dependencies[0], &dependency) ||
+                    !g_assets[dependency].sample_bank) { free(out); return -AFX_BAD_FORMAT; }
+                samples = &g_assets[dependency];
+            }
+            if (relative >= samples->size || samples->addr > AFX_ASSET_LIMIT - relative) {
                 free(out); return -AFX_BAD_FORMAT;
             }
-            uint32_t address = flow->addr + relative;
+            uint32_t address = samples->addr + relative;
             out[i].fields[AFX_FIELD_CONTROL] = (out[i].fields[AFX_FIELD_CONTROL] & ~0x7fu) |
                                                    ((address >> 16) & 0x7fu);
             out[i].fields[AFX_FIELD_SAMPLE_LOW] = address;
@@ -313,7 +320,7 @@ static int replay_checkpoint(const afx_asset_slot_t *flow, uint32_t target,
         if (event.opcode == AFX_OP_NOTE) {
             uint8_t setup[AFX_SETUP_BYTES];
             if (event.channel >= flow->header.required_channels || event.setup >= flow->header.setup_count ||
-                flow_read(flow, flow->header.setups_offset + event.setup * AFX_SETUP_BYTES,
+                flow_read(flow, event.setup * AFX_SETUP_BYTES,
                           setup, sizeof(setup)) ||
                 afx_apply_setup_fields(active[event.channel].fields, setup, event.mask, event.values,
                                        afx_field_value_bytes(event.mask))) return -AFX_BAD_FORMAT;

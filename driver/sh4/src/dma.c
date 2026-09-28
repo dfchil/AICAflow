@@ -89,25 +89,6 @@ static int upload_sample_data(const void *data, uint32_t bytes, afx_asset_t *out
     return AFX_OK;
 }
 
-int afx_sample_upload(const void *data, uint32_t bytes, uint32_t frames,
-                       uint32_t format, afx_asset_t *out) {
-    HOST_GUARD(-AFX_BUSY);
-    if (!out) return -AFX_BAD_BOUNDS;
-    *out = AFX_ASSET_INVALID;
-    if (!data || !bytes || !frames || bytes > AFX_ASSET_LIMIT || format > AFX_ADPCM ||
-        (format == AFX_PCM16 && ((bytes & 1u) || frames > bytes / 2)) ||
-        (format == AFX_PCM8 && frames > bytes) ||
-        (format == AFX_ADPCM && frames / 2 + (frames & 1u) > bytes)) return -AFX_BAD_SAMPLE;
-    int result = upload_sample_data(data, bytes, out);
-    if (!result) {
-        uint32_t index;
-        (void)resolve_asset(*out, &index);
-        g_assets[index].sample = true;
-        g_assets[index].sample_frames = frames;
-        g_assets[index].sample_format = format;
-    }
-    return result;
-}
 
 int afx_sample_bank_upload(const void *data, uint32_t bytes, afx_asset_t *out) {
     HOST_GUARD(-AFX_BUSY);
@@ -123,39 +104,6 @@ int afx_sample_bank_upload(const void *data, uint32_t bytes, afx_asset_t *out) {
     return result;
 }
 
-int afx_sample_view_create(afx_asset_t bank, uint32_t byte_offset, uint32_t bytes,
-                           uint32_t frames, uint32_t format, afx_asset_t *out) {
-    HOST_GUARD(-AFX_BUSY);
-    uint32_t backing, index = 0;
-    if (!out) return -AFX_BAD_BOUNDS;
-    *out = AFX_ASSET_INVALID;
-    if (!resolve_asset(bank, &backing) || !g_assets[backing].sample_bank ||
-        g_assets[backing].uploading || !bytes || !frames || format > AFX_ADPCM ||
-        (byte_offset & (AFX_UPLOAD_ALIGN - 1u)) || byte_offset > g_assets[backing].size ||
-        bytes > g_assets[backing].size - byte_offset ||
-        (format == AFX_PCM16 && ((bytes & 1u) || frames > bytes / 2)) ||
-        (format == AFX_PCM8 && frames > bytes) ||
-        (format == AFX_ADPCM && frames / 2 + (frames & 1u) > bytes)) return -AFX_BAD_SAMPLE;
-    while (index < g_asset_capacity &&
-           (g_assets[index].live || g_assets[index].uploading || g_assets[index].retired)) ++index;
-    if (index == g_asset_capacity && !reserve_assets(g_asset_capacity + 1)) return -AFX_NO_HOST_RAM;
-    afx_asset_slot_t *slot = &g_assets[index];
-    if (!slot->generation) slot->generation = 1;
-    slot->live = true;
-    slot->uploading = slot->flow = false;
-    slot->sample = true;
-    slot->sfx = false;
-    slot->addr = g_assets[backing].addr + byte_offset;
-    slot->size = bytes;
-    slot->allocation_size = 0;
-    slot->sample_frames = frames;
-    slot->sample_format = format;
-    slot->owns_allocation = false;
-    slot->backing = bank;
-    ++g_assets[backing].references;
-    *out = AFX_MAKE_HANDLE(index, slot->generation);
-    return AFX_OK;
-}
 
 int afx_sample_bank_stream_begin(uint32_t bytes, afx_asset_t *out) {
     uint32_t index;

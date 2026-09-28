@@ -16,10 +16,10 @@ static int scene_command(uint32_t opcode, uint32_t flags) {
     }
     return -AFX_TIMEOUT;
 }
-int afx_dsp_scene_program(const void *data, uint32_t bytes) {
+static int dsp_scene_program(const void *data, uint32_t bytes, uint8_t rbl) {
     HOST_GUARD(-AFX_BUSY);
     const uint8_t *program = data;
-    if (!program || bytes != AFX_DSP_PROGRAM_BYTES || g_dsp_scene) return -AFX_BAD_COMMAND;
+    if (!program || bytes != AFX_DSP_PROGRAM_BYTES || rbl > 3) return -AFX_BAD_COMMAND;
     int memory_format = -1;
     for (uint32_t step = 0; step < 128; ++step) {
         uint16_t w2 = dsp_word(program, step * 8u + 4u);
@@ -33,7 +33,12 @@ int afx_dsp_scene_program(const void *data, uint32_t bytes) {
     }
     if ((dsp_word(program, 1408) | dsp_word(program, 1410)) & ~0x0f1fu)
         return -AFX_BAD_COMMAND;
-    int result = scene_command(AFX_CMD_DSP_ENABLE, 1);
+    /* ARM7 clears its DSP ownership and installs safe NOPs before every
+       program, including a replacement of an active scene. */
+    /* Preserve the established flags=1 wire form for the normal 64 Kiword
+       scene.  Smaller rings carry their RBL+1 in bits 8..9. */
+    uint32_t flags = rbl == 3 ? 1u : 1u | ((uint32_t)(rbl + 1u) << 8);
+    int result = scene_command(AFX_CMD_DSP_ENABLE, flags);
     if (result) return result;
     g_dsp_scene = true;
     g2_write_32(0xa0702000u, 0);
@@ -60,6 +65,12 @@ int afx_dsp_scene_program(const void *data, uint32_t bytes) {
     g2_write_32(0xa0702004u, g_dsp_return_right);
     return AFX_OK;
 }
+int afx_dsp_scene_program(const void *data, uint32_t bytes) {
+    return dsp_scene_program(data, bytes, 3);
+}
+int afx_dsp_scene_program_ring(const void *data, uint32_t bytes, uint8_t rbl) {
+    return dsp_scene_program(data, bytes, rbl);
+}
 int afx_dsp_scene_returns(bool enabled) {
     HOST_GUARD(-AFX_BUSY);
     if (!g_dsp_scene) return -AFX_BUSY;
@@ -70,7 +81,7 @@ int afx_dsp_scene_returns(bool enabled) {
 int afx_dsp_scene_disable(void) {
     HOST_GUARD(-AFX_BUSY);
     if (!g_dsp_scene) return -AFX_BUSY;
-    int result = scene_command(AFX_CMD_DSP_DISABLE, 0);
+    int result = scene_command(AFX_CMD_DSP_DISABLE, 1);
     if (!result) {
         g_dsp_scene = false;
         g_dsp_return_left = g_dsp_return_right = 0;

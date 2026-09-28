@@ -1,244 +1,249 @@
 #!/usr/bin/env python3
-"""Pack self-contained N64-imported AFX music files into one shared AFB1 bank."""
+"""Merge final AFB+AFX pairs into one shared AFB and rewritten AFX flows."""
 
 import argparse
 import hashlib
-import json
 import re
 import struct
 import sys
 from pathlib import Path
 
-import afx_compile
 
-
-HEADER = struct.Struct("<4sHH7I")
-SAMPLE = struct.Struct("<4I")
-SOUND = struct.Struct("<HBBHHII")
-SETUP = struct.Struct("<HHI18H")
-AFC_HEADER = struct.Struct("<4sHBBHII")
+AFB_MAGIC = 0x00424641
+AFX_MAGIC = 0x32584641
+AFB_VERSION = 1
+AFX_VERSION = 7
+BANK_HEADER = struct.Struct("<8I")
 AFX_HEADER = struct.Struct("<20I")
-AFX_SAMPLE = struct.Struct("<4I")
 AFX_RELOCATION = struct.Struct("<3I")
+AFC_MAGIC = 0x00434641
+AFC_HEADER = struct.Struct("<8I")
 SETUP_BYTES = 36
-PCM16, PCM8, ADPCM = 0, 1, 2
-MUSIC_FLAGS = 2 | 8 | 16
-METADATA_FLAG = 4
+CHECKPOINT_MAGIC = 0x31504B43
 
 
 def align(value: int) -> int:
     return (value + 31) & -32
 
 
-def _accepted_adpcm(path: Path) -> set[str]:
-    audit = json.loads(path.read_text())
-    thresholds = audit["thresholds"]
-    return {entry["sha256"] for entry in audit["samples"]
-            if entry["snr_db"] >= thresholds["snr_db"] and
-            entry["attack_snr_db"] >= thresholds["attack_snr_db"]}
-
-
 def _flow_id(path: Path) -> int:
     match = re.fullmatch(r"sequence_(\d+)\.afx", path.name)
     if not match or not 1 <= int(match.group(1)) <= 65535:
-        raise ValueError(f"{path} is not a numbered sequence_*.afx file")
+        raise ValueError(f"{path}: expected sequence_<1..65535>.afx")
     return int(match.group(1))
 
 
-def _read_flow(path: Path) -> dict:
+def _read_bank(path: Path) -> tuple[bytes, int, int]:
+    data = path.read_bytes()
+    if len(data) < BANK_HEADER.size:
+        raise ValueError(f"{path}: truncated AFB header")
+    magic, version, low, high, data_at, payload_bytes, total, reserved = BANK_HEADER.unpack_from(data)
+    if (magic, version, total, reserved) != (AFB_MAGIC, AFB_VERSION, len(data), 0):
+        raise ValueError(f"{path}: invalid AFB header")
+    if data_at != BANK_HEADER.size or payload_bytes != len(data) - data_at:
+        raise ValueError(f"{path}: invalid AFB payload range")
+    digest = hashlib.sha256(data[data_at:]).digest()
+    if (low, high) != struct.unpack_from("<2I", digest):
+        raise ValueError(f"{path}: AFB identity does not match payload")
+    return data[data_at:], low, high
+
+
+def _read_flow(path: Path, flow_id: int | None = None) -> dict:
     data = path.read_bytes()
     if len(data) < AFX_HEADER.size:
-        raise ValueError(f"{path}: shorter than AFX header")
-    (magic, abi, total, flags, image_at, image_size, stream_at, stream_size,
-     setups_at, setup_count, samples_at, sample_count, relocations_at, relocation_count,
-     checkpoints_at, checkpoints_size, channels, tick_num, tick_den, _) = AFX_HEADER.unpack_from(data)
-    if magic != 0x32584641 or abi != 6 or total != len(data) or flags & ~(MUSIC_FLAGS | METADATA_FLAG) or not flags & 2:
-        raise ValueError(f"{path}: not an ABI-6 AFX music flow")
-    if channels > 64 or not tick_num or not tick_den or tick_num != 1000 or tick_den != 1:
-        raise ValueError(f"{path}: unsupported channel or tick configuration")
-    if image_at > len(data) or image_size > len(data) - image_at or stream_at > image_size or stream_size > image_size - stream_at:
-        raise ValueError(f"{path}: image range is invalid")
-    image = data[image_at:image_at + image_size]
-    if not channels:
-        return {"id": _flow_id(path), "silent": True}
-    if setups_at != 0 or setup_count > image_size // SETUP_BYTES or stream_at < setup_count * SETUP_BYTES:
-        raise ValueError(f"{path}: unsupported setup layout")
-    lanes = image[setup_count * SETUP_BYTES:stream_at]
-    if (flags & 16 and len(lanes) != channels) or (not flags & 16 and lanes):
-        raise ValueError(f"{path}: invalid lane map")
-    if samples_at + sample_count * AFX_SAMPLE.size > image_at or relocations_at + relocation_count * AFX_RELOCATION.size > image_at:
-        raise ValueError(f"{path}: metadata table is invalid")
-    samples = [AFX_SAMPLE.unpack_from(data, samples_at + i * AFX_SAMPLE.size) for i in range(sample_count)]
-    for offset, size, frames, format_id in samples:
-        if not size or not frames or format_id > ADPCM or offset > image_size or size > image_size - offset:
-            raise ValueError(f"{path}: invalid sample")
-    relocation = {}
-    for i in range(relocation_count):
-        pair, sample, byte_offset = AFX_RELOCATION.unpack_from(data, relocations_at + i * AFX_RELOCATION.size)
-        if pair % SETUP_BYTES or pair // SETUP_BYTES >= setup_count or sample >= sample_count or byte_offset:
-            raise ValueError(f"{path}: unsupported relocation")
-        if pair in relocation:
-            raise ValueError(f"{path}: duplicate relocation")
-        relocation[pair // SETUP_BYTES] = sample
-    if len(relocation) != setup_count:
-        raise ValueError(f"{path}: every setup must name one sample")
-    return {"id": _flow_id(path), "flags": flags & MUSIC_FLAGS, "channels": channels, "samples": samples, "image": image,
-            "setup_count": setup_count, "setups": image[:setup_count * SETUP_BYTES],
-            "relocation": relocation, "lanes": lanes, "stream": image[stream_at:stream_at + stream_size]}
+        raise ValueError(f"{path}: truncated AFX header")
+    header = AFX_HEADER.unpack_from(data)
+    (magic, version, total, _, image_at, image_size, stream_at, stream_size,
+     control_id, setup_count, bank_low, bank_high, relocations_at, relocation_count,
+     reserved0, reserved1, channels, tick_num, tick_den, reserved) = header
+    if (magic, version, total, reserved) != (AFX_MAGIC, AFX_VERSION, len(data), 0):
+        raise ValueError(f"{path}: expected final bank-bound AFX")
+    if not tick_num or not tick_den or channels > 64 or image_at > len(data) or image_size != len(data) - image_at:
+        raise ValueError(f"{path}: invalid AFX image")
+    if stream_at > image_size or stream_size > image_size - stream_at:
+        raise ValueError(f"{path}: invalid AFX stream")
+    if relocation_count != setup_count or relocations_at != AFX_HEADER.size or \
+       relocations_at + relocation_count * AFX_RELOCATION.size > image_at:
+        raise ValueError(f"{path}: invalid AFX relocations")
+    if not control_id or reserved0 or reserved1:
+        raise ValueError(f"{path}: AFX embeds deprecated metadata")
+    if setup_count * SETUP_BYTES > image_size or stream_at < setup_count * SETUP_BYTES:
+        raise ValueError(f"{path}: invalid AFX setup layout")
+    relocations = []
+    seen = set()
+    for index in range(relocation_count):
+        pair, offset, size = AFX_RELOCATION.unpack_from(data, relocations_at + index * AFX_RELOCATION.size)
+        if pair % SETUP_BYTES or pair // SETUP_BYTES >= setup_count or pair in seen or not size:
+            raise ValueError(f"{path}: invalid AFX relocation")
+        seen.add(pair)
+        relocations.append((pair, offset, size))
+    return {"id": flow_id if flow_id is not None else _flow_id(path), "path": path, "data": data,
+            "header": header, "bank_id": (bank_low, bank_high), "relocations": relocations}
 
 
-def build_bank(paths: list[Path], accepted_adpcm: set[str]) -> tuple[bytes, dict]:
-    flows = []
-    for path in paths:
-        flow = _read_flow(path)
-        if not flow.get("silent"):
-            flows.append(flow)
+def _read_seek(path: Path, header: tuple[int, ...]) -> bytes:
+    if not path.is_file():
+        return b""
+    data = path.read_bytes()
+    if len(data) < AFC_HEADER.size:
+        raise ValueError(f"{path}: truncated AFC header")
+    magic, version, control_id, bank_low, bank_high, data_at, data_size, total = AFC_HEADER.unpack_from(data)
+    if (magic, version, control_id, bank_low, bank_high, total) != \
+       (AFC_MAGIC, 1, header[8], header[10], header[11], len(data)) or \
+       data_at != AFC_HEADER.size or not data_size or data_size != len(data) - data_at:
+        raise ValueError(f"{path}: AFC does not match its AFX")
+    return data[data_at:]
+
+
+def _seek_file(header: list[int], checkpoints: bytes) -> bytes:
+    if not checkpoints:
+        return b""
+    result = bytearray(AFC_HEADER.size + len(checkpoints))
+    AFC_HEADER.pack_into(result, 0, AFC_MAGIC, 1, header[8], header[10], header[11],
+                         AFC_HEADER.size, len(checkpoints), len(result))
+    result[AFC_HEADER.size:] = checkpoints
+    return bytes(result)
+
+
+def _control_id(header: list[int], data: bytes) -> int:
+    digest = hashlib.sha256(struct.pack("<5I", header[3], header[16], header[17],
+                                        header[10], header[11]) +
+                            data[header[12]:header[12] + header[13] * AFX_RELOCATION.size] +
+                            data[header[4]:]).digest()
+    return struct.unpack_from("<I", digest)[0] or 1
+
+
+def _rewrite_checkpoints(data: bytes, ranges: list[tuple[int, int, int]]) -> bytes:
+    """Relocate bank addresses in compiler checkpoint voice state."""
+    if not data:
+        return data
+    if len(data) < 16 or struct.unpack_from("<4I", data)[:2] != (CHECKPOINT_MAGIC, 1):
+        raise ValueError("invalid AFX checkpoint table")
+    count, reserved = struct.unpack_from("<2I", data, 8)
+    if reserved:
+        raise ValueError("invalid AFX checkpoint table")
+    result = bytearray(data)
+    cursor = 16
+    for _ in range(count):
+        if cursor + 16 > len(result):
+            raise ValueError("truncated AFX checkpoint")
+        states = struct.unpack_from("<I", result, cursor + 12)[0]
+        cursor += 16
+        for _ in range(states):
+            if cursor + 40 > len(result):
+                raise ValueError("truncated AFX checkpoint state")
+            control, low = struct.unpack_from("<HH", result, cursor + 4)
+            if not control & 0x400:
+                old = ((control & 0x7F) << 16) | low
+                match = next(((start, size, new) for start, size, new in ranges if start <= old < start + size), None)
+                if match is None:
+                    raise ValueError("checkpoint refers outside its source bank")
+                start, _, new = match
+                address = new + old - start
+                if address > 0x7FFFFF:
+                    raise ValueError("checkpoint AICA address exceeds 23 bits")
+                struct.pack_into("<HH", result, cursor + 4, (control & ~0x7F) | (address >> 16), address & 0xFFFF)
+            cursor += 40
+    if cursor != len(result):
+        raise ValueError("invalid AFX checkpoint table size")
+    return bytes(result)
+
+
+def merge_bank_flows(paths: list[Path], flow_ids: dict[Path, int] | None = None) -> tuple[bytes, dict[int, bytes], dict[int, bytes], dict]:
+    """Deduplicate final input banks and rebind their already-final AFX flows."""
+    flow_ids = flow_ids or {}
+    flows = [_read_flow(path, flow_ids.get(path)) for path in paths]
+    for flow in flows:
+        flow["checkpoints"] = _read_seek(flow["path"].with_suffix(".afc"), flow["header"])
     if len({flow["id"] for flow in flows}) != len(flows):
-        raise ValueError("duplicate sequence id")
-    sample_by_key, encoded_by_source, samples, records, setups, streams = {}, {}, [], [], [], bytearray()
+        raise ValueError("duplicate flow id")
+    source_banks: dict[Path, tuple[bytes, int, int]] = {}
+    samples: list[bytes] = []
+    offsets: list[int] = []
+    sample_by_data: dict[bytes, int] = {}
+    plans = []
     for flow in sorted(flows, key=lambda item: item["id"]):
-        first_setup = len(setups)
-        local = {}
-        for index in sorted(set(flow["relocation"].values())):
-            offset, size, frames, format_id = flow["samples"][index]
-            payload = flow["image"][offset:offset + size]
-            source_key = hashlib.sha256(payload).digest(), frames, format_id
-            encoded = encoded_by_source.get(source_key)
-            if encoded is None:
-                if format_id == PCM16:
-                    digest = source_key[0].hex()
-                    payload, format_id = ((afx_compile.pcm16_to_adpcm(payload), ADPCM)
-                                         if digest in accepted_adpcm else
-                                         (afx_compile.pcm16_to_pcm8(payload), PCM8))
-                encoded = payload, format_id
-                encoded_by_source[source_key] = encoded
-            payload, format_id = encoded
-            key = hashlib.sha256(payload).digest(), frames, format_id
-            local[index] = sample_by_key.setdefault(key, len(samples))
-            if local[index] == len(samples):
-                samples.append((payload, frames, format_id))
-        for index in range(flow["setup_count"]):
-            fields = list(struct.unpack_from("<18H", flow["setups"], index * SETUP_BYTES))
-            fields[0] &= ~0x1ff
-            fields[1] = 0
-            setups.append((local[flow["relocation"][index]], fields))
-        streams += flow["lanes"]
-        stream_at = len(streams)
-        streams += flow["stream"]
-        records.append((flow["id"], flow["channels"], flow["flags"], first_setup,
-                        flow["setup_count"], stream_at, len(flow["stream"])))
-    if len(setups) > 65535:
-        raise ValueError("AFB1 setup table exceeds 65535 entries")
-    sample_at = HEADER.size
-    sound_at = sample_at + len(samples) * SAMPLE.size
-    setup_at = sound_at + len(records) * SOUND.size
-    stream_at = setup_at + len(setups) * SETUP.size
-    data_at = align(stream_at + len(streams))
-    offsets, cursor = [], data_at
-    for payload, _, _ in samples:
+        bank_path = flow["path"].with_suffix(".afb")
+        bank = source_banks.setdefault(bank_path, _read_bank(bank_path))
+        payload, low, high = bank
+        if flow["bank_id"] != (low, high):
+            raise ValueError(f"{flow['path']}: AFX bank identity does not match {bank_path}")
+        local = []
+        for pair, offset, size in flow["relocations"]:
+            if offset > len(payload) or size > len(payload) - offset:
+                raise ValueError(f"{flow['path']}: relocation lies outside {bank_path}")
+            raw = payload[offset:offset + size]
+            sample = sample_by_data.setdefault(raw, len(samples))
+            if sample == len(samples):
+                samples.append(raw)
+            local.append((pair, offset, size, sample))
+        plans.append((flow, local))
+    cursor = 0
+    for sample in samples:
         cursor = align(cursor)
         offsets.append(cursor)
-        cursor += len(payload)
-    image = bytearray(cursor)
-    HEADER.pack_into(image, 0, b"AFB1", 1, len(records), len(samples), sample_at, sound_at,
-                     setup_at, stream_at, data_at, len(image))
-    for index, ((payload, frames, format_id), offset) in enumerate(zip(samples, offsets)):
-        SAMPLE.pack_into(image, sample_at + index * SAMPLE.size, offset, len(payload), frames, format_id)
-        image[offset:offset + len(payload)] = payload
-    for index, record in enumerate(records):
-        number, channels, flags, first, count, relative, size = record
-        SOUND.pack_into(image, sound_at + index * SOUND.size, number, channels, flags, first, count,
-                        stream_at + relative, size)
-    for index, (sample, fields) in enumerate(setups):
-        SETUP.pack_into(image, setup_at + index * SETUP.size, sample, 0, 0, *fields)
-    image[stream_at:stream_at + len(streams)] = streams
-    diagnostics = {
-        "flows": len(records), "samples": len(samples), "setups": len(setups),
-        "pcm8_bytes": sum(len(raw) for raw, _, format_id in samples if format_id == PCM8),
-        "adpcm_bytes": sum(len(raw) for raw, _, format_id in samples if format_id == ADPCM),
-        "sample_bytes": sum(len(raw) for raw, _, _ in samples), "stream_bytes": len(streams),
-        "total_bytes": len(image),
-    }
-    return bytes(image), diagnostics
-
-
-def build_split_bank(paths: list[Path], accepted_adpcm: set[str]) -> tuple[bytes, dict[int, bytes], dict]:
-    """Build one shared sample bank and one compact AFC1 control file per flow."""
-    flows = [flow for path in paths if not (flow := _read_flow(path)).get("silent")]
-    if len({flow["id"] for flow in flows}) != len(flows):
-        raise ValueError("duplicate sequence id")
-    sample_by_key, encoded_by_source, samples, controls = {}, {}, [], {}
-    for flow in sorted(flows, key=lambda item: item["id"]):
-        local = {}
-        for index in sorted(set(flow["relocation"].values())):
-            offset, size, frames, format_id = flow["samples"][index]
-            payload = flow["image"][offset:offset + size]
-            source_key = hashlib.sha256(payload).digest(), frames, format_id
-            encoded = encoded_by_source.get(source_key)
-            if encoded is None:
-                if format_id == PCM16:
-                    digest = source_key[0].hex()
-                    payload, format_id = ((afx_compile.pcm16_to_adpcm(payload), ADPCM)
-                                         if digest in accepted_adpcm else
-                                         (afx_compile.pcm16_to_pcm8(payload), PCM8))
-                encoded = payload, format_id
-                encoded_by_source[source_key] = encoded
-            payload, format_id = encoded
-            key = hashlib.sha256(payload).digest(), frames, format_id
-            local[index] = sample_by_key.setdefault(key, len(samples))
-            if local[index] == len(samples):
-                samples.append((payload, frames, format_id))
-        setups = bytearray()
-        for index in range(flow["setup_count"]):
-            fields = list(struct.unpack_from("<18H", flow["setups"], index * SETUP_BYTES))
-            fields[0] &= ~0x1ff
-            fields[1] = 0
-            setups += SETUP.pack(local[flow["relocation"][index]], 0, 0, *fields)
-        control_size = AFC_HEADER.size + len(setups) + len(flow["lanes"]) + len(flow["stream"])
-        controls[flow["id"]] = (AFC_HEADER.pack(b"AFC1", 1, flow["channels"], flow["flags"],
-                                                  flow["setup_count"], len(flow["stream"]), control_size) +
-                                setups + flow["lanes"] + flow["stream"])
-    sample_at = HEADER.size
-    sound_at = sample_at + len(samples) * SAMPLE.size
-    data_at = align(sound_at)
-    offsets, cursor = [], data_at
-    for payload, _, _ in samples:
-        cursor = align(cursor)
-        offsets.append(cursor)
-        cursor += len(payload)
-    image = bytearray(cursor)
-    HEADER.pack_into(image, 0, b"AFB1", 1, 0, len(samples), sample_at, sound_at,
-                     sound_at, sound_at, data_at, len(image))
-    for index, ((payload, frames, format_id), offset) in enumerate(zip(samples, offsets)):
-        SAMPLE.pack_into(image, sample_at + index * SAMPLE.size, offset, len(payload), frames, format_id)
-        image[offset:offset + len(payload)] = payload
-    diagnostics = {
-        "flows": len(controls), "samples": len(samples),
-        "pcm8_bytes": sum(len(raw) for raw, _, format_id in samples if format_id == PCM8),
-        "adpcm_bytes": sum(len(raw) for raw, _, format_id in samples if format_id == ADPCM),
-        "sample_bytes": sum(len(raw) for raw, _, _ in samples),
-        "control_bytes": sum(map(len, controls.values())), "total_bytes": len(image),
-    }
-    return bytes(image), controls, diagnostics
+        cursor += len(sample)
+    payload = bytearray(cursor)
+    for sample, offset in zip(samples, offsets):
+        payload[offset:offset + len(sample)] = sample
+    digest = hashlib.sha256(payload).digest()
+    bank_low, bank_high = struct.unpack_from("<2I", digest)
+    bank = bytearray(BANK_HEADER.size + len(payload))
+    BANK_HEADER.pack_into(bank, 0, AFB_MAGIC, AFB_VERSION, bank_low, bank_high,
+                          BANK_HEADER.size, len(payload), len(bank), 0)
+    bank[BANK_HEADER.size:] = payload
+    controls = {}
+    indices = {}
+    for flow, local in plans:
+        result = bytearray(flow["data"])
+        header = list(flow["header"])
+        image_at, relocations_at = header[4], header[12]
+        ranges = []
+        for index, (pair, old, size, sample) in enumerate(local):
+            new = offsets[sample]
+            if new > 0x7FFFFF:
+                raise ValueError("AFB exceeds AICA's 23-bit address range")
+            control, _ = struct.unpack_from("<HH", result, image_at + pair)
+            struct.pack_into("<HH", result, image_at + pair, (control & ~0x7F) | (new >> 16), new & 0xFFFF)
+            AFX_RELOCATION.pack_into(result, relocations_at + index * AFX_RELOCATION.size, pair, new, size)
+            ranges.append((old, size, new))
+        header[10:12] = bank_low, bank_high
+        checkpoints = _rewrite_checkpoints(flow["checkpoints"], ranges)
+        header[8] = _control_id(header, result)
+        AFX_HEADER.pack_into(result, 0, *header)
+        controls[flow["id"]] = bytes(result)
+        seek = _seek_file(header, checkpoints)
+        if seek: indices[flow["id"]] = seek
+    diagnostics = {"flows": len(controls), "samples": len(samples),
+                   "input_bank_bytes": sum(len(payload) for payload, _, _ in source_banks.values()),
+                   "sample_bytes": len(payload), "flow_bytes": sum(map(len, controls.values())),
+                   "total_bytes": len(bank)}
+    return bytes(bank), controls, indices, diagnostics
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
-    parser.add_argument("audit", type=Path)
-    parser.add_argument("--controls-dir", type=Path)
+    parser.add_argument("--controls-dir", type=Path, required=True)
+    parser.add_argument("--control-name", help="output basename when merging one flow")
+    parser.add_argument("--id", type=int, help="flow id when merging one non-sequence source")
     parser.add_argument("flow", type=Path, nargs="+")
     args = parser.parse_args(argv)
     try:
-        if args.controls_dir:
-            image, controls, diagnostics = build_split_bank(args.flow, _accepted_adpcm(args.audit))
-            args.controls_dir.mkdir(parents=True, exist_ok=True)
-            for ident, control in controls.items():
-                (args.controls_dir / f"sequence_{ident}.afc").write_bytes(control)
-        else:
-            image, diagnostics = build_bank(args.flow, _accepted_adpcm(args.audit))
-        args.output.write_bytes(image)
-    except (OSError, ValueError, struct.error, json.JSONDecodeError) as error:
+        if args.control_name and (len(args.flow) != 1 or Path(args.control_name).name != args.control_name):
+            raise ValueError("--control-name needs one flow and a plain filename")
+        if args.id is not None and (len(args.flow) != 1 or not 1 <= args.id <= 65535):
+            raise ValueError("--id needs one flow and a value in 1..65535")
+        ids = {args.flow[0]: args.id} if args.id is not None else None
+        bank, controls, indices, diagnostics = merge_bank_flows(args.flow, ids)
+        args.controls_dir.mkdir(parents=True, exist_ok=True)
+        for ident, control in controls.items():
+            (args.controls_dir / (args.control_name or f"sequence_{ident}.afx")).write_bytes(control)
+            seek = indices.get(ident)
+            if seek:
+                (args.controls_dir / (args.control_name or f"sequence_{ident}.afx")).with_suffix(".afc").write_bytes(seek)
+        args.output.write_bytes(bank)
+    except (OSError, ValueError, struct.error) as error:
         print(f"afx-music-bank: {error}", file=sys.stderr)
         return 2
     print(f"wrote {args.output}: {diagnostics}")

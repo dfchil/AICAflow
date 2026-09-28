@@ -74,17 +74,9 @@ int afx_mem_upload(uint32_t spu_addr, const void *data, uint32_t size);
 int afx_mem_stats(afx_mem_stats_t *out_stats);
 int afx_mem_diagnose(uint32_t size, uint32_t align, afx_mem_diagnostic_t *out_diagnostic);
 
-/* A mono PCM16/PCM8/AICA-ADPCM allocation. The complete sample uses one
- * aligned SH-4 -> AICA DMA transfer before this call returns. frames includes
- * any interpolation guard samples; rate/pitch is authored in the flow's setup
- * or NOTE. */
-int afx_sample_upload(const void *data, uint32_t bytes, uint32_t frames,
-                       uint32_t format, afx_asset_t *out_sample);
-/* Upload one contiguous backing region, then expose its aligned subranges as
- * typed samples. This avoids one DMA and AICA allocation per bank member. */
+/* Upload one contiguous sample-bank region. AFB loading owns the only public
+ * sample allocation path; AFX relocations bind directly to its byte offsets. */
 int afx_sample_bank_upload(const void *data, uint32_t bytes, afx_asset_t *out_bank);
-int afx_sample_view_create(afx_asset_t bank, uint32_t byte_offset, uint32_t bytes,
-                           uint32_t frames, uint32_t format, afx_asset_t *out_sample);
 /* Stream one backing allocation from caller-owned, aligned buffers. Begin one
  * DMA, fill another buffer while it runs, then poll and submit the next chunk. */
 int afx_sample_bank_stream_begin(uint32_t bytes, afx_asset_t *out_bank);
@@ -93,70 +85,12 @@ int afx_sample_bank_stream_dma_begin(afx_asset_t bank, uint32_t byte_offset,
 /* out_complete reports the submitted DMA, not the complete bank. */
 int afx_sample_bank_stream_dma_poll(afx_asset_t bank, bool *out_complete);
 int afx_sample_bank_stream_finish(afx_asset_t bank);
-typedef struct {
-    afx_asset_t sample;
-    uint32_t byte_offset; /* PCM subrange; ADPCM must start at its encoded origin. */
-    uint16_t fields[AFX_FIELD_COUNT]; /* Address/format bits and SA_LOW must be zero.
-                                      * Loop, envelope, pitch, filter, send, etc. are authored. */
-} afx_sfx_setup_t;
-typedef struct {
-    const afx_sfx_setup_t *setups;
-    uint32_t setup_count;
-    const void *stream; /* Existing little-endian AFX instruction encoding. */
-    uint32_t stream_size;
-    uint32_t required_channels, tick_rate_num, tick_rate_den;
-    uint32_t flags; /* 0 for one-shots, AFX_FLAG_CONTROLLED to allow PARK. */
-    /* Optional local-channel to lane map. Each byte is a lane id in 0..63. */
-    const uint8_t *lane_map;
-} afx_sfx_flow_t;
-/* A flow whose samples are separately uploaded assets. It has no embedded
- * sample image or seek checkpoints. Music may use AFX_FLAG_MUSIC and lanes;
- * SFX callers should retain the narrower afx_sfx_flow_* API below. */
-typedef afx_sfx_setup_t afx_external_setup_t;
-typedef afx_sfx_flow_t afx_external_flow_t;
-int afx_external_flow_begin(const afx_external_flow_t *recipe, afx_asset_t *out_flow);
-int afx_external_flow_upload(const afx_external_flow_t *recipe, afx_asset_t *out_flow);
-/* Copies the recipe, resolves sample handles and retains each distinct sample
- * until the flow is freed (including while unpublished). Noise setups use an
- * invalid sample handle and set the noise bit in CONTROL. Stream address
- * changes are rejected; select another bound setup with NOTE instead.
- * Complete/cancel begin with existing upload_step/asset_free. */
-int afx_sfx_flow_begin(const afx_sfx_flow_t *recipe, afx_asset_t *out_flow);
-int afx_sfx_flow_upload(const afx_sfx_flow_t *recipe, afx_asset_t *out_flow);
-
 afx_asset_t afx_asset_upload(const void *data, uint32_t size, uint32_t align);
 int afx_asset_free(afx_asset_t asset);
 uint32_t afx_asset_addr(afx_asset_t asset);
 uint32_t afx_asset_size(afx_asset_t asset);
 int afx_asset_work(afx_asset_t asset, afx_work_profile_t *out_profile);
 
-int afx_flow_upload(const void *flow_data, uint32_t flow_size, afx_asset_t *out_asset);
-/* Links and compacts mutable caller storage. The buffer remains live until
- * afx_flow_release_host_image(); it avoids a second large SH-4 heap copy. */
-int afx_flow_upload_inplace(void *flow_data, uint32_t flow_size, afx_asset_t *out_asset);
-/* Streaming alternative for prevalidated AFX containers. Begin reserves the
- * resident image; upload accepts ordered image chunks; finish publishes it. */
-int afx_flow_stream_begin(const afx_file_header_t *header, const void *checkpoints,
-                          afx_asset_t *out_asset);
-int afx_flow_stream_upload(afx_asset_t asset, uint32_t image_offset,
-                           const void *data, uint32_t size);
-/* DMA form for an aligned, persistent chunk. Start one transfer, then read the
- * next chunk while it runs; poll before reusing the source buffer. */
-int afx_flow_stream_upload_dma_begin(afx_asset_t asset, uint32_t image_offset,
-                                     const void *data, uint32_t size);
-int afx_flow_stream_upload_dma_poll(afx_asset_t asset, bool *out_complete);
-int afx_flow_stream_finish(afx_asset_t asset);
-/* Begin validates, links and reserves the complete image, but it is not an
- * activatable asset until afx_flow_upload_step reports complete. Freeing this
- * handle cancels the upload and releases its reservation. */
-int afx_flow_upload_begin(const void *flow_data, uint32_t flow_size, afx_asset_t *out_asset);
-int afx_flow_upload_step(afx_asset_t asset, uint32_t max_bytes,
-                         uint32_t *out_uploaded, bool *out_complete);
-int afx_flow_upload_dma_step(afx_asset_t asset, uint32_t max_bytes,
-                             uint32_t *out_uploaded, bool *out_complete);
-/* Drops the linked SH-4 image after upload. Checkpoint seeks then read the
- * resident AICA image; calls before upload completion return -AFX_BUSY. */
-int afx_flow_release_host_image(afx_asset_t asset);
 /* Stage 3 lifecycle API. Commands are nonblocking: a zero result means queued;
  * call afx_update and afx_instance_status for ARM-owned durable completion.
  * PATCH/gain/tempo/lane commands may follow ACTIVATE immediately; queue order
@@ -196,9 +130,12 @@ int afx_instance_lanes_set(afx_instance_t instance, uint32_t modifier,
                            uint8_t first_lane, uint32_t mask, const uint8_t values[32]);
 /* The one AICA DSP program belongs to the loaded scene, never to a flow.
  * Build a runtime image with <aicaflow/dsp.h>; this operation prepares,
- * validates and uploads it atomically. Scene teardown disables it and clears
- * delay RAM. */
+ * validates and uploads it atomically. It also replaces an active scene with
+ * its returns muted. Scene teardown disables it and clears delay RAM. */
 int afx_dsp_scene_program(const void *program, uint32_t bytes);
+/* As afx_dsp_scene_program(), but selects the AICA delay-ring RBL value
+ * (0..3: 8/16/32/64 Kiwords).  The regular API remains RBL=3. */
+int afx_dsp_scene_program_ring(const void *program, uint32_t bytes, uint8_t rbl);
 /* Gates the current scene program’s stereo returns without replacing its state. */
 int afx_dsp_scene_returns(bool enabled);
 int afx_dsp_scene_disable(void);

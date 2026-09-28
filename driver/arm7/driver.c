@@ -681,14 +681,16 @@ static void scene_result(uint32_t sequence, uint32_t result) {
     STATUS->dsp_sequence = sequence;
 }
 static void dsp_control(uint32_t opcode, uint32_t reference, uint32_t sequence, uint32_t flags) {
-    if (reference != AFX_DSP_SCENE_REFERENCE || flags != 1u) {
+    uint32_t ring_code = flags >> 8;
+    uint32_t rbl = ring_code ? ring_code - 1u : 3u;
+    if (reference != AFX_DSP_SCENE_REFERENCE || (flags & ~0x301u) || !(flags & 1u) || ring_code > 3u) {
         scene_result(sequence, AFX_BAD_COMMAND);
         return;
     }
     if (opcode == AFX_CMD_DSP_ENABLE) {
         dsp_disable();
         dsp_nop();
-        dsp_write(0x2804u, (3u << 13) | (AFX_DSP_BASE >> 11));
+        dsp_write(0x2804u, (rbl << 13) | (AFX_DSP_BASE >> 11));
         dsp_owner = AFX_DSP_SCENE_REFERENCE; /* Prepared silently for program upload. */
     } else if (dsp_owner == AFX_DSP_SCENE_REFERENCE) dsp_disable();
     else {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile selected N64 ALBank sounds into a shared-sample AICAFLOW SFX bank."""
+"""Compile selected N64 ALBank sounds into one AFB and sample-free AFX flows."""
 
 import argparse
 import hashlib
@@ -13,13 +13,13 @@ import afx_compile
 from afx_n64 import ALBank, N64Error, _attenuation, _rate_for_us
 
 
-MAGIC = b"AFB1"
-VERSION = 1
-HEADER = struct.Struct("<4sHH7I")
-SAMPLE = struct.Struct("<4I")
-SOUND = struct.Struct("<HBBHHII")
-SETUP = struct.Struct("<HHI18H")
-CONTROLLED = 1
+AFB_MAGIC = 0x00424641  # "AFB\\0"
+AFB_HEADER = struct.Struct("<8I")
+AFX_HEADER = struct.Struct("<20I")
+AFX_RELOCATION = struct.Struct("<3I")
+AFX_FILE_MAGIC = 0x32584641
+AFX_FILE_VERSION = 7
+AFX_FLAG_CONTROLLED = 1
 OP_PARK = 0x13
 FIELD_COUNT = 18
 FIELD_CONTROL = 0
@@ -170,15 +170,62 @@ def _chain(sounds: list[dict], sound_id: int) -> list[tuple[int, dict]]:
     return chain
 
 
-def compile_pack(control: bytes, samples: bytes, sound_ids: list[int]) -> tuple[bytes, dict]:
-    bank = ALBank(control, samples)
+def _control_flow(bank_id: tuple[int, int], payload_offsets: list[int],
+                  components: list[tuple[int, dict]], stream: bytes,
+                  channels: int, controlled: bool) -> bytes:
+    """Emit one fixed-layout AFX whose setups address the containing AFB."""
+    setups = bytearray(len(components) * FIELD_COUNT * 2)
+    relocations = bytearray(len(components) * AFX_RELOCATION.size)
+    for index, (sample_index, setup) in enumerate(components):
+        offset = payload_offsets[sample_index]
+        fields = list(setup["fields"])
+        fields[FIELD_CONTROL] = ((fields[FIELD_CONTROL] & ~0x1FF) |
+                                 (setup["format"] << 7) | (offset >> 16))
+        fields[1] = offset & 0xFFFF
+        struct.pack_into("<18H", setups, index * FIELD_COUNT * 2, *fields)
+        AFX_RELOCATION.pack_into(relocations, index * AFX_RELOCATION.size,
+                                 index * FIELD_COUNT * 2, offset, len(setup["raw"]))
+    image = setups + stream
+    image_at = align(AFX_HEADER.size + len(relocations))
+    result = bytearray(image_at + len(image))
+    duration = 0
+    cursor = 0
+    while cursor < len(stream):
+        opcode = stream[cursor]
+        if opcode in (0, OP_PARK): size, wait = 1, 0
+        elif opcode == afx_compile.AFX_OP_WAIT8: size, wait = 2, stream[cursor + 1]
+        elif opcode == afx_compile.AFX_OP_WAIT16: size, wait = 3, struct.unpack_from("<H", stream, cursor + 1)[0]
+        elif opcode == afx_compile.AFX_OP_WAIT32: size, wait = 5, struct.unpack_from("<I", stream, cursor + 1)[0]
+        elif opcode == afx_compile.AFX_OP_KEYOFF: size, wait = 2, 0
+        elif opcode == afx_compile.AFX_OP_NOTE_PL: size, wait = 8, 0
+        else: raise N64Error(f"unsupported generated SFX opcode {opcode:#x}")
+        if cursor + size > len(stream): raise N64Error("truncated generated SFX stream")
+        cursor += size
+        duration += wait
+    AFX_HEADER.pack_into(result, 0, AFX_FILE_MAGIC, AFX_FILE_VERSION, len(result),
+                         AFX_FLAG_CONTROLLED if controlled else 0,
+                         image_at, len(image), len(setups), len(stream),
+                         0, len(components), bank_id[0], bank_id[1],
+                         AFX_HEADER.size, len(components), duration, 0,
+                         channels, 1000, 1, 0)
+    result[AFX_HEADER.size:AFX_HEADER.size + len(relocations)] = relocations
+    result[image_at:] = image
+    return bytes(result)
+
+
+def compile_pack(control: bytes, samples: bytes, sound_ids: list[int], *,
+                 bank: ALBank | None = None, component_cache: dict | None = None) -> tuple[bytes, dict[int, bytes], dict]:
+    """Compile one bank, optionally reusing caller-owned parse/encode caches."""
+    if bank is None:
+        bank = ALBank(control, samples)
     sounds = bank.instrument(0)["sounds"]
     requested = sorted(set(sound_ids))
     if not requested:
         raise N64Error("at least one sound id is required")
 
-    sample_records, sample_by_key, setup_records, sound_records, streams = [], {}, [], [], bytearray()
-    component_cache = {}
+    sample_records, sample_by_key, plans = [], {}, []
+    if component_cache is None:
+        component_cache = {}
     for requested_id in requested:
         if not 1 <= requested_id <= len(sounds):
             raise N64Error(f"sound id {requested_id} is outside 1..{len(sounds)}")
@@ -188,8 +235,7 @@ def compile_pack(control: bytes, samples: bytes, sound_ids: list[int]) -> tuple[
             starts.append(round(cursor_us / 1000))
             cursor_us += sound["velocity_max"] * 33333
 
-        events, flow_end, controlled = [], 0, False
-        first_setup = len(setup_records)
+        events, flow_end, controlled, components = [], 0, False, []
         for channel, ((component_id, sound), start) in enumerate(zip(chain, starts)):
             cached = component_cache.get(component_id)
             if cached is None:
@@ -200,10 +246,10 @@ def compile_pack(control: bytes, samples: bytes, sound_ids: list[int]) -> tuple[
             sample_index = sample_by_key.setdefault(identity, len(sample_records))
             if sample_index == len(sample_records):
                 sample_records.append((raw, cached["frames"], cached["format"]))
-            setup_index = len(setup_records)
-            setup_records.append((sample_index, cached))
+            setup_index = len(components)
+            components.append((sample_index, cached))
             events.append((start, 1, afx_compile.encode_note(
-                channel, setup_index - first_setup,
+                channel, setup_index,
                 cached["fields"][afx_compile.AFX_FIELD_PITCH],
                 cached["fields"][afx_compile.AFX_FIELD_TOTAL_LEVEL])))
             if cached["sustain"]:
@@ -225,40 +271,29 @@ def compile_pack(control: bytes, samples: bytes, sound_ids: list[int]) -> tuple[
         else:
             stream += afx_compile.encode_wait(flow_end - previous)
             stream.append(afx_compile.AFX_OP_END)
-        stream_at = len(streams)
-        streams += stream
-        sound_records.append((requested_id, len(chain), CONTROLLED if controlled else 0,
-                              first_setup, len(chain), stream_at, len(stream)))
+        plans.append((requested_id, components, bytes(stream), len(chain), controlled))
 
-    sample_table_offset = HEADER.size
-    sound_table_offset = sample_table_offset + len(sample_records) * SAMPLE.size
-    setup_table_offset = sound_table_offset + len(sound_records) * SOUND.size
-    stream_offset = setup_table_offset + len(setup_records) * SETUP.size
-    data_offset = align(stream_offset + len(streams))
-    cursor, sample_offsets = data_offset, []
+    cursor, sample_offsets = 0, []
     for raw, _, _ in sample_records:
         cursor = align(cursor)
         sample_offsets.append(cursor)
         cursor += len(raw)
-    output = bytearray(cursor)
-    HEADER.pack_into(output, 0, MAGIC, VERSION, len(sound_records), len(sample_records),
-                     sample_table_offset, sound_table_offset, setup_table_offset,
-                     stream_offset, data_offset, len(output))
-    for index, ((raw, frames, format_id), offset) in enumerate(zip(sample_records, sample_offsets)):
-        SAMPLE.pack_into(output, sample_table_offset + index * SAMPLE.size,
-                         offset, len(raw), frames, format_id)
-        output[offset:offset + len(raw)] = raw
-    for index, record in enumerate(sound_records):
-        sound_id, channels, flags, setup_first, setup_count, relative, size = record
-        SOUND.pack_into(output, sound_table_offset + index * SOUND.size, sound_id, channels, flags,
-                        setup_first, setup_count, stream_offset + relative, size)
-    for index, (sample_index, setup) in enumerate(setup_records):
-        SETUP.pack_into(output, setup_table_offset + index * SETUP.size,
-                        sample_index, 0, 0, *setup["fields"])
-    output[stream_offset:stream_offset + len(streams)] = streams
+    payload = bytearray(cursor)
+    for (raw, _, _), offset in zip(sample_records, sample_offsets):
+        payload[offset:offset + len(raw)] = raw
+    digest = hashlib.sha256(payload).digest()
+    bank_id = struct.unpack_from("<2I", digest)
+    if not any(bank_id): bank_id = (1, 0)
+    output = bytearray(AFB_HEADER.size + len(payload))
+    AFB_HEADER.pack_into(output, 0, AFB_MAGIC, 1, *bank_id, AFB_HEADER.size,
+                         len(payload), len(output), 0)
+    output[AFB_HEADER.size:] = payload
+    controls = {sound_id: _control_flow(bank_id, sample_offsets, components, stream,
+                                        channels, controlled)
+                for sound_id, components, stream, channels, controlled in plans}
     diagnostics = {
-        "version": VERSION, "sounds": requested, "sound_count": len(sound_records),
-        "sample_count": len(sample_records), "setup_count": len(setup_records),
+        "version": 1, "sounds": requested, "sound_count": len(plans),
+        "sample_count": len(sample_records), "setup_count": sum(len(plan[1]) for plan in plans),
         "pcm16_bytes": sum(len(raw) for raw, _, format_id in sample_records
                            if format_id == afx_compile.PCM16),
         "pcm8_bytes": sum(len(raw) for raw, _, format_id in sample_records
@@ -266,9 +301,10 @@ def compile_pack(control: bytes, samples: bytes, sound_ids: list[int]) -> tuple[
         "adpcm_bytes": sum(len(raw) for raw, _, format_id in sample_records
                            if format_id == afx_compile.ADPCM),
         "sample_bytes": sum(len(raw) for raw, _, _ in sample_records),
-        "stream_bytes": len(streams), "total_bytes": len(output),
+        "stream_bytes": sum(len(plan[2]) for plan in plans), "total_bytes": len(output),
+        "flow_bytes": sum(len(flow) for flow in controls.values()),
     }
-    return bytes(output), diagnostics
+    return bytes(output), controls, diagnostics
 
 
 def main(argv: list[str]) -> int:
@@ -276,12 +312,16 @@ def main(argv: list[str]) -> int:
     parser.add_argument("control", type=Path)
     parser.add_argument("samples", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--controls-dir", type=Path, required=True)
     parser.add_argument("sound", type=int, nargs="+")
     parser.add_argument("--diagnostics", type=Path)
     args = parser.parse_args(argv)
     try:
-        image, diagnostics = compile_pack(args.control.read_bytes(), args.samples.read_bytes(), args.sound)
+        image, controls, diagnostics = compile_pack(args.control.read_bytes(), args.samples.read_bytes(), args.sound)
         args.output.write_bytes(image)
+        args.controls_dir.mkdir(parents=True, exist_ok=True)
+        for sound_id, flow in controls.items():
+            (args.controls_dir / f"{sound_id}.afx").write_bytes(flow)
         if args.diagnostics:
             args.diagnostics.write_text(json.dumps(diagnostics, indent=2) + "\n")
     except (OSError, N64Error, afx_compile.CompileError, struct.error) as error:

@@ -19,11 +19,13 @@ uses the same generated audio files with the `/cd` mount.
 ## Runtime order
 
 The public API is in `driver/sh4/include/aicaflow/host.h`; the bank loader API
-is in `driver/sh4/include/aicaflow/sfx_bank.h`.
+is in `driver/sh4/include/aicaflow/bank.h`.
 
 1. Embed `driver/arm7/aicaflow.drv`, then call `afx_init` once.
-2. Load resident SFX with `afx_sfx_bank_load_file`; load shared music samples
-   with `afx_sfx_bank_load_samples_file` and one AFC1 control stream per song.
+2. Load each required AFB once with `afx_bank_load_file`, then upload its
+   sample-free AFX flows with `afx_bank_flow_upload`.  Players that offer seek
+   attach the optional matching AFC sidecar with
+   `afx_flow_seek_index_load_file` before activating the flow.
 3. Build the game-owned DSP image with `<aicaflow/dsp.h>`, upload it with
    `afx_dsp_scene_program`, and call `afx_update` regularly from the audio
    thread.
@@ -32,8 +34,8 @@ is in `driver/sh4/include/aicaflow/sfx_bank.h`.
    the level ends.
 
 DKR's integration is implemented in `dreamcast/audio_aicaflow.c`. Its paths
-are relative to the selected asset mount: resident banks, scene banks,
-fallback banks and music controls all live below `build/dc/aicaflow/`.
+are relative to the selected asset mount: resident banks, scene banks, and
+bank-bound music controls all live below `build/dc/aicaflow/`.
 
 Do not write AICA registers or IPC messages directly beside this API. The host
 library owns firmware compatibility, DMA, AICA RAM allocation and command

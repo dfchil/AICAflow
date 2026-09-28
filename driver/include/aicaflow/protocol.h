@@ -112,6 +112,7 @@ enum { AFX_LANE_GAIN, AFX_LANE_MUTE, AFX_LANE_PAN, AFX_LANE_DSP_SEND,
        AFX_LANE_MODIFIER_COUNT };
 #define AFX_METADATA_MAGIC 0x314d5841u
 #define AFX_CONTAINER_VERSION 1u
+#define AFX_FILE_VERSION 7u /* Bank-bound, sample-free AFX container. */
 enum { AFX_PCM16 = 0, AFX_PCM8 = 1, AFX_ADPCM = 2 };
 enum { AFX_CAP_BOOTSTRAP = 1, AFX_CAP_LIFECYCLE = 2, AFX_CAP_PLAYBACK = 4, AFX_CAP_DSP = 8 };
 
@@ -122,8 +123,10 @@ enum { AFX_CAP_BOOTSTRAP = 1, AFX_CAP_LIFECYCLE = 2, AFX_CAP_PLAYBACK = 4, AFX_C
 typedef struct {
     uint32_t magic, abi, total_size, flags;
     uint32_t image_offset, image_size, stream_offset, stream_size;
-    uint32_t setups_offset, setup_count, samples_offset, sample_count;
-    uint32_t relocations_offset, relocation_count, checkpoints_offset, checkpoints_size;
+    /* ABI-7: control_id identifies an optional SH-4 seek sidecar; bank_id
+     * identifies the sole AFB payload.  No metadata follows this header. */
+    uint32_t control_id, setup_count, bank_id_low, bank_id_high;
+    uint32_t relocations_offset, relocation_count, reserved0, reserved1;
     uint32_t required_channels, tick_rate_num, tick_rate_den, work_profile;
 } afx_file_header_t;
 typedef struct { uint32_t image_offset, byte_size, frames, format; } afx_sample_t;

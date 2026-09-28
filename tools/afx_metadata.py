@@ -43,7 +43,7 @@ def stream_note_count(data, header):
             if cursor + prefix > len(stream): raise ValueError('truncated AFX event')
             mask = struct.unpack_from('<I', stream, cursor + prefix - 4)[0]
             if mask >> 18: raise ValueError('invalid AFX event mask')
-            size = prefix + 2 * mask.bit_count()
+            size = prefix + 2 * bin(mask).count("1")
             notes += opcode == 0x10
         else: raise ValueError(f'unsupported AFX opcode {opcode:#x}')
         if cursor + size > len(stream): raise ValueError('truncated AFX event')
@@ -55,9 +55,12 @@ def resident_layout(data):
     """Describe the bytes the linked AFX image occupies in AICA RAM."""
     image_bytes = resident_size(data)
     header = struct.unpack_from('<20I', data)
-    samples_offset, sample_count = header[10], header[11]
-    sample_bytes = sum(struct.unpack_from('<I', data, samples_offset + index * 16 + 4)[0]
-                       for index in range(sample_count))
+    if header[1] == 7:
+        sample_bytes = sample_count = 0
+    else:
+        samples_offset, sample_count = header[10], header[11]
+        sample_bytes = sum(struct.unpack_from('<I', data, samples_offset + index * 16 + 4)[0]
+                           for index in range(sample_count))
     setup_bytes, stream_bytes = header[9] * 36, header[7]
     if sample_bytes + setup_bytes + stream_bytes > image_bytes:
         raise ValueError('invalid AFX image layout')
@@ -75,6 +78,7 @@ def resident_layout(data):
 def read(data):
     if len(data) < 80: raise ValueError('truncated AFX header')
     header = struct.unpack_from('<20I', data)
+    if header[1] == 7: return None
     offset = header[4]
     present = 96 <= offset <= len(data) and struct.unpack_from("<I", data, offset - 16)[0] == MAGIC
     if not header[3] & FLAG and not present: return None
@@ -103,6 +107,7 @@ def replace(data, metadata):
 def strip(data):
     """Remove optional host-only metadata and return the canonical base AFX bytes."""
     header = list(struct.unpack_from('<20I', data))
+    if header[1] == 7: return data
     offset = header[4]
     if not header[3] & FLAG: return data
     magic, version, length, _ = struct.unpack_from('<4I', data, offset - 16)
@@ -120,6 +125,8 @@ def strip(data):
 def attach(data, metadata):
     if not isinstance(metadata, dict): raise ValueError('metadata must be an object')
     header = list(struct.unpack_from('<20I', data))
+    if header[1] == 7:
+        raise ValueError('bank-bound AFX keeps metadata outside the fixed runtime file')
     if header[3] & FLAG: raise ValueError('AFX already has metadata')
     payload = json.dumps(metadata, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode()
     if not 0 < len(payload) <= MAX_JSON_BYTES: raise ValueError('metadata exceeds 64 KiB')

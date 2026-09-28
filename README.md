@@ -1,4 +1,4 @@
-# AICAflow DKR Edition 0.1.4
+# AICAflow DKR Edition 0.1.5
 
 This is the minimal AICAflow source distribution needed by the Dreamcast port
 of Diddy Kong Racing. It contains the AICA firmware, SH-4 host library, and
@@ -12,12 +12,12 @@ other importers, examples, DSP labs, recordings, or unrelated documentation.
 ## Documentation
 
 - [DKR integration](docs/INTEGRATION.md): runtime ownership and build paths.
-- [N64 import](docs/N64_IMPORT.md): DKR's offline AFB/AFC asset pipeline.
+- [N64 import](docs/N64_IMPORT.md): DKR's offline AFB/AFX asset pipeline.
 - [Lifetime](docs/LIFETIME.md): SFX, bank and instance ownership rules.
 - [Changes](CHANGELOG.md): release-specific compatibility notes.
 
-The public headers are the API reference: `aicaflow/host.h` owns the runtime
-API and `aicaflow/sfx_bank.h` owns the AFB1/AFC1 loader API.
+The public headers are the API reference: `aicaflow/host.h` owns lifecycle and
+instance control, while `aicaflow/bank.h` owns the AFB/AFX loader API.
 
 ## Requirements
 

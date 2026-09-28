@@ -5,6 +5,8 @@ The importer is deliberately strict: malformed offsets, unsupported codebooks
 and missing key/velocity zones are errors rather than best-effort audio.
 """
 
+from __future__ import annotations
+
 import argparse
 import functools
 import math
@@ -14,6 +16,7 @@ from pathlib import Path
 
 import mido
 
+import afx_adpcm
 import afx_compile
 import afx_midi
 
@@ -138,15 +141,19 @@ def parse_cseq(data: bytes, source: str = "<CSeq>") -> tuple[dict, list[dict]]:
                     loop_site = reader.pos
                     initial, current = reader.read(), reader.read()
                     distance = reader.read() << 24 | reader.read() << 16 | reader.read() << 8 | reader.read()
+                    if current == 0xFF:
+                        # The N64 player keeps this track alive forever.  An
+                        # offline one-shot flow stops at its first loop
+                        # boundary, including the zero-distance form used by
+                        # DKR's Ancient Lake track.
+                        loops.append({"track": track_index, "start_offset": reader.pos - distance,
+                                      "end_offset": reader.pos, "end_tick": tick})
+                        break
                     if distance:
                         remaining = loop_counts.setdefault(loop_site, current)
                         target = reader.pos - distance
                         if not offset <= target < reader.pos:
                             raise N64Error(f"track {track_index} has invalid loop target")
-                        if remaining == 0xFF:
-                            loops.append({"track": track_index, "start_offset": target,
-                                          "end_offset": reader.pos, "end_tick": tick})
-                            break
                         if remaining:
                             loop_counts[loop_site] = remaining - 1
                             reader.pos = target
@@ -320,6 +327,9 @@ def decode_vadpcm(data: bytes, coefficients: list[int], predictors: int) -> byte
     data = data[:len(data) // 9 * 9]
     if not data:
         raise N64Error("VADPCM wavetable contains no complete frame")
+    native = afx_adpcm.n64_vadpcm_decode(data, coefficients, predictors)
+    if native is not None:
+        return native
     output, last1, last2 = [], 0, 0
     for frame_offset in range(0, len(data), 9):
         header = data[frame_offset]
@@ -349,7 +359,9 @@ def decode_vadpcm(data: bytes, coefficients: list[int], predictors: int) -> byte
 def _rate_for_us(microseconds: int, table: tuple) -> int:
     if microseconds <= 0:
         return 30
-    return afx_compile.aica_rate(round(1200 * math.log2(microseconds / 1000)), table)
+    # aica_rate consumes SoundFont timecents, whose zero is one second in
+    # milliseconds.  N64 AL envelopes are microseconds.
+    return afx_compile.aica_rate(round(1200 * math.log2(microseconds / 1_000_000)), table)
 
 
 def _attenuation(*levels: int) -> float:
@@ -422,16 +434,14 @@ def mapping_for_timeline(timeline: dict, bank: ALBank) -> dict:
             "note_overrides": overrides, "event_cluster_limit": 4}
 
 
-def compile_sequence(control: bytes, samples: bytes, sequence_file: bytes, index: int,
-                     tick_rate: int = 1000) -> tuple[bytes, dict]:
+def compile_sequence_bank(control: bytes, samples: bytes, sequence_file: bytes, index: int,
+                          tick_rate: int = 1000):
     sequence = sequence_from_file(sequence_file, index)
     timeline, loops = parse_cseq(sequence, f"N64 sequence {index}")
     mapping = mapping_for_timeline(timeline, ALBank(control, samples))
-    image, diagnostics = afx_compile.compile_timeline(
-        timeline, mapping, tick_rate,
-        {"importer": "n64_cseq_albank_v1", "sequence_index": index, "source_loops": loops})
+    bank, flow, seek, diagnostics = afx_compile.compile_bank_flow_timeline(timeline, mapping, tick_rate)
     diagnostics["n64"] = {"sequence_index": index, "source_loops": loops}
-    return image, diagnostics
+    return bank, flow, seek, diagnostics
 
 
 def main(argv: list[str]) -> int:
@@ -441,13 +451,20 @@ def main(argv: list[str]) -> int:
     parser.add_argument("sequences", type=Path, help="S1 ALSeqFile containing compact sequences")
     parser.add_argument("index", type=int)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--bank", type=Path,
+                        help="AFB output path (defaults to OUTPUT with an .afb suffix)")
     parser.add_argument("--tick-rate", type=int, default=1000)
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
     try:
-        image, diagnostics = compile_sequence(args.control.read_bytes(), args.samples.read_bytes(),
-                                              args.sequences.read_bytes(), args.index, args.tick_rate)
-        args.output.write_bytes(image)
+        inputs = (args.control.read_bytes(), args.samples.read_bytes(), args.sequences.read_bytes())
+        bank, flow, seek, diagnostics = compile_sequence_bank(*inputs, args.index, args.tick_rate)
+        bank_path = args.bank or args.output.with_suffix(".afb")
+        bank_path.write_bytes(bank)
+        args.output.write_bytes(flow)
+        if seek: args.output.with_suffix(".afc").write_bytes(seek)
+        diagnostics = {**diagnostics, "bank": str(bank_path), "bank_bytes": len(bank),
+                       "flow_bytes": len(flow)}
     except (OSError, N64Error, afx_compile.CompileError) as error:
         print(f"afx-n64: {error}", file=sys.stderr)
         return 2

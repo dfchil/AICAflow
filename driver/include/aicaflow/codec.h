@@ -106,29 +106,12 @@ static inline afx_result_t afx_apply_setup_fields(uint16_t state[AFX_FIELD_COUNT
         if (mask & (1u << i)) { state[i] = afx_read16(values); values += 2; }
     return AFX_OK;
 }
-/* Host SFX image validation; sample image_offset fields hold resolved AICA
- * addresses. The host must separately prove ownership of those allocations. */
-afx_result_t afx_sfx_validate(const void *image, const afx_file_header_t *header,
-                              const afx_sample_t *samples);
-/* Runtime validation checks structure only. Use this explicitly for offline
- * integrity checking of metadata-bearing containers. */
+/* Runtime validation accepts only the fixed, bank-bound AFX file layout. */
 afx_result_t afx_file_validate(const void *data, uint32_t size, afx_file_header_t *out);
-afx_result_t afx_file_validate_crc(const void *data, uint32_t size, afx_file_header_t *out);
 /* Validates an AFX file and totals its WAIT instructions. Outputs are written
  * only on success. */
 afx_result_t afx_flow_duration(const void *data, uint32_t size, uint64_t *out_ticks,
                                uint32_t *out_tick_rate_num, uint32_t *out_tick_rate_den);
-/* Input and output buffers must be disjoint. Validation failures leave output
- * unchanged. The loader must additionally prove image_base belongs to its allocation. */
-afx_result_t afx_link_image(const void *data, uint32_t size, uint32_t image_base,
-                            void *image, uint32_t capacity, afx_file_header_t *out);
-/* Fast path for a header already returned by afx_file_validate(). */
-afx_result_t afx_link_validated_image(const void *data, const afx_file_header_t *header,
-                                      uint32_t image_base, void *image, uint32_t capacity);
-/* Links a mutable AFX container then compacts its image to data[0]. The caller
- * retains data until the associated flow releases its host image. */
-afx_result_t afx_link_validated_image_inplace(void *data, const afx_file_header_t *header,
-                                              uint32_t image_base, uint32_t capacity);
 afx_result_t afx_firmware_validate(const void *data, uint32_t size, afx_firmware_info_t *out);
 void afx_encode_header(uint8_t out[AFX_FILE_HEADER_BYTES], const afx_file_header_t *header);
 #endif

@@ -5,6 +5,8 @@ This is a selection/budget stage, not an automatic converter: choosing left
 versus stereo is an author decision and an over-budget result never changes it.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import sys

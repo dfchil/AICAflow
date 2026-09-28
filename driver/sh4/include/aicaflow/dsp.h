@@ -19,7 +19,7 @@
  *
  *   MPRO[128][4]  micro-instructions       512 u16 / 1024 bytes
  *   COEF[128]     one signed Q1.15-ish coefficient per step
- *   MADRS[64]     external delay-memory word offsets
+ *   MADRS[64]     external delay-memory word offsets (even entries addressable)
  *   EFREG[2]      stereo return-control words
  *
  * Keep the image in this word form while authoring on SH-4. It is already
@@ -94,7 +94,7 @@ typedef struct { uint16_t words[AFX_DSP_PROGRAM_WORDS]; } afx_dsp_program_t;
  * TEMP127 is visible as TEMP0 next sample. This is why the one-pole factory
  * writes 127 and reads 0. TEMP is good for state/short histories, not a room.
  *
- * External delay memory: MRD/MWT use MADRS[MASA] and are permitted only on
+ * External delay memory: MRD/MWT use MADRS[MASA << 1] and are permitted only on
  * odd step indices (1, 3, ... 127). A validated read sequence is MRD at step
  * 1, IWT at step 3, then arithmetic reads MEMS at step 4. IWT does not make a
  * just-read word available in the same instruction. MADRS values are word
@@ -150,9 +150,10 @@ int afx_dsp_program_coefficient(afx_dsp_program_t *program, uint8_t index,
                                 int16_t value);
 
 /*
- * Sets MADRS[index], a non-negative 16-bit word offset into the configured
- * 128 KiB delay ring. Account for every read/write window before sharing the
- * ring between delays; separate writer bases alone do not prevent overwrite.
+ * Sets one addressable MADRS entry: index must be even because hardware reads
+ * MADRS[MASA << 1]. MASA is consequently 0..31. Values are non-negative
+ * 16-bit word offsets into the configured 128 KiB delay ring. Account for
+ * every read/write window before sharing the ring between delays.
  */
 int afx_dsp_program_address(afx_dsp_program_t *program, uint8_t index,
                             uint16_t value);

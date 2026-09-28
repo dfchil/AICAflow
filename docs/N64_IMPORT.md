@@ -10,14 +10,9 @@ sequence file:
 python3 tools/afx_n64.py bank.ctl bank.tbl sequences.bin 40 sequence_40.afx
 ```
 
-The output `.afx` files are intermediate music flows. Pack all sequences into
-one AFB1 sample bank plus compact AFC1 controls:
-
-```sh
-python3 tools/afx_adpcm_audit.py build/dc/aicaflow audit.json
-python3 tools/afx_music_bank.py build/dc/aicaflow/music.afb audit.json \
-  --controls-dir build/dc/aicaflow/music_controls build/dc/aicaflow/sequence_*.afx
-```
+That writes one independently usable AFB plus sample-free AFX. Collection
+builders may combine sources into one shared bank during their offline build;
+that intermediate representation is not a published format or runtime input.
 
 SFX input is the N64 ALBank control/sample pair. Generate a bank for explicit
 N64 sound IDs with:
@@ -31,7 +26,6 @@ DKR's `dreamcast/build_aicaflow_sfx.py` and
 one-sound fallback banks. Use those scripts through `Makefile.dc`; their IDs
 are derived from DKR assets rather than maintained by hand.
 
-AFB1 stores shared samples and optionally SFX flows. AFC1 stores one music
-control stream whose setups refer to samples already resident in an AFB1 bank.
-Load the music samples once with `afx_sfx_bank_load_samples_file`, then upload
-the desired AFC1 with `afx_sfx_bank_control_upload`.
+AFB stores only shared sample bytes. Each AFX stores its control stream,
+playback registers and bank-relative sample offsets. Load the bank once with
+`afx_bank_load_file`, then upload the desired AFX with `afx_bank_flow_upload`.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5-dkr
+
+- Switched the DKR package to the final AFB sample-bank, sample-free AFX flow,
+  and optional SH-4-only AFC seek-index model.
+- Removed the AFB1/AFC1 loaders and embedded-sample AFX compatibility paths.
+- Kept DKR's room DSP as a runtime C program.
+
 ## 0.1.4-dkr
 
 - Added DKR-only integration, N64 import and lifetime documentation.

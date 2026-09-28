@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import array
 import ctypes
+import functools
 import hashlib
 import os
 from pathlib import Path
@@ -20,6 +21,11 @@ _QUANT = (230, 230, 230, 230, 307, 409, 512, 614)
 _SRC = Path(__file__).with_name("afx_ya2beam.c")
 _LOCK = threading.Lock()
 _LIBRARY: ctypes.CDLL | bool | None = None
+
+
+def _host_compiler() -> str:
+    """Return a native compiler, never the target compiler exported by a SDK."""
+    return os.environ.get("AICAFLOW_HOST_CC", "cc")
 
 
 def _trunc_div8(value: int) -> int:
@@ -78,7 +84,7 @@ def _library() -> ctypes.CDLL | None:
             output = Path(tempfile.gettempdir()) / f"aicaflow-ya2beam-{digest}.so"
             if not output.exists():
                 temporary = output.with_suffix(f".tmp-{os.getpid()}")
-                subprocess.run([os.environ.get("CC", "cc"), "-O3", "-shared", "-fPIC",
+                subprocess.run([_host_compiler(), "-O3", "-shared", "-fPIC",
                                 "-o", str(temporary), str(_SRC)], check=True,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 os.replace(temporary, output)
@@ -86,6 +92,10 @@ def _library() -> ctypes.CDLL | None:
             library.ya2beam_encode.restype = ctypes.c_int
             library.ya2beam_encode.argtypes = [ctypes.POINTER(ctypes.c_int16), ctypes.c_int,
                                                 ctypes.c_int, ctypes.POINTER(ctypes.c_uint8)]
+            library.n64_vadpcm_decode.restype = ctypes.c_int
+            library.n64_vadpcm_decode.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_int,
+                                                   ctypes.POINTER(ctypes.c_int16), ctypes.c_int,
+                                                   ctypes.POINTER(ctypes.c_int16)]
             _LIBRARY = library
         except Exception:
             _LIBRARY = False
@@ -98,6 +108,12 @@ def pcm16_to_adpcm(raw: bytes, beam_width: int = 32) -> bytes:
         raise ValueError("ADPCM source must contain whole PCM16 frames")
     if not 1 <= beam_width <= 256:
         raise ValueError("YA2BEAM width must be in 1..256")
+    return _pcm16_to_adpcm_cached(raw, beam_width)
+
+
+@functools.cache
+def _pcm16_to_adpcm_cached(raw: bytes, beam_width: int) -> bytes:
+    """Avoid re-encoding one immutable sample for every note that uses it."""
     samples = array.array("h")
     samples.frombytes(raw)
     if samples.itemsize != 2:
@@ -113,4 +129,20 @@ def pcm16_to_adpcm(raw: bytes, beam_width: int = 32) -> bytes:
     source = (ctypes.c_int16 * len(samples)).from_buffer(samples)
     if library.ya2beam_encode(source, len(samples), beam_width, output):
         return _fallback(samples, beam_width)
+    return bytes(output)
+
+
+def n64_vadpcm_decode(raw: bytes, coefficients: list[int], predictors: int) -> bytes | None:
+    """Native N64 VADPCM decode, or ``None`` when the C helper cannot run."""
+    frames = len(raw) // 9
+    if not frames:
+        return None
+    library = _library()
+    if library is None:
+        return None
+    source = (ctypes.c_uint8 * (frames * 9)).from_buffer_copy(raw[:frames * 9])
+    book = (ctypes.c_int16 * len(coefficients))(*coefficients)
+    output = (ctypes.c_int16 * (frames * 16))()
+    if library.n64_vadpcm_decode(source, frames * 9, book, predictors, output):
+        return None
     return bytes(output)

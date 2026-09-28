@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile a resolved MIDI performance into one self-contained ABI-6 AFX.
+"""Compile a resolved MIDI performance into one AFB and bank-bound ABI-7 AFX.
 
 The bring-up path supports an explicitly mapped looped sine and an explicit
 single-zone SoundFont PCM16 path. The latter requires an author-selected
@@ -8,6 +8,8 @@ complete piano/cello renderer. Unsupported source features remain candidate
 diagnostics; malformed source performance is rejected before an AFX image is
 written.
 """
+
+from __future__ import annotations
 
 import argparse
 import hashlib
@@ -24,11 +26,14 @@ ROOT = Path(__file__).resolve().parent
 
 import afx_adpcm
 import afx_midi
-import afx_sf2
 
 AFX_FILE_MAGIC = 0x32584641
-AFX_ABI_VERSION = 6
+AFX_FILE_VERSION = 7
 AFX_FILE_HEADER_BYTES = 80
+AFB_MAGIC = 0x00424641
+AFB_HEADER_BYTES = 32
+AFC_MAGIC = 0x00434641
+AFC_HEADER_BYTES = 32
 AFX_FIELD_PITCH = 6
 AFX_FIELD_LFO = 7
 AFX_FIELD_DSP_SEND = 8
@@ -84,6 +89,68 @@ def require_asset_capacity(image_size: int) -> None:
 
 def align(value: int, multiple: int) -> int:
     return (value + multiple - 1) // multiple * multiple
+
+
+def build_bank_payload(samples: list[dict]) -> tuple[bytes, list[int], int, int]:
+    """Emit AFB directly from compiler sample records, without an AFX container."""
+    offsets, cursor = [], 0
+    for sample in samples:
+        cursor = align(cursor, 32)
+        offsets.append(cursor)
+        cursor += len(sample["raw"])
+    if cursor > AICA_ASSET_CAPACITY:
+        require_asset_capacity(cursor)
+    payload = bytearray(cursor)
+    for sample, offset in zip(samples, offsets):
+        payload[offset:offset + len(sample["raw"])] = sample["raw"]
+    digest = hashlib.sha256(payload).digest()
+    low, high = struct.unpack_from("<2I", digest)
+    if not low and not high: low = 1
+    result = bytearray(AFB_HEADER_BYTES + len(payload))
+    struct.pack_into("<8I", result, 0, AFB_MAGIC, 1, low, high,
+                     AFB_HEADER_BYTES, len(payload), len(result), 0)
+    result[AFB_HEADER_BYTES:] = payload
+    return bytes(result), offsets, low, high
+
+
+def build_bank_flow(setups: bytes, setup_samples: list[int], samples: list[dict], sample_offsets: list[int],
+                    bank_low: int, bank_high: int, lanes: bytes, stream: bytes,
+                    flags: int, channels: int, tick_rate: int) -> bytes:
+    """Emit the public bank-bound AFX directly from prepared AICA register state."""
+    if len(setups) != len(setup_samples) * SETUP_BYTES:
+        raise CompileError("internal setup relocation mismatch")
+    relocations = bytearray(len(setup_samples) * 12)
+    for index, sample in enumerate(setup_samples):
+        offset, size = sample_offsets[sample], len(samples[sample]["raw"])
+        struct.pack_into("<3I", relocations, index * 12, index * SETUP_BYTES, offset, size)
+    resident = setups + lanes + stream
+    control_id = struct.unpack_from("<I", hashlib.sha256(
+        struct.pack("<5I", flags, channels, tick_rate, bank_low, bank_high) + relocations + resident).digest())[0] or 1
+    image_at = align(AFX_FILE_HEADER_BYTES + len(relocations), 32)
+    result = bytearray(image_at + len(resident))
+    struct.pack_into("<20I", result, 0, AFX_FILE_MAGIC, AFX_FILE_VERSION, len(result), flags,
+                     image_at, len(resident), len(setups) + len(lanes), len(stream),
+                     control_id, len(setup_samples), bank_low, bank_high, AFX_FILE_HEADER_BYTES,
+                     len(setup_samples), 0, 0, channels, tick_rate, 1, 0)
+    result[AFX_FILE_HEADER_BYTES:AFX_FILE_HEADER_BYTES + len(relocations)] = relocations
+    result[image_at:] = resident
+    return bytes(result)
+
+
+def build_seek_index(flow: bytes, checkpoints: bytes) -> bytes:
+    """Wrap compiler checkpoints in an optional SH-4-only AFC sidecar."""
+    if not checkpoints:
+        return b""
+    if len(flow) < AFX_FILE_HEADER_BYTES:
+        raise CompileError("truncated AFX while building seek index")
+    header = struct.unpack_from("<20I", flow)
+    if header[0:2] != (AFX_FILE_MAGIC, AFX_FILE_VERSION) or not header[8]:
+        raise CompileError("seek index needs a final bank-bound AFX")
+    result = bytearray(AFC_HEADER_BYTES + len(checkpoints))
+    struct.pack_into("<8I", result, 0, AFC_MAGIC, 1, header[8], header[10], header[11],
+                     AFC_HEADER_BYTES, len(checkpoints), len(result))
+    result[AFC_HEADER_BYTES:] = checkpoints
+    return bytes(result)
 
 
 def mapping_key(note: dict) -> str:
@@ -979,6 +1046,7 @@ def resolve_instruments(timeline: dict, mapping: dict) -> tuple[dict[str, dict],
 
 def sf2_groups(timeline: dict, mapping: dict) -> dict:
     """Validate SF2 mappings and group notes by their one source preset."""
+    import afx_sf2
     instruments = mapping.get("instruments")
     if not isinstance(instruments, dict):
         raise CompileError("mapping must contain an instruments object")
@@ -1026,6 +1094,7 @@ def sf2_groups(timeline: dict, mapping: dict) -> dict:
 
 def expand_sf2_layers(timeline: dict, mapping: dict) -> None:
     """Lower every selected SF2 zone into an independently colourable voice."""
+    import afx_sf2
     layered = []
     for ((source, preset_id, channel), group) in sf2_groups(timeline, mapping).items():
         if group["data"] is not None:
@@ -1056,6 +1125,7 @@ def expand_sf2_layers(timeline: dict, mapping: dict) -> None:
 
 def _sf2_records(timeline: dict, mapping: dict) -> list[dict]:
     """Materialize each independently coloured selected SF2 zone."""
+    import afx_sf2
     records = [None] * len(timeline["notes"])
     groups = sf2_groups(timeline, mapping)
     for ((source, preset_id, channel), group) in groups.items():
@@ -1246,7 +1316,8 @@ def optimize_record_setups(records: list[dict]) -> tuple[list[dict], dict]:
 
 
 def _compile_pcm16_records(timeline: dict, records: list[dict], mapping: dict, tick_rate: int,
-                           keyoff_cluster: dict | None, kind: str, warnings: list[dict]) -> tuple[bytes, dict]:
+                           keyoff_cluster: dict | None, kind: str, warnings: list[dict],
+                           ):
     samples, sample_index = [], {}
     for record in records:
         identity = (hashlib.sha256(record["raw"]).digest(), record["format"], record["frames"],
@@ -1286,14 +1357,8 @@ def _compile_pcm16_records(timeline: dict, records: list[dict], mapping: dict, t
     if lane_map is not None and len(lane_map) != timeline["allocation"]["local_channels"]:
         raise CompileError("lane map must contain one entry per local channel")
     stream_offset = len(setups) * SETUP_BYTES + (len(lane_map) if lane_map else 0)
-    sample_cursor = align(stream_offset + len(stream), 32)
-    sample_offsets = []
-    for sample in samples:
-        sample_cursor = align(sample_cursor, 32)
-        sample_offsets.append(sample_cursor)
-        sample_cursor += len(sample["raw"])
-    image_size = sample_cursor
-    require_asset_capacity(image_size)
+    bank, sample_offsets, bank_low, bank_high = build_bank_payload(samples)
+    image_size = len(setups) * SETUP_BYTES + len(lane_map or b"") + len(stream)
     def checkpoint_state(payload):
         note, record = payload["note"], payload["record"]
         setup = record  # Authored state, before dictionary substitutions.
@@ -1312,31 +1377,12 @@ def _compile_pcm16_records(timeline: dict, records: list[dict], mapping: dict, t
         return state
     checkpoints = encode_checkpoints(checkpoint_plan(events, batches, stream_offset, stream_end),
                                      checkpoint_state)
-    samples_offset = 80
-    relocations_offset = samples_offset + len(samples) * 16
-    checkpoints_offset = relocations_offset + len(setups) * 12
-    metadata_size = checkpoints_offset + len(checkpoints)
-    image_offset = align(metadata_size, 32)
-    total_size = image_offset + image_size
-    file = bytearray(total_size)
-    work = work_report(events)
-    flags = AFX_FLAG_MUSIC | (AFX_FLAG_MUSIC_CHORUS if any(record.get("midi_chorus") == "apply" for record in records) else 0)
-    if lane_map: flags |= AFX_FLAG_LANES
-    header = (AFX_FILE_MAGIC, AFX_ABI_VERSION, total_size, flags,
-              image_offset, image_size, stream_offset, len(stream), 0, len(setups),
-              samples_offset, len(samples), relocations_offset, len(setups), checkpoints_offset, len(checkpoints),
-              timeline["allocation"]["local_channels"], tick_rate, 1, encode_work_profile(work))
-    struct.pack_into("<20I", file, 0, *header)
-    image = memoryview(file)[image_offset:]
-    for index, sample in enumerate(samples):
-        offset = sample_offsets[index]
-        struct.pack_into("<4I", file, samples_offset + index * 16, offset, len(sample["raw"]),
-                         sample["frames"], sample["format"])
-        image[offset:offset + len(sample["raw"])] = sample["raw"]
+    setup_bytes = bytearray(len(setups) * SETUP_BYTES)
     for index, setup in enumerate(setups):
         offset = sample_offsets[setup["sample"]]
         state = [0] * 18
-        state[0] = (0x0200 if setup["loop"] else 0) | (samples[setup["sample"]]["format"] << 7) | ((offset >> 16) & 0x7F)
+        state[0] = ((0x0200 if setup["loop"] else 0) | (samples[setup["sample"]]["format"] << 7) |
+                    ((offset >> 16) & 0x7F))
         state[1] = offset & 0xFFFF
         state[2], state[3] = setup["loop_start"], setup["loop_end"]
         state[4], state[5] = setup["env_ad"], setup["env_dr"]
@@ -1344,17 +1390,24 @@ def _compile_pcm16_records(timeline: dict, records: list[dict], mapping: dict, t
         state[8], state[9], state[10] = setup["dsp_send"], setup["direct"], setup["total_level"]
         state[11:16] = setup.get("filter_levels", [setup.get("filter_level", 0x1fff)] * 5)
         state[16], state[17] = setup.get("filter_env_ad", 0), setup.get("filter_env_dr", 0)
-        struct.pack_into("<18H", image, index * SETUP_BYTES, *state)
-        struct.pack_into("<3I", file, relocations_offset + index * 12,
-                         index * SETUP_BYTES, setup["sample"], 0)
-    if lane_map:
-        image[len(setups) * SETUP_BYTES:stream_offset] = bytes(lane_map)
-    file[checkpoints_offset:checkpoints_offset + len(checkpoints)] = checkpoints
-    image[stream_offset:stream_offset + len(stream)] = stream
-    if keyoff_cluster:
-        warnings.append({"kind": "event_cluster_spread",
-                         "detail": "explicit event-cluster policy shifts selected note starts and/or note-offs",
-                         **keyoff_cluster})
+        struct.pack_into("<18H", setup_bytes, index * SETUP_BYTES, *state)
+    flags = AFX_FLAG_MUSIC | (AFX_FLAG_MUSIC_CHORUS if any(record.get("midi_chorus") == "apply" for record in records) else 0)
+    if lane_map: flags |= AFX_FLAG_LANES
+    flow = build_bank_flow(bytes(setup_bytes), [setup["sample"] for setup in setups], samples, sample_offsets,
+                           bank_low, bank_high, bytes(lane_map or b""), bytes(stream),
+                           flags, timeline["allocation"]["local_channels"], tick_rate)
+    seek = build_seek_index(flow, checkpoints)
+    diagnostics = _pcm_diagnostics(timeline, records, samples, setups, events, encode_event, stream,
+                                   batches, stream_offset, stream_end, checkpoints, image_size, len(flow),
+                                   tick_rate, keyoff_cluster, kind, warnings, curve_patch_policy,
+                                   dictionary_optimization, event_offsets)
+    diagnostics["seek_index_bytes"] = len(seek)
+    return bank, flow, seek, diagnostics
+
+
+def _pcm_diagnostics(timeline, records, samples, setups, events, encode_event, stream, batches, stream_offset,
+                     stream_end, checkpoints, image_size, total_size, tick_rate, keyoff_cluster, kind, warnings,
+                     curve_patch_policy, dictionary_optimization, event_offsets):
     notes = len(records)
     setup_encoding = {
         "notes": notes, "setup_state_bytes": len(setups) * SETUP_BYTES,
@@ -1368,8 +1421,9 @@ def _compile_pcm16_records(timeline: dict, records: list[dict], mapping: dict, t
                                         setup_encoding["note_reference_bytes"])
     setup_encoding["savings_bytes"] = (setup_encoding["full_note_state_bytes"] -
                                          setup_encoding["encoded_bytes"])
-    diagnostics = {
-        "abi": AFX_ABI_VERSION,
+    lane_map = timeline.get("lane_map")
+    return {
+        "abi": AFX_FILE_VERSION,
         "source_sha256": hashlib.sha256(json.dumps(timeline, sort_keys=True).encode()).hexdigest(),
         "kind": kind, "tick_rate": tick_rate,
         "required_channels": timeline["allocation"]["local_channels"], "setups": len(setups),
@@ -1381,7 +1435,8 @@ def _compile_pcm16_records(timeline: dict, records: list[dict], mapping: dict, t
         "sample_bytes": sum(len(sample["raw"]) for sample in samples),
         "stream_bytes": len(stream), "checkpoint_count": len(checkpoint_plan(events, batches, stream_offset, stream_end)),
         "checkpoint_bytes": len(checkpoints), "image_bytes": image_size, "total_bytes": total_size,
-        "duration_ticks": end_tick, "work": work, "keyoff_cluster": keyoff_cluster,
+        "duration_ticks": max((control_lifetime_end(timeline, note, tick_rate) for note in timeline["notes"]), default=0),
+        "work": work_report(events), "keyoff_cluster": keyoff_cluster,
         "lanes": len(set(lane_map)) if lane_map else 0,
         "curve_patch_policy": curve_patch_policy,
         "setup_dictionary": setup_encoding,
@@ -1390,7 +1445,6 @@ def _compile_pcm16_records(timeline: dict, records: list[dict], mapping: dict, t
                                     "detail": "explicit policy delayed only authored curve PATCHes",
                                     **curve_patch_policy}] if curve_patch_policy else []),
     }
-    return bytes(file), diagnostics
 
 
 def _sf2_warnings(timeline: dict, records: list[dict], tick_rate: int) -> list[dict]:
@@ -1470,7 +1524,7 @@ def _sf2_warnings(timeline: dict, records: list[dict], tick_rate: int) -> list[d
 
 
 def compile_sf2_pcm16_timeline(timeline: dict, mapping: dict, tick_rate: int,
-                               keyoff_cluster: dict | None) -> tuple[bytes, dict]:
+                               keyoff_cluster: dict | None):
     records = _sf2_records(timeline, mapping)
     return _compile_pcm16_records(timeline, records, mapping, tick_rate, keyoff_cluster, "sf2_pcm16",
                                   _sf2_warnings(timeline, records, tick_rate))
@@ -1565,7 +1619,7 @@ def _raw_pcm16_records(timeline: dict, mapping: dict, kind: str = "raw_pcm16") -
 
 
 def compile_raw_pcm16_timeline(timeline: dict, mapping: dict, tick_rate: int,
-                               keyoff_cluster: dict | None) -> tuple[bytes, dict]:
+                               keyoff_cluster: dict | None):
     records = _raw_pcm16_records(timeline, mapping)
     velocities = {value.get("velocity") for value in mapping.get("instruments", {}).values()
                   if isinstance(value, dict)}
@@ -1586,7 +1640,7 @@ def compile_raw_pcm16_timeline(timeline: dict, mapping: dict, tick_rate: int,
 
 
 def compile_wavetable_timeline(timeline: dict, mapping: dict, tick_rate: int,
-                               keyoff_cluster: dict | None) -> tuple[bytes, dict]:
+                               keyoff_cluster: dict | None):
     """Lower explicit revision-owned waveform cycles through the normal PCM path."""
     records = _raw_pcm16_records(timeline, mapping, "wavetable")
     warnings = [{"kind": "wavetable_native_loop",
@@ -1603,12 +1657,12 @@ def compile_wavetable_timeline(timeline: dict, mapping: dict, tick_rate: int,
     return _compile_pcm16_records(timeline, records, mapping, tick_rate, keyoff_cluster, "wavetable", warnings)
 
 
-def attach_source_warnings(result: tuple[bytes, dict], warnings: list[dict]) -> tuple[bytes, dict]:
+def attach_source_warnings(result, warnings: list[dict]):
     """Keep best-effort MIDI feature diagnostics on the compiled candidate."""
-    image, diagnostics = result
+    *images, diagnostics = result
     if warnings:
         diagnostics["warnings"] = warnings + diagnostics["warnings"]
-    return image, diagnostics
+    return (*images, diagnostics)
 
 
 CURVE_LIMITS = {"gain_db": (-24, 24), "vibrato_depth": (0, 7), "vibrato_rate": (0, 31), "shorten_ms": (0, 30)}
@@ -1728,32 +1782,12 @@ def scoped_expression(timeline, mapping, tick_rate):
     return timeline, mapping
 
 
-def compile_timeline(timeline: dict, mapping: dict, tick_rate: int = 1000, metadata: dict | None = None) -> tuple[bytes, dict]:
-    from afx_metadata import attach
-    def identity(value):
-        def encode(item):
-            if isinstance(item, bytes): return {"sha256": hashlib.sha256(item).hexdigest()}
-            if isinstance(item, Path): return str(item)
-            raise TypeError(type(item).__name__)
-        return hashlib.sha256(json.dumps(value, sort_keys=True, default=encode, separators=(",", ":")).encode()).hexdigest()
-    recipes = {json.dumps(config["performance"], sort_keys=True) for field in
-               ("instruments", "track_overrides", "source_overrides", "note_overrides")
-               for config in (mapping.get(field, {}) if isinstance(mapping.get(field, {}), dict) else {}).values() if isinstance(config, dict) and config.get("performance")}
-    info = {"title": mapping.get("title", "Untitled"),
-            "instruments": {key: config.get("label", key) for key, config in (mapping.get("instruments", {}) if isinstance(mapping.get("instruments", {}), dict) else {}).items() if isinstance(config, dict)},
-            "source_timeline_sha256": identity(timeline), "settings_sha256": identity(mapping),
-            "compiler": {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-                         for name in ("afx_compile.py", "afx_midi.py", "afx_sf2.py", "afx_metadata.py")},
-            "expression": {"algorithm": "scoped_expression_sha256_v1", "recipes": [json.loads(r) for r in sorted(recipes)]},
-            **(metadata or {})}
-    image, diagnostics = _compile_performance(timeline, mapping, tick_rate)
-    if diagnostics.get("humanize"): info["humanization"] = diagnostics["humanize"]
-    image = attach(image, info)
-    diagnostics.update(total_bytes=len(image), container_version=1, package_metadata=info)
-    return image, diagnostics
+def compile_bank_flow_timeline(timeline: dict, mapping: dict, tick_rate: int = 1000):
+    """Compile directly to one AFB payload and one sample-free ABI-7 AFX flow."""
+    return _compile_performance(timeline, mapping, tick_rate)
 
 
-def _compile_performance(timeline: dict, mapping: dict, tick_rate: int = 1000) -> tuple[bytes, dict]:
+def _compile_performance(timeline: dict, mapping: dict, tick_rate: int = 1000):
     """Optional deterministic expression, baked before layer expansion/allocation."""
     if type(tick_rate) is not int or not 1 <= tick_rate <= 1_000_000:
         raise CompileError("tick rate must be in 1..1000000")
@@ -1806,12 +1840,13 @@ def _compile_performance(timeline: dict, mapping: dict, tick_rate: int = 1000) -
             change["lfo"] = {**config["lfo"], "rate": max(0, min(31, config["lfo"]["rate"] + variation(8, opts["lfo_rate_steps"])))}
         key = str(note.get("source_note_id", note["id"]))
         overrides[key] = {**overrides.get(key, {}), **change}
-    image, diagnostics = _compile_timeline(timeline, mapping, tick_rate)
+    result = _compile_timeline(timeline, mapping, tick_rate)
+    *images, diagnostics = result
     diagnostics["humanize"] = {"algorithm": "expression_sha256_v1", **opts}
-    return image, diagnostics
+    return (*images, diagnostics)
 
 
-def _compile_timeline(timeline: dict, mapping: dict, tick_rate: int = 1000) -> tuple[bytes, dict]:
+def _compile_timeline(timeline: dict, mapping: dict, tick_rate: int = 1000):
     kinds = {instrument_config(mapping, note).get("kind") for note in timeline["notes"]}
     pcm_kinds = {"raw_pcm16", "sf2_pcm16", "wavetable"}
     mixed = len(kinds) > 1 and kinds <= pcm_kinds
@@ -1925,37 +1960,24 @@ def _compile_timeline(timeline: dict, mapping: dict, tick_rate: int = 1000) -> t
     if lane_map is not None and len(lane_map) != timeline["allocation"]["local_channels"]:
         raise CompileError("lane map must contain one entry per local channel")
     stream_offset = len(setups) * SETUP_BYTES + (len(lane_map) if lane_map else 0)
-    sample_offset = align(stream_offset + len(stream), 32)
-    image_size = sample_offset + len(sample)
-    require_asset_capacity(image_size)
-    metadata_size = 96 + len(setups) * 12
-    image_offset = align(metadata_size, 32)
-    total_size = image_offset + image_size
-    file = bytearray(total_size)
-    work = work_report(events)
-    flags = AFX_FLAG_MUSIC | (AFX_FLAG_MUSIC_CHORUS if any(record.get("midi_chorus") == "apply" for record in sine_records) else 0)
-    if lane_map: flags |= AFX_FLAG_LANES
-    header = (AFX_FILE_MAGIC, AFX_ABI_VERSION, total_size, flags, image_offset, image_size,
-              stream_offset, len(stream), 0, len(setups), 80, 1, 96, len(setups),
-              0, 0, timeline["allocation"]["local_channels"], tick_rate, 1, encode_work_profile(work))
-    struct.pack_into("<20I", file, 0, *header)
-    struct.pack_into("<4I", file, 80, sample_offset, len(sample), 104, PCM16)
-    image = memoryview(file)[image_offset:]
+    samples = [{"raw": sample, "format": PCM16}]
+    bank, sample_offsets, bank_low, bank_high = build_bank_payload(samples)
+    setup_bytes = bytearray(len(setups) * SETUP_BYTES)
     for index, instrument in enumerate(setups):
         state = [0] * 18
-        state[0] = 0x0200 | ((sample_offset >> 16) & 0x7F)  # native loop + sample address high
-        state[1] = sample_offset & 0xFFFF
-        state[3] = 100  # 100 frame period, four guard frames in the sample.
+        state[0] = 0x0200 | ((sample_offsets[0] >> 16) & 0x7F)
+        state[1] = sample_offsets[0] & 0xFFFF
+        state[3] = 100
         state[4] = state[5] = 0x001F
         state[7] = instrument["lfo"]
         state[8], state[9], state[10] = instrument["dsp_send"], instrument["direct"], instrument["total_level"]
-        state[11:16] = [0x1fff] * 5  # Open filter, as in sampled instruments; zero mutes physical AICA.
-        struct.pack_into("<18H", image, index * SETUP_BYTES, *state)
-        struct.pack_into("<3I", file, 96 + index * 12, index * SETUP_BYTES, 0, 0)
-    if lane_map:
-        image[len(setups) * SETUP_BYTES:stream_offset] = bytes(lane_map)
-    image[stream_offset:stream_offset + len(stream)] = stream
-    image[sample_offset:sample_offset + len(sample)] = sample
+        state[11:16] = [0x1fff] * 5
+        struct.pack_into("<18H", setup_bytes, index * SETUP_BYTES, *state)
+    flags = AFX_FLAG_MUSIC | (AFX_FLAG_MUSIC_CHORUS if any(record.get("midi_chorus") == "apply" for record in sine_records) else 0)
+    if lane_map: flags |= AFX_FLAG_LANES
+    flow = build_bank_flow(bytes(setup_bytes), [0] * len(setups), samples, sample_offsets, bank_low, bank_high,
+                           bytes(lane_map or b""), bytes(stream), flags,
+                           timeline["allocation"]["local_channels"], tick_rate)
     notes = len(timeline["notes"])
     setup_encoding = {
         "notes": notes, "setup_state_bytes": len(setups) * SETUP_BYTES,
@@ -1969,11 +1991,14 @@ def _compile_timeline(timeline: dict, mapping: dict, tick_rate: int = 1000) -> t
     setup_encoding["savings_bytes"] = (setup_encoding["full_note_state_bytes"] -
                                          setup_encoding["encoded_bytes"])
     diagnostics = {
-        "abi": AFX_ABI_VERSION, "source_sha256": hashlib.sha256(json.dumps(timeline, sort_keys=True).encode()).hexdigest(),
+        "abi": AFX_FILE_VERSION, "source_sha256": hashlib.sha256(json.dumps(timeline, sort_keys=True).encode()).hexdigest(),
         "tick_rate": tick_rate, "required_channels": timeline["allocation"]["local_channels"],
-        "setups": len(setups), "stream_bytes": len(stream), "image_bytes": image_size,
-        "total_bytes": total_size, "duration_ticks": events[-1][0] if events else 0,
-        "work": work, "keyoff_cluster": cluster_policy, "curve_patch_policy": curve_patch_policy,
+        "setups": len(setups), "sample_count": 1, "sample_bytes": len(sample),
+        "pcm16_bytes": len(sample), "pcm8_bytes": 0, "adpcm_bytes": 0,
+        "stream_bytes": len(stream), "image_bytes": len(setup_bytes) + len(lane_map or b"") + len(stream),
+        "total_bytes": len(flow), "bank_bytes": len(bank),
+        "duration_ticks": events[-1][0] if events else 0, "work": work_report(events),
+        "keyoff_cluster": cluster_policy, "curve_patch_policy": curve_patch_policy,
         "setup_dictionary": setup_encoding,
         "source_events": source_event_map(timeline, events, event_offsets, stream_offset),
         "warnings": warnings + ([{"kind": "event_cluster_spread",
@@ -1983,7 +2008,8 @@ def _compile_timeline(timeline: dict, mapping: dict, tick_rate: int = 1000) -> t
                        "detail": "explicit policy delayed only authored curve PATCHes",
                        **curve_patch_policy}] if curve_patch_policy else []),
     }
-    return attach_source_warnings((bytes(file), diagnostics), timeline["warnings"])
+    diagnostics["seek_index_bytes"] = 0
+    return attach_source_warnings((bank, flow, b"", diagnostics), timeline["warnings"])
 
 
 def main(argv: list[str]) -> int:
@@ -1991,13 +2017,20 @@ def main(argv: list[str]) -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("mapping", type=Path, help="JSON object with an instruments map")
     parser.add_argument("output", type=Path)
+    parser.add_argument("--bank", type=Path,
+                        help="AFB output path (defaults to OUTPUT with an .afb suffix)")
     parser.add_argument("--tick-rate", type=int, default=1000)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
         mapping = resolve_mapping_paths(json.loads(args.mapping.read_text()), args.mapping.parent)
-        image, diagnostics = compile_timeline(afx_midi.parse(args.source), mapping, args.tick_rate)
-        args.output.write_bytes(image)
+        bank, flow, seek, diagnostics = compile_bank_flow_timeline(afx_midi.parse(args.source), mapping, args.tick_rate)
+        bank_path = args.bank or args.output.with_suffix(".afb")
+        bank_path.write_bytes(bank)
+        args.output.write_bytes(flow)
+        if seek: args.output.with_suffix(".afc").write_bytes(seek)
+        diagnostics = {**diagnostics, "bank": str(bank_path), "bank_bytes": len(bank),
+                       "flow_bytes": len(flow)}
     except (OSError, ValueError, CompileError) as error:
         print(f"afx-compile: {error}", file=sys.stderr)
         return 2

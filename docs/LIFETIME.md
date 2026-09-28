@@ -3,16 +3,17 @@
 There are three separate lifetimes: a bank's samples, a flow instance and a
 source sample's loop points. They must not be conflated.
 
-An AFB1 bank owns uploaded samples and compact flow tables. An active instance
-retains its flow and bank. Call `afx_instance_stop`, keep calling `afx_update`,
-observe completion with `afx_instance_status`, then call
-`afx_instance_recycle`. Only after every instance using a bank has recycled may
-`afx_sfx_bank_release` free it.
+An AFB bank owns one contiguous uploaded sample block. A bank-bound AFX flow
+retains that bank, and an active instance retains its flow. Call
+`afx_instance_stop`, keep calling `afx_update`, observe completion with
+`afx_instance_status`, then call `afx_instance_recycle`. Only after every flow
+and instance using a bank has been freed/recycled may `afx_bank_release` free
+it.
 
 At a scene transition, cancel delayed DKR requests, stop active SFX, wait for
 their recycling, then release scene-local and idle fallback banks. Resident
-music samples and core SFX remain loaded; a new song only replaces its control
-flow.
+music samples and core SFX remain loaded; a new song only replaces its AFX
+control flow.
 
 N64 sample looping is not a request for an infinite AICAflow instance. The N64
 importer marks an AICAflow SFX as controlled only when its envelope sustains

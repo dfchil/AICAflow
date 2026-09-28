@@ -9,7 +9,7 @@ static int step_valid(const afx_dsp_step_t *s) {
            s->table <= 1 && s->mwt <= 1 && s->mrd <= 1 && s->ewt <= 1 &&
            s->ewa <= 15 && s->adrl <= 1 && s->frcl <= 1 && s->shift <= 3 &&
            s->yrl <= 1 && s->negb <= 1 && s->zero <= 1 && s->bsel <= 1 &&
-           s->nofl <= 1 && s->masa <= 63 && s->adreb <= 1 && s->nxadr <= 1;
+           s->nofl <= 1 && s->masa <= 31 && s->adreb <= 1 && s->nxadr <= 1;
 }
 
 int afx_dsp_program_init(afx_dsp_program_t *program) {
@@ -57,7 +57,7 @@ int afx_dsp_program_coefficient(afx_dsp_program_t *program, uint8_t index,
 
 int afx_dsp_program_address(afx_dsp_program_t *program, uint8_t index,
                             uint16_t value) {
-    if (!program || index >= AFX_DSP_ADDRESSES) return -AFX_BAD_COMMAND;
+    if (!program || index >= AFX_DSP_ADDRESSES || (index & 1u)) return -AFX_BAD_COMMAND;
     program->words[AFX_DSP_MPRO_WORDS + AFX_DSP_COEFFICIENTS + index] = value;
     return AFX_OK;
 }
@@ -106,6 +106,7 @@ int afx_dsp_program_delay(afx_dsp_program_t *program, uint16_t samples,
     if (!result) result = afx_dsp_program_coefficient(program, 6, 8192);
     if (!result) result = afx_dsp_program_coefficient(program, 7, feedback);
     if (!result) result = afx_dsp_program_address(program, 0, samples);
+    if (!result) result = afx_dsp_program_address(program, 2, 0);
     return result;
 }
 
@@ -132,8 +133,9 @@ int afx_dsp_program_pingpong(afx_dsp_program_t *program, uint16_t samples,
     if (!result) result = afx_dsp_program_coefficient(program, 11, feedback);
     if (!result) result = afx_dsp_program_coefficient(program, 14, feedback);
     if (!result) result = afx_dsp_program_address(program, 0, samples);
-    if (!result) result = afx_dsp_program_address(program, 2, (uint16_t)(32768u + samples));
-    if (!result) result = afx_dsp_program_address(program, 3, 32768);
+    if (!result) result = afx_dsp_program_address(program, 2, 0);
+    if (!result) result = afx_dsp_program_address(program, 4, (uint16_t)(32768u + samples));
+    if (!result) result = afx_dsp_program_address(program, 6, 32768);
     return result;
 }
 
@@ -218,6 +220,7 @@ int afx_dsp_program_modulated_delay(afx_dsp_program_t *program, uint16_t base_sa
         if (!result) result = afx_dsp_program_coefficient(program, 8, 8192);
     }
     if (!result) result = afx_dsp_program_address(program, 0, base_samples);
+    if (!result) result = afx_dsp_program_address(program, 2, 0);
     return result;
 }
 
@@ -274,7 +277,7 @@ int afx_dsp_program_multitap(afx_dsp_program_t *program) {
         uint8_t b = 3 + i * 4;
         result = put(program, b, (afx_dsp_step_t){.mrd = 1, .masa = i + 1, .zero = 1});
         if (!result) result = put(program, b + 2, (afx_dsp_step_t){.iwt = 1, .iwa = i, .zero = 1});
-        if (!result) result = afx_dsp_program_address(program, i + 1, taps[i]);
+        if (!result) result = afx_dsp_program_address(program, (uint8_t)(2u * (i + 1u)), taps[i]);
     }
     if (!result) result = put(program, 20, (afx_dsp_step_t){.ira = 0, .xsel = 1, .zero = 1});
     if (!result) result = put(program, 21, (afx_dsp_step_t){.ira = 2, .xsel = 1, .bsel = 1});
@@ -401,6 +404,7 @@ int afx_dsp_program_pitch_shift(afx_dsp_program_t *program, bool harmony) {
         if (!result) result = put(program, 37, (afx_dsp_step_t){.ewt = 1, .ewa = 1, .zero = 1});
     }
     if (!result) result = afx_dsp_program_address(program, 0, 2048);
+    if (!result) result = afx_dsp_program_address(program, 2, 0);
     return result;
 }
 
@@ -456,8 +460,8 @@ static int room_allpass(afx_dsp_program_t *p, uint8_t b, uint8_t memory, uint8_t
     if (!result) result = afx_dsp_program_coefficient(p, b + 5, first ? -4096 : -16384);
     if (!result) result = afx_dsp_program_coefficient(p, b + 6, first ? 8192 : 32760);
     if (!result) result = afx_dsp_program_coefficient(p, b + 7, 16384);
-    if (!result) result = afx_dsp_program_address(p, memory * 2, base + length);
-    if (!result) result = afx_dsp_program_address(p, memory * 2 + 1, base);
+    if (!result) result = afx_dsp_program_address(p, memory * 4, base + length);
+    if (!result) result = afx_dsp_program_address(p, memory * 4 + 2, base);
     (void)large;
     return result;
 }
@@ -485,8 +489,8 @@ int afx_dsp_program_room(afx_dsp_program_t *program, int16_t feedback,
         if (!result) result = put(program, 7, (afx_dsp_step_t){.mwt = 1, .masa = 19, .zero = 1});
         if (!result) result = afx_dsp_program_coefficient(program, 4, 32760);
         if (!result) result = afx_dsp_program_coefficient(program, 5, 8192);
-        if (!result) result = afx_dsp_program_address(program, 18, 8 * spacing + 1323);
-        if (!result) result = afx_dsp_program_address(program, 19, 8 * spacing);
+        if (!result) result = afx_dsp_program_address(program, 36, 8 * spacing + 1323);
+        if (!result) result = afx_dsp_program_address(program, 38, 8 * spacing);
         /* The second allpass now reads predelay TEMP70. */
         if (!result) result = put(program, 17, (afx_dsp_step_t){.tra = 70, .bsel = 1});
         if (!result) result = put(program, 18, (afx_dsp_step_t){.tra = 70, .zero = 1, .twt = 1, .twa = 80});
@@ -515,8 +519,8 @@ int afx_dsp_program_room(afx_dsp_program_t *program, int16_t feedback,
         if (!result) result = afx_dsp_program_coefficient(program, b + 5, damping);
         if (!result) result = afx_dsp_program_coefficient(program, b + 6, 16384);
         if (!result) result = afx_dsp_program_coefficient(program, b + 7, feedback);
-        if (!result) result = afx_dsp_program_address(program, memory * 2, (uint16_t)(memory * spacing + lengths[i]));
-        if (!result) result = afx_dsp_program_address(program, memory * 2 + 1, memory * spacing);
+        if (!result) result = afx_dsp_program_address(program, memory * 4, (uint16_t)(memory * spacing + lengths[i]));
+        if (!result) result = afx_dsp_program_address(program, memory * 4 + 2, memory * spacing);
     }
     for (uint8_t channel = 0; !result && channel < 2; ++channel) {
         uint8_t b = comb_start + combs * 12 + channel * (combs + 1);
