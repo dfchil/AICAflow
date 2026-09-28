@@ -188,25 +188,14 @@ def _control_flow(bank_id: tuple[int, int], payload_offsets: list[int],
     image = setups + stream
     image_at = align(AFX_HEADER.size + len(relocations))
     result = bytearray(image_at + len(image))
-    duration = 0
-    cursor = 0
-    while cursor < len(stream):
-        opcode = stream[cursor]
-        if opcode in (0, OP_PARK): size, wait = 1, 0
-        elif opcode == afx_compile.AFX_OP_WAIT8: size, wait = 2, stream[cursor + 1]
-        elif opcode == afx_compile.AFX_OP_WAIT16: size, wait = 3, struct.unpack_from("<H", stream, cursor + 1)[0]
-        elif opcode == afx_compile.AFX_OP_WAIT32: size, wait = 5, struct.unpack_from("<I", stream, cursor + 1)[0]
-        elif opcode == afx_compile.AFX_OP_KEYOFF: size, wait = 2, 0
-        elif opcode == afx_compile.AFX_OP_NOTE_PL: size, wait = 8, 0
-        else: raise N64Error(f"unsupported generated SFX opcode {opcode:#x}")
-        if cursor + size > len(stream): raise N64Error("truncated generated SFX stream")
-        cursor += size
-        duration += wait
+    flags = AFX_FLAG_CONTROLLED if controlled else 0
+    control_id = struct.unpack_from("<I", hashlib.sha256(
+        struct.pack("<5I", flags, channels, 1000, *bank_id) + relocations + image).digest())[0] or 1
     AFX_HEADER.pack_into(result, 0, AFX_FILE_MAGIC, AFX_FILE_VERSION, len(result),
-                         AFX_FLAG_CONTROLLED if controlled else 0,
+                         flags,
                          image_at, len(image), len(setups), len(stream),
-                         0, len(components), bank_id[0], bank_id[1],
-                         AFX_HEADER.size, len(components), duration, 0,
+                         control_id, len(components), bank_id[0], bank_id[1],
+                         AFX_HEADER.size, len(components), 0, 0,
                          channels, 1000, 1, 0)
     result[AFX_HEADER.size:AFX_HEADER.size + len(relocations)] = relocations
     result[image_at:] = image
