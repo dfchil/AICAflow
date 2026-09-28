@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7-dkr
+
+- The generic music player ignores player controls held while it starts, until
+  they have been released once. enDjinn's `START+A+B+X+Y` soft reset remains
+  enabled.
+
 ## 0.1.6-dkr
 
 - Compact shared music banks again use PCM8 by default and retain ADPCM only

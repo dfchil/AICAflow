@@ -57,7 +57,7 @@ static afx_asset_t asset;
 static afx_instance_t instance;
 static afx_bank_t player_bank;
 static int selected, playing = -1, loaded = -1;
-static bool room_cached, test_exit, paused;
+static bool input_armed, room_cached, test_exit, paused;
 static uint8_t last_ltrigger, last_rtrigger;
 static uint32_t paused_ms;
 static uint32_t rate_num, rate_den, duration_ms, started;
@@ -534,21 +534,29 @@ static void update(void *unused) {
     for (size_t i=0;i<enj_ctrl_states_length() && !pad;++i) pad=states[i];
 #ifdef PLAYER_FRAME_TEST
     pad=frame_test_input();
+    input_armed=true;
 #endif
     int r=0;
     if (pad) {
-        bool ltrigger=pad->ltrigger>=TRIGGER_PRESSED && last_ltrigger<TRIGGER_PRESSED;
-        bool rtrigger=pad->rtrigger>=TRIGGER_PRESSED && last_rtrigger<TRIGGER_PRESSED;
-        last_ltrigger=pad->ltrigger; last_rtrigger=pad->rtrigger;
-        if (pad->button.UP==ENJ_BUTTON_DOWN_THIS_FRAME) selected=(selected+SONG_COUNT-1)%SONG_COUNT;
-        if (pad->button.DOWN==ENJ_BUTTON_DOWN_THIS_FRAME) selected=(selected+1)%SONG_COUNT;
-        if (ltrigger) selected=(selected+SONG_COUNT-SONG_ROWS)%SONG_COUNT;
-        if (rtrigger) selected=(selected+SONG_ROWS)%SONG_COUNT;
-        if (pad->button.B==ENJ_BUTTON_DOWN_THIS_FRAME) { r=stop(); snprintf(message,sizeof(message),"Stopped"); }
-        else if (pad->button.A==ENJ_BUTTON_DOWN_THIS_FRAME) r=toggle();
-        else if (pad->button.LEFT==ENJ_BUTTON_DOWN_THIS_FRAME) r=seek(-10);
-        else if (pad->button.RIGHT==ENJ_BUTTON_DOWN_THIS_FRAME) r=seek(10);
-    } else last_ltrigger=last_rtrigger=0;
+        if (!input_armed) {
+            input_armed=pad->button.raw==0 && pad->ltrigger<TRIGGER_PRESSED && pad->rtrigger<TRIGGER_PRESSED;
+            last_ltrigger=pad->ltrigger;
+            last_rtrigger=pad->rtrigger;
+        }
+        if (input_armed) {
+            bool ltrigger=pad->ltrigger>=TRIGGER_PRESSED && last_ltrigger<TRIGGER_PRESSED;
+            bool rtrigger=pad->rtrigger>=TRIGGER_PRESSED && last_rtrigger<TRIGGER_PRESSED;
+            last_ltrigger=pad->ltrigger; last_rtrigger=pad->rtrigger;
+            if (pad->button.UP==ENJ_BUTTON_DOWN_THIS_FRAME) selected=(selected+SONG_COUNT-1)%SONG_COUNT;
+            if (pad->button.DOWN==ENJ_BUTTON_DOWN_THIS_FRAME) selected=(selected+1)%SONG_COUNT;
+            if (ltrigger) selected=(selected+SONG_COUNT-SONG_ROWS)%SONG_COUNT;
+            if (rtrigger) selected=(selected+SONG_ROWS)%SONG_COUNT;
+            if (pad->button.B==ENJ_BUTTON_DOWN_THIS_FRAME) { r=stop(); snprintf(message,sizeof(message),"Stopped"); }
+            else if (pad->button.A==ENJ_BUTTON_DOWN_THIS_FRAME) r=toggle();
+            else if (pad->button.LEFT==ENJ_BUTTON_DOWN_THIS_FRAME) r=seek(-10);
+            else if (pad->button.RIGHT==ENJ_BUTTON_DOWN_THIS_FRAME) r=seek(10);
+        }
+    } else { input_armed=false; last_ltrigger=last_rtrigger=0; }
     if (!r && visual_file) load_visual_chunk();
     if (r) { stop(); snprintf(message,sizeof(message),"Could not play/seek (%d). Press A to retry.",r); }
     if (playing>=0) {
