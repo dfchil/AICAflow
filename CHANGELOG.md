@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9-dkr
+
+- Ignore generated DKR music-player build, disc and binary directories in the
+  standalone source package.
+
 ## 0.1.8-dkr
 
 - Moved the DKR music player into AICAflow as a self-contained example with

@@ -10,10 +10,11 @@ seconds, and the triggers page through the list. `START+A+B+X+Y` is enDjinn's
 normal soft-reset exit chord. Short cues appear last; ambient tracks sit just
 above them.
 
-Build with a sibling [enDjinn](https://github.com/dfchil/enDjinn) checkout:
+Build with an [enDjinn](https://github.com/dfchil/enDjinn) checkout beside
+AICAflow, or beside the DKR checkout when AICAflow is its submodule:
 
 ```sh
-source ../../../enDjinn/environ.sh
+# Source the environ.sh from that enDjinn checkout.
 make
 make check
 make bin/dkr_music_player.cdi

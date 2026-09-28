@@ -5,3 +5,6 @@
 /driver/sh4/build/
 /driver/sh4/libaicaflow_host.a
 /tools/__pycache__/
+/examples/dkr_music_player/build/
+/examples/dkr_music_player/bin/
+/examples/dkr_music_player/cdrom/

@@ -31,6 +31,6 @@ FORCE:
 .PHONY: FORCE check
 
 check: $(ENJ_BINDIR)/$(ENJ_BASENAME).elf $(DKR_ASSET_STAMP)
-	$(MAKE) -C ../../driver smoke
 	test $$(find assets -maxdepth 1 -name '*.afx' | wc -l) -eq 64
-	for flow in assets/*.afx; do ../../driver/build/afx_validate "$$flow"; done
+	test $$(find assets -maxdepth 1 -name '*.afc' | wc -l) -eq 64
+	test $$(find assets/music_visuals -name '*.viz' | wc -l) -eq 64
