@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6-dkr
+
+- Compact shared music banks again use PCM8 by default and retain ADPCM only
+  when the established full-sample and attack-quality thresholds both pass.
+
 ## 0.1.5-dkr
 
 - Switched the DKR package to the final AFB sample-bank, sample-free AFX flow,

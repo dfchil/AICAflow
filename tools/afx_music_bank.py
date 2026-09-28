@@ -3,10 +3,13 @@
 
 import argparse
 import hashlib
+import math
 import re
 import struct
 import sys
 from pathlib import Path
+
+import afx_compile
 
 
 AFB_MAGIC = 0x00424641
@@ -24,6 +27,23 @@ CHECKPOINT_MAGIC = 0x31504B43
 
 def align(value: int) -> int:
     return (value + 31) & -32
+
+
+def compact_pcm16(raw: bytes) -> tuple[bytes, int]:
+    """Keep PCM8 by default; retain ADPCM only after the accepted quality gate."""
+    encoded = afx_compile.pcm16_to_adpcm(raw)
+    decoded = afx_compile.aica_adpcm_decode(encoded, len(raw) // 2)
+    source = struct.unpack(f"<{len(raw) // 2}h", raw)
+    restored = struct.unpack(f"<{len(decoded) // 2}h", decoded)
+    signal = sum(value * value for value in source)
+    noise = sum((left - right) ** 2 for left, right in zip(source, restored))
+    snr = float("inf") if not noise else 10 * math.log10(max(1, signal) / noise)
+    attack_frames = min(len(source), 1024)
+    attack_signal = sum(value * value for value in source[:attack_frames])
+    attack_noise = sum((left - right) ** 2
+                       for left, right in zip(source[:attack_frames], restored[:attack_frames]))
+    attack_snr = float("inf") if not attack_noise else 10 * math.log10(max(1, attack_signal) / attack_noise)
+    return (encoded, 2) if snr >= 30 and attack_snr >= 24 else (afx_compile.pcm16_to_pcm8(raw), 1)
 
 
 def _flow_id(path: Path) -> int:
@@ -113,7 +133,7 @@ def _control_id(header: list[int], data: bytes) -> int:
     return struct.unpack_from("<I", digest)[0] or 1
 
 
-def _rewrite_checkpoints(data: bytes, ranges: list[tuple[int, int, int]]) -> bytes:
+def _rewrite_checkpoints(data: bytes, ranges: list[tuple[int, int, int, int]]) -> bytes:
     """Relocate bank addresses in compiler checkpoint voice state."""
     if not data:
         return data
@@ -135,14 +155,18 @@ def _rewrite_checkpoints(data: bytes, ranges: list[tuple[int, int, int]]) -> byt
             control, low = struct.unpack_from("<HH", result, cursor + 4)
             if not control & 0x400:
                 old = ((control & 0x7F) << 16) | low
-                match = next(((start, size, new) for start, size, new in ranges if start <= old < start + size), None)
+                match = next(((start, size, new, sample_format)
+                              for start, size, new, sample_format in ranges
+                              if start <= old < start + size), None)
                 if match is None:
                     raise ValueError("checkpoint refers outside its source bank")
-                start, _, new = match
+                start, _, new, sample_format = match
                 address = new + old - start
                 if address > 0x7FFFFF:
                     raise ValueError("checkpoint AICA address exceeds 23 bits")
-                struct.pack_into("<HH", result, cursor + 4, (control & ~0x7F) | (address >> 16), address & 0xFFFF)
+                struct.pack_into("<HH", result, cursor + 4,
+                                 (control & ~0x1FF) | (sample_format << 7) | (address >> 16),
+                                 address & 0xFFFF)
             cursor += 40
     if cursor != len(result):
         raise ValueError("invalid AFX checkpoint table size")
@@ -158,9 +182,9 @@ def merge_bank_flows(paths: list[Path], flow_ids: dict[Path, int] | None = None)
     if len({flow["id"] for flow in flows}) != len(flows):
         raise ValueError("duplicate flow id")
     source_banks: dict[Path, tuple[bytes, int, int]] = {}
-    samples: list[bytes] = []
+    samples: list[tuple[bytes, int]] = []
     offsets: list[int] = []
-    sample_by_data: dict[bytes, int] = {}
+    sample_by_data: dict[tuple[bytes, int], int] = {}
     plans = []
     for flow in sorted(flows, key=lambda item: item["id"]):
         bank_path = flow["path"].with_suffix(".afb")
@@ -173,18 +197,24 @@ def merge_bank_flows(paths: list[Path], flow_ids: dict[Path, int] | None = None)
             if offset > len(payload) or size > len(payload) - offset:
                 raise ValueError(f"{flow['path']}: relocation lies outside {bank_path}")
             raw = payload[offset:offset + size]
-            sample = sample_by_data.setdefault(raw, len(samples))
+            control = struct.unpack_from("<H", flow["data"], flow["header"][4] + pair)[0]
+            sample_format = (control >> 7) & 3
+            if sample_format == 0:
+                raw, sample_format = compact_pcm16(raw)
+            if sample_format > 2:
+                raise ValueError(f"{flow['path']}: invalid AICA sample format")
+            sample = sample_by_data.setdefault((raw, sample_format), len(samples))
             if sample == len(samples):
-                samples.append(raw)
-            local.append((pair, offset, size, sample))
+                samples.append((raw, sample_format))
+            local.append((pair, offset, size, sample, sample_format))
         plans.append((flow, local))
     cursor = 0
-    for sample in samples:
+    for sample, _ in samples:
         cursor = align(cursor)
         offsets.append(cursor)
         cursor += len(sample)
     payload = bytearray(cursor)
-    for sample, offset in zip(samples, offsets):
+    for (sample, _), offset in zip(samples, offsets):
         payload[offset:offset + len(sample)] = sample
     digest = hashlib.sha256(payload).digest()
     bank_low, bank_high = struct.unpack_from("<2I", digest)
@@ -199,14 +229,16 @@ def merge_bank_flows(paths: list[Path], flow_ids: dict[Path, int] | None = None)
         header = list(flow["header"])
         image_at, relocations_at = header[4], header[12]
         ranges = []
-        for index, (pair, old, size, sample) in enumerate(local):
+        for index, (pair, old, size, sample, sample_format) in enumerate(local):
             new = offsets[sample]
             if new > 0x7FFFFF:
                 raise ValueError("AFB exceeds AICA's 23-bit address range")
             control, _ = struct.unpack_from("<HH", result, image_at + pair)
-            struct.pack_into("<HH", result, image_at + pair, (control & ~0x7F) | (new >> 16), new & 0xFFFF)
-            AFX_RELOCATION.pack_into(result, relocations_at + index * AFX_RELOCATION.size, pair, new, size)
-            ranges.append((old, size, new))
+            struct.pack_into("<HH", result, image_at + pair,
+                             (control & ~0x1FF) | (sample_format << 7) | (new >> 16), new & 0xFFFF)
+            AFX_RELOCATION.pack_into(result, relocations_at + index * AFX_RELOCATION.size,
+                                     pair, new, len(samples[sample][0]))
+            ranges.append((old, size, new, sample_format))
         header[10:12] = bank_low, bank_high
         checkpoints = _rewrite_checkpoints(flow["checkpoints"], ranges)
         header[8] = _control_id(header, result)
