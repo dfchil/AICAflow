@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8-dkr
+
+- Moved the DKR music player into AICAflow as a self-contained example with
+  its checked-in shared AFB, compact AFX flows, AFC seek data and VIZ files.
+
 ## 0.1.7-dkr
 
 - The generic music player ignores player controls held while it starts, until

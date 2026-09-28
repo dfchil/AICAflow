@@ -1,4 +1,4 @@
-# AICAflow DKR Edition 0.1.7
+# AICAflow DKR Edition 0.1.8
 
 This is the minimal AICAflow source distribution needed by the Dreamcast port
 of Diddy Kong Racing. It contains the AICA firmware, SH-4 host library, and
@@ -7,7 +7,9 @@ the N64 music/SFX import pipeline used by DKR.
 It is released under the [MIT License](LICENSE).
 
 It deliberately does **not** contain the editor, tuner, general MIDI tools,
-other importers, examples, DSP labs, recordings, or unrelated documentation.
+other importers, DSP labs, recordings, or unrelated documentation. The one
+included example is the self-contained DKR music player, with its checked-in
+AFB, AFX, AFC and VIZ assets.
 
 ## Documentation
 
