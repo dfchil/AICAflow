@@ -21,9 +21,20 @@ API and `aicaflow/sfx_bank.h` owns the AFB1/AFC1 loader API.
 
 ## Requirements
 
-- KallistiOS with `kos-cc`, `arm-eabi-gcc`, and `arm-eabi-objcopy`
+- KallistiOS with `kos-cc` (no ARM7 toolchain required)
 - Python 3.10+ and `mido` (`python3 -m pip install mido`)
 - A DKR checkout with its extracted assets
+
+The matching compiled firmware is checked in as `driver/arm7/aicaflow.drv`.
+Normal builds and `make clean` preserve it. After changing ARM7 sources or the
+shared protocol, rebuild it with the KOS ARM toolchain and commit the binary
+alongside the sources:
+
+```sh
+source /opt/toolchains/dc/kos/environ.sh
+make -C driver/arm7 clean
+make -C driver/arm7 rebuild
+```
 
 ## Use with DKR
 

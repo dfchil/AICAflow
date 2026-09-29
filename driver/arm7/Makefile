@@ -8,7 +8,11 @@ TARGET := aicaflow.drv
 ELF := aicaflow.elf
 OBJS := build/crt0.o build/driver.o
 
-all: $(TARGET)
+# Consumers use the checked-in firmware without an ARM toolchain.
+all:
+	@test -s $(TARGET) || { echo "Missing $(TARGET); restore it from Git or run make rebuild with the ARM toolchain." >&2; exit 1; }
+
+rebuild: $(TARGET)
 
 $(TARGET): $(ELF)
 	$(ARM_OBJCOPY) -O binary $< $@
@@ -29,6 +33,6 @@ build:
 	mkdir -p $@
 
 clean:
-	rm -f $(OBJS) build/driver.su build/aicaflow.ld $(ELF) $(TARGET) aicaflow.map
+	rm -f $(OBJS) build/driver.su build/aicaflow.ld $(ELF) aicaflow.map
 
-.PHONY: all clean
+.PHONY: all rebuild clean

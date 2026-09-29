@@ -12,7 +12,7 @@ python3 -m pip install mido
 make -f Makefile.dc -j8 dkracing.elf
 ```
 
-`Makefile.dc` builds the ARM7 firmware and SH-4 static library, imports the
+`Makefile.dc` uses the checked-in ARM7 firmware and builds the SH-4 static library, imports the
 N64 music/SFX assets, and links `dkracing.elf`. `make -f Makefile.dc -j8 cdi`
 uses the same generated audio files with the `/cd` mount.
 
