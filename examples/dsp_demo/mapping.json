@@ -1,0 +1,11 @@
+{
+  "instruments": {
+    "0:0:0": {
+      "kind": "sine",
+      "root_key": 69,
+      "velocity": "fixed",
+      "release": "keyoff",
+      "midi_reverb": "apply"
+    }
+  }
+}

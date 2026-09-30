@@ -9,6 +9,8 @@ diagnostics; malformed source performance is rejected before an AFX image is
 written.
 """
 
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -24,7 +26,6 @@ ROOT = Path(__file__).resolve().parent
 
 import afx_adpcm
 import afx_midi
-import afx_sf2
 
 AFX_FILE_MAGIC = 0x32584641
 AFX_ABI_VERSION = 6
@@ -979,6 +980,7 @@ def resolve_instruments(timeline: dict, mapping: dict) -> tuple[dict[str, dict],
 
 def sf2_groups(timeline: dict, mapping: dict) -> dict:
     """Validate SF2 mappings and group notes by their one source preset."""
+    import afx_sf2
     instruments = mapping.get("instruments")
     if not isinstance(instruments, dict):
         raise CompileError("mapping must contain an instruments object")
@@ -1026,6 +1028,7 @@ def sf2_groups(timeline: dict, mapping: dict) -> dict:
 
 def expand_sf2_layers(timeline: dict, mapping: dict) -> None:
     """Lower every selected SF2 zone into an independently colourable voice."""
+    import afx_sf2
     layered = []
     for ((source, preset_id, channel), group) in sf2_groups(timeline, mapping).items():
         if group["data"] is not None:
@@ -1056,6 +1059,7 @@ def expand_sf2_layers(timeline: dict, mapping: dict) -> None:
 
 def _sf2_records(timeline: dict, mapping: dict) -> list[dict]:
     """Materialize each independently coloured selected SF2 zone."""
+    import afx_sf2
     records = [None] * len(timeline["notes"])
     groups = sf2_groups(timeline, mapping)
     for ((source, preset_id, channel), group) in groups.items():

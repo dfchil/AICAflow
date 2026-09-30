@@ -7,7 +7,9 @@ the N64 music/SFX import pipeline used by DKR.
 It is released under the [MIT License](LICENSE).
 
 It deliberately does **not** contain the editor, tuner, general MIDI tools,
-other importers, examples, DSP labs, recordings, or unrelated documentation.
+other importers, DSP labs, recordings, or unrelated documentation.  The sole
+exception is `examples/dsp_demo`: a small, self-contained C example for the
+runtime DSP API shipped by this release.
 
 ## Documentation
 
@@ -15,6 +17,7 @@ other importers, examples, DSP labs, recordings, or unrelated documentation.
 - [N64 import](docs/N64_IMPORT.md): DKR's offline AFB/AFC asset pipeline.
 - [Lifetime](docs/LIFETIME.md): SFX, bank and instance ownership rules.
 - [Changes](CHANGELOG.md): release-specific compatibility notes.
+- [DSP demo](examples/dsp_demo/README.md): runtime-authored ping-pong delay.
 
 The public headers are the API reference: `aicaflow/host.h` owns the runtime
 API and `aicaflow/sfx_bank.h` owns the AFB1/AFC1 loader API.
