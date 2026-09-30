@@ -5,18 +5,18 @@
 #include <enDjinn/enj_state.h>
 
 #include <aicaflow/host.h>
+#include <aicaflow/sfx_bank.h>
 
 #include <stdalign.h>
 #include <stdio.h>
+#include <string.h>
 
 alignas(32) static const unsigned char firmware[] = {
 #embed "../../../driver/arm7/aicaflow.drv"
 };
-alignas(32) static const unsigned char flow_data[] = {
-#embed "../build/dsp_effects.afx"
-};
 
 typedef struct { const char *name, *preset; } effect_t;
+typedef struct { const char *name, *stem; } input_t;
 static const effect_t effects[] = {
     {"Delay", "delay"}, {"Echo", "echo"}, {"Diffusion", "diffuser"},
     {"Room", "room"}, {"Warm room", "room_warm"}, {"Low pass", "lowpass"},
@@ -29,11 +29,19 @@ static const effect_t effects[] = {
     {"Resonators", "resonators"}, {"Pitch shift", "pitch_shift"},
     {"Harmonizer", "harmonizer"}, {"Bow texture", "bow_texture"},
 };
-enum { EFFECT_COUNT = sizeof(effects) / sizeof(*effects), EFFECT_ROWS = 18 };
+static const input_t inputs[] = {
+    {"Effect-tuned", "effect"}, {"Impulse", "impulse"}, {"Tone", "tone"},
+    {"Modulated tone", "modulated"}, {"Wilhelm scream", "wilhelm"},
+};
+enum {
+    EFFECT_COUNT = sizeof(effects) / sizeof(*effects), INPUT_COUNT = sizeof(inputs) / sizeof(*inputs),
+    EFFECT_ROWS = 18,
+};
 
+static afx_sfx_bank_t bank;
 static afx_asset_t flow;
 static afx_instance_t instance;
-static int selected;
+static int selected, input;
 static bool running, returns_enabled = true;
 static char message[80] = "Select an effect and press A";
 
@@ -64,7 +72,27 @@ static int wait_recycled(afx_instance_t handle) {
     return -AFX_TIMEOUT;
 }
 
-static int stop(void) {
+static int load_input(const char *stem) {
+    char name[48], path[128];
+    snprintf(name, sizeof(name), "%s.afb", stem);
+    snprintf(path, sizeof(path), "/pc/%s", name);
+    int result = afx_sfx_bank_load_samples_file(&bank, path);
+    if (result) {
+        snprintf(path, sizeof(path), ENJ_CBASEPATH "%s", name);
+        result = afx_sfx_bank_load_samples_file(&bank, path);
+    }
+    if (result) return result;
+    snprintf(name, sizeof(name), "%s.afc", stem);
+    snprintf(path, sizeof(path), "/pc/%s", name);
+    result = afx_sfx_bank_control_upload(&bank, path, &flow);
+    if (result) {
+        snprintf(path, sizeof(path), ENJ_CBASEPATH "%s", name);
+        result = afx_sfx_bank_control_upload(&bank, path, &flow);
+    }
+    return result;
+}
+
+static int unload(void) {
     int result = AFX_OK;
     if (running) {
         afx_instance_status_t status;
@@ -77,6 +105,10 @@ static int stop(void) {
         if (!result) result = wait_recycled(instance);
         running = false;
     }
+    if (!result && flow) result = afx_asset_free(flow);
+    flow = AFX_ASSET_INVALID;
+    if (!result && bank.sample_data) result = afx_sfx_bank_release(&bank);
+    bank = (afx_sfx_bank_t){0};
     if (!result) {
         int scene_result = afx_dsp_scene_disable();
         if (scene_result && scene_result != -AFX_BUSY) return scene_result;
@@ -86,20 +118,21 @@ static int stop(void) {
 
 static int play(void) {
     afx_dsp_program_t program;
-    int result = stop();
+    int result = unload();
+    if (!result) result = load_input(inputs[input].stem);
     if (!result) result = afx_instance_activate(flow, &instance);
     if (!result) result = wait_for(instance, AFX_RUNNING);
     if (!result) result = afx_dsp_program_demo(&program, effects[selected].preset);
     if (!result) result = afx_dsp_scene_program(&program, sizeof(program));
     if (!result) result = afx_dsp_scene_returns(returns_enabled);
     if (result) {
-        stop();
+        unload();
         snprintf(message, sizeof(message), "Could not play effect (%d)", result);
         return result;
     }
     running = true;
-    snprintf(message, sizeof(message), "Playing: %s", effects[selected].name);
-    printf("DSP EFFECT: %s\n", effects[selected].preset);
+    snprintf(message, sizeof(message), "Playing %s with %s", effects[selected].name, inputs[input].name);
+    printf("DSP EFFECT: %s / %s\n", effects[selected].preset, inputs[input].stem);
     return AFX_OK;
 }
 
@@ -122,24 +155,25 @@ static void render(void *unused) {
         text((unsigned)row + 3, line);
     }
     enj_qfont_color_set(230, 230, 230);
+    char source[80];
+    snprintf(source, sizeof(source), "INPUT: %s", inputs[input].name);
+    text(22, source);
     text(23, message);
-    text(25, "UP/DOWN Effect   A Play   B Stop   Y Wet/Dry");
-    text(26, "START+A+B+X+Y Exit");
+    text(25, "UP/DOWN Effect  LEFT/RIGHT Input  A Play  B Stop");
+    text(26, "Y Wet/Dry     START+A+B+X+Y Exit");
 }
 
 int main(void) {
     enj_state_init_defaults();
     if (enj_state_startup()) return 1;
     int result = afx_init(firmware, sizeof(firmware));
-    if (!result) result = afx_flow_upload(flow_data, sizeof(flow_data), &flow);
     printf("DSP player init=%d\n", result);
     if (result || !enj_mode_push(&mode)) {
         afx_shutdown();
         return 1;
     }
     enj_state_run();
-    stop();
-    afx_asset_free(flow);
+    unload();
     afx_shutdown();
     return 0;
 }
@@ -153,9 +187,11 @@ static void update(void *unused) {
     if (!result && pad) {
         if (pad->button.UP == ENJ_BUTTON_DOWN_THIS_FRAME) selected = (selected + EFFECT_COUNT - 1) % EFFECT_COUNT;
         if (pad->button.DOWN == ENJ_BUTTON_DOWN_THIS_FRAME) selected = (selected + 1) % EFFECT_COUNT;
+        if (pad->button.LEFT == ENJ_BUTTON_DOWN_THIS_FRAME) input = (input + INPUT_COUNT - 1) % INPUT_COUNT;
+        if (pad->button.RIGHT == ENJ_BUTTON_DOWN_THIS_FRAME) input = (input + 1) % INPUT_COUNT;
         if (pad->button.A == ENJ_BUTTON_DOWN_THIS_FRAME) result = play();
         if (pad->button.B == ENJ_BUTTON_DOWN_THIS_FRAME) {
-            result = stop();
+            result = unload();
             if (!result) snprintf(message, sizeof(message), "Stopped");
         }
         if (pad->button.Y == ENJ_BUTTON_DOWN_THIS_FRAME) {
@@ -167,7 +203,7 @@ static void update(void *unused) {
         afx_instance_status_t status;
         if (!afx_instance_status(instance, &status) && (status.state == AFX_DONE || status.state == AFX_ERROR)) {
             bool failed = status.state == AFX_ERROR;
-            result = stop();
+            result = unload();
             if (!result) snprintf(message, sizeof(message), "%s", failed ? "Effect failed" : "Effect finished");
         }
     }

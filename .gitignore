@@ -5,4 +5,5 @@
 /driver/sh4/libaicaflow_host.a
 /examples/*/build/
 /examples/*/bin/
+/examples/*/cdrom/
 /tools/__pycache__/
