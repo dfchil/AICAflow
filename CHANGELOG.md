@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added the interactive enDjinn `examples/dsp_effects_player`: all 24 named
+  DSP programs are constructed in C at runtime from a reproducible AFX input.
 - Added a self-contained `examples/dsp_demo` that authors the ping-pong DSP
   program at runtime through the public C API.
 - Made the MIDI compiler defer SoundFont loading until an SF2 mapping is used,

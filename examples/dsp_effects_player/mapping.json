@@ -1,0 +1,15 @@
+{
+  "instruments": {
+    "0:0:0": {
+      "kind": "sine",
+      "root_key": 69,
+      "velocity": "fixed",
+      "release": "keyoff",
+      "midi_reverb": "apply"
+    },
+    "0:0:1": {"kind": "sine", "root_key": 69, "velocity": "fixed", "release": "keyoff", "direct": 16, "dsp_send": 240},
+    "0:0:2": {"kind": "sine", "root_key": 69, "velocity": "fixed", "release": "keyoff", "direct": 16, "dsp_send": 240},
+    "0:0:3": {"kind": "sine", "root_key": 69, "velocity": "fixed", "release": "keyoff", "direct": 16, "dsp_send": 240},
+    "0:0:4": {"kind": "sine", "root_key": 69, "velocity": "fixed", "release": "keyoff", "direct": 16, "dsp_send": 240}
+  }
+}
