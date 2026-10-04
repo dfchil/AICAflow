@@ -96,8 +96,10 @@ int afx_c_schedule_notes(afx_c_note_t *notes, uint32_t count, uint8_t cluster_li
 int afx_c_assign_channels(const afx_c_note_t *notes, uint32_t count,
                           uint8_t *out_channels, uint32_t *out_channel_count);
 
-/* Every note must select exactly one key range. The zones become the AFB's
- * contiguous, 32-byte aligned samples and the AFX setup dictionary. */
+/* Every note must select exactly one key range. The AFB retains all samples
+ * in source-zone order, 32-byte aligned, sharing identical data pointers and
+ * byte lengths. Only the AFX setup dictionary is pruned/reordered by usage;
+ * its relocations still refer to the stable bank layout used by AFI indices. */
 int afx_c_compile_zones(const afx_c_note_t *notes, uint32_t count,
                         uint32_t tick_rate, const afx_c_zone_t *zones,
                         uint32_t zone_count, afx_c_output_t *out);

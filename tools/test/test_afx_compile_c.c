@@ -123,6 +123,29 @@ int main(void) {
     assert(afx_read32(out.afx + 80 + 4) == 0 && afx_read32(out.afx + 92 + 4) == 0);
     assert(out.afb_bytes == 32 + sizeof(pcm));
     afx_c_output_free(&out);
+    /* Setup optimization must not reorder or drop bank samples: AFI indices
+       and other songs sharing this bank use the original zone order. */
+    const uint8_t bank_pcm[][8] = {{1}, {2}, {3}};
+    afx_c_zone_t bank_zones[4];
+    for (unsigned i = 0; i < 4; ++i) {
+        bank_zones[i] = zones[0];
+        bank_zones[i].sample.data = bank_pcm[i % 3];
+    }
+    const afx_c_note_t bank_notes[] = {
+        {.start_tick = 0, .end_tick = 100, .key = 60, .velocity = 100, .setup_index = 3},
+        {.start_tick = 100, .end_tick = 200, .key = 60, .velocity = 100, .setup_index = 4},
+    };
+    assert(!afx_c_compile_zones(bank_notes, 2, 1000, bank_zones, 4, &out));
+    assert(afx_file_validate(out.afx, out.afx_bytes, NULL) == AFX_OK);
+    assert(out.afb_bytes == 32 + 64 + sizeof(bank_pcm[0]));
+    for (unsigned i = 0; i < 3; ++i)
+        assert(!memcmp(out.afb + 32 + i * 32, bank_pcm[i], sizeof(bank_pcm[i])));
+    assert(afx_read32(out.afx + 36) == 2);
+    assert(afx_read32(out.afx + 80 + 4) == 64 && afx_read32(out.afx + 92 + 4) == 0);
+    assert(!afx_c_compile_zones(bank_notes + 1, 1, 1000, bank_zones, 4, &repeat));
+    assert(out.afb_bytes == repeat.afb_bytes && !memcmp(out.afb, repeat.afb, out.afb_bytes));
+    afx_c_output_free(&repeat);
+    afx_c_output_free(&out);
     /* A dense MIDI chord is emitted in adjacent millisecond slices rather
        than producing an AICAflow which ARM7 cannot activate. */
     afx_c_note_t dense[10];

@@ -508,34 +508,39 @@ int afx_c_visualize(const uint8_t *afx, uint32_t bytes, uint8_t **out_visual, ui
 }
 
 static int assemble_output(const afx_c_zone_t *zones, uint32_t zone_count,
+                           const afx_c_zone_t *bank_zones, uint32_t bank_zone_count,
                            const uint8_t *stream, uint32_t stream_bytes,
                            uint32_t channels, uint32_t tick_rate, int controlled, afx_c_output_t *out) {
     uint32_t *offsets = NULL, sample_bytes = 0;
-    if (!zones || !zone_count || zone_count > UINT16_MAX || !stream || !stream_bytes ||
+    if (!zones || !zone_count || zone_count > UINT16_MAX ||
+        !bank_zones || !bank_zone_count || bank_zone_count > UINT16_MAX || !stream || !stream_bytes ||
         !channels || channels > AFX_MAX_FLOW_CHANNELS || !tick_rate || !out) return -1;
-    offsets = malloc(zone_count * sizeof(*offsets));
+    /* AFB/AFI layout follows the source zones, independently of the optimized
+       setup dictionary. Songs sharing these zones must get identical banks. */
+    offsets = malloc(bank_zone_count * sizeof(*offsets));
     if (!offsets) goto failed;
-    for (uint32_t i = 0; i < zone_count; ++i) {
-        if (zones[i].key_min > zones[i].key_max || zones[i].velocity_min > zones[i].velocity_max ||
-            !valid_sample(&zones[i].sample)) goto failed;
+    for (uint32_t i = 0; i < bank_zone_count; ++i) {
+        if (bank_zones[i].key_min > bank_zones[i].key_max ||
+            bank_zones[i].velocity_min > bank_zones[i].velocity_max ||
+            !valid_sample(&bank_zones[i].sample)) goto failed;
         for (uint32_t prior = 0; prior < i; ++prior)
-            if (zones[i].sample.data == zones[prior].sample.data &&
-                zones[i].sample.bytes == zones[prior].sample.bytes) {
+            if (bank_zones[i].sample.data == bank_zones[prior].sample.data &&
+                bank_zones[i].sample.bytes == bank_zones[prior].sample.bytes) {
                 offsets[i] = offsets[prior]; goto sample_known;
             }
         sample_bytes = align32(sample_bytes); offsets[i] = sample_bytes;
-        if (zones[i].sample.bytes > UINT32_MAX - sample_bytes) goto failed;
-        sample_bytes += zones[i].sample.bytes;
+        if (bank_zones[i].sample.bytes > UINT32_MAX - sample_bytes) goto failed;
+        sample_bytes += bank_zones[i].sample.bytes;
 sample_known:;
     }
     if (sample_bytes > UINT32_MAX - AFB_HEADER) goto failed;
     out->afb_bytes = AFB_HEADER + sample_bytes; out->afb = calloc(1, out->afb_bytes);
     if (!out->afb) goto failed;
-    for (uint32_t i = 0; i < zone_count; ++i) {
+    for (uint32_t i = 0; i < bank_zone_count; ++i) {
         int first = 1;
         for (uint32_t prior = 0; prior < i; ++prior)
             if (offsets[prior] == offsets[i]) { first = 0; break; }
-        if (first) memcpy(out->afb + AFB_HEADER + offsets[i], zones[i].sample.data, zones[i].sample.bytes);
+        if (first) memcpy(out->afb + AFB_HEADER + offsets[i], bank_zones[i].sample.data, bank_zones[i].sample.bytes);
     }
     uint32_t bank_id = hash32(out->afb + AFB_HEADER, sample_bytes);
     afx_write32(out->afb, AFX_BANK_MAGIC); afx_write32(out->afb + 4, AFX_BANK_VERSION);
@@ -550,8 +555,13 @@ sample_known:;
     if (!out->afx) goto failed;
     uint8_t *afx = out->afx, *setup = afx + image_at;
     for (uint32_t i = 0; i < zone_count; ++i) {
+        uint32_t sample = 0;
+        while (sample < bank_zone_count &&
+               (zones[i].sample.data != bank_zones[sample].sample.data ||
+                zones[i].sample.bytes != bank_zones[sample].sample.bytes)) ++sample;
+        if (sample == bank_zone_count) goto failed;
         uint8_t *state = setup + i * AFX_SETUP_BYTES;
-        uint32_t address = offsets[i];
+        uint32_t address = offsets[sample];
         if (address > 0x7fffffu) goto failed;
         afx_write16(state, (zones[i].sample.loop ? 0x0200 : 0) |
                     ((uint16_t)zones[i].sample.format << 7) | (address >> 16));
@@ -564,7 +574,7 @@ sample_known:;
         for (uint32_t field = 4; field < AFX_FIELD_COUNT; ++field)
             if (zones[i].setup_mask & (1u << field)) afx_write16(state + 2 * field, zones[i].setup[field]);
         uint8_t *relocation = afx + AFX_HEADER + i * RELOCATION_BYTES;
-        afx_write32(relocation, i * AFX_SETUP_BYTES); afx_write32(relocation + 4, offsets[i]);
+        afx_write32(relocation, i * AFX_SETUP_BYTES); afx_write32(relocation + 4, address);
         afx_write32(relocation + 8, zones[i].sample.bytes);
     }
     memcpy(setup + zone_count * AFX_SETUP_BYTES, stream, stream_bytes);
@@ -580,6 +590,12 @@ sample_known:;
 failed:
     free(offsets); afx_c_output_free(out); return -1;
 }
+
+static int compile_events(const afx_c_event_t *input, uint32_t count,
+                          uint32_t duration_ticks, uint32_t tick_rate,
+                          const afx_c_zone_t *zones, uint32_t zone_count,
+                          const afx_c_zone_t *bank_zones, uint32_t bank_zone_count,
+                          afx_c_output_t *out);
 
 int afx_c_compile_zones(const afx_c_note_t *input, uint32_t count,
                         uint32_t tick_rate, const afx_c_zone_t *zones,
@@ -643,7 +659,8 @@ int afx_c_compile_zones(const afx_c_note_t *input, uint32_t count,
         }
     }
     if (afx_c_optimize_events(raw, 2u * count, zones, zone_count, &optimized, &templates, &template_count) ||
-        afx_c_compile_events(optimized, 2u * count, final_end, tick_rate, templates, template_count, out)) goto failed;
+        compile_events(optimized, 2u * count, final_end, tick_rate, templates, template_count,
+                       zones, zone_count, out)) goto failed;
     free(channels); free(notes); free(events); free(raw); free(optimized); free(templates); return 0;
 failed:
     free(channels); free(notes); free(events); free(raw); free(optimized); free(templates);
@@ -656,10 +673,11 @@ static int compare_control_event(const void *left, const void *right) {
     return a->order < b->order ? -1 : a->order > b->order;
 }
 
-int afx_c_compile_events(const afx_c_event_t *input, uint32_t count,
-                         uint32_t duration_ticks, uint32_t tick_rate,
-                         const afx_c_zone_t *zones, uint32_t zone_count,
-                         afx_c_output_t *out) {
+static int compile_events(const afx_c_event_t *input, uint32_t count,
+                          uint32_t duration_ticks, uint32_t tick_rate,
+                          const afx_c_zone_t *zones, uint32_t zone_count,
+                          const afx_c_zone_t *bank_zones, uint32_t bank_zone_count,
+                          afx_c_output_t *out) {
     afx_c_event_t *events = NULL;
     uint8_t *stream = NULL;
     uint32_t cursor = 0, previous = 0, channels = 0, commands = 0, writes = 0;
@@ -703,10 +721,19 @@ int afx_c_compile_events(const afx_c_event_t *input, uint32_t count,
     }
     int controlled = events[count - 1u].opcode == AFX_OP_PARK;
     if (!controlled) { cursor += encode_wait(stream + cursor, duration_ticks - previous); stream[cursor++] = AFX_OP_END; }
-    if (assemble_output(zones, zone_count, stream, cursor, channels, tick_rate, controlled, out)) goto failed;
+    if (assemble_output(zones, zone_count, bank_zones, bank_zone_count,
+                        stream, cursor, channels, tick_rate, controlled, out)) goto failed;
     free(events); free(stream); return 0;
 failed:
     free(events); free(stream); afx_c_output_free(out); return -1;
+}
+
+int afx_c_compile_events(const afx_c_event_t *input, uint32_t count,
+                         uint32_t duration_ticks, uint32_t tick_rate,
+                         const afx_c_zone_t *zones, uint32_t zone_count,
+                         afx_c_output_t *out) {
+    return compile_events(input, count, duration_ticks, tick_rate, zones, zone_count,
+                          zones, zone_count, out);
 }
 
 int afx_c_compile_sample(const afx_c_note_t *notes, uint32_t count,
