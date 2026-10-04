@@ -29,7 +29,7 @@ tools:
 		source $(KOS_ENV) && $(MAKE) -C tools/$$tool || exit $$?; \
 	done
 
-check: $(C_COMPILER) $(C_COMPILER_TEST) $(N64_CSEQ_TEST) $(N64_SFX_TEST) $(N64_COMPILER) $(BANK_COMPILER) $(PROFILE_COMPILER) $(VGM_COMPILER)
+check: format-check $(C_COMPILER) $(C_COMPILER_TEST) $(N64_CSEQ_TEST) $(N64_SFX_TEST) $(N64_COMPILER) $(BANK_COMPILER) $(PROFILE_COMPILER) $(VGM_COMPILER)
 	$(MAKE) -C driver smoke
 	./$(C_COMPILER_TEST)
 	./$(N64_CSEQ_TEST)
@@ -82,39 +82,39 @@ check: $(C_COMPILER) $(C_COMPILER_TEST) $(N64_CSEQ_TEST) $(N64_SFX_TEST) $(N64_C
 
 $(C_COMPILER): tools/author/afx_compile_c.c tools/author/afx_compile_c.h tools/author/afx_compile_c_cli.c tools/author/afx_midi_c.c tools/author/afx_midi_c.h tools/author/afx_sample_c.c tools/author/afx_sample_c.h tools/author/afx_sf2_c.c tools/author/afx_sf2_c.h tools/author/afx_ya2beam.c driver/common/codec.c driver/include/aicaflow/codec.h driver/include/aicaflow/protocol.h
 	mkdir -p build
-	clang -std=c11 -O2 -Wall -Wextra -Werror -Idriver/include tools/author/afx_compile_c.c tools/author/afx_midi_c.c tools/author/afx_sample_c.c tools/author/afx_sf2_c.c tools/author/afx_ya2beam.c tools/author/afx_compile_c_cli.c driver/common/codec.c -lm -o $@
+	clang -std=c11 -O2 -Wall -Wextra -Werror -Iformat/include -Idriver/include tools/author/afx_compile_c.c tools/author/afx_midi_c.c tools/author/afx_sample_c.c tools/author/afx_sf2_c.c tools/author/afx_ya2beam.c tools/author/afx_compile_c_cli.c driver/common/codec.c -lm -o $@
 
 $(C_COMPILER_TEST): tools/author/afx_compile_c.c tools/author/afx_compile_c.h tools/author/afx_midi_c.c tools/author/afx_midi_c.h tools/author/afx_sample_c.c tools/author/afx_sample_c.h tools/author/afx_ya2beam.c tools/test/test_afx_compile_c.c driver/common/codec.c driver/include/aicaflow/codec.h driver/include/aicaflow/protocol.h
 	mkdir -p build
-	clang -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Idriver/include -Itools/author tools/author/afx_compile_c.c tools/author/afx_midi_c.c tools/author/afx_sample_c.c tools/author/afx_ya2beam.c tools/test/test_afx_compile_c.c driver/common/codec.c -lm -o $@
+	clang -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Iformat/include -Idriver/include -Itools/author tools/author/afx_compile_c.c tools/author/afx_midi_c.c tools/author/afx_sample_c.c tools/author/afx_ya2beam.c tools/test/test_afx_compile_c.c driver/common/codec.c -lm -o $@
 
 $(N64_CSEQ_TEST): tools/author/afx_n64_cseq.c tools/author/afx_n64_cseq.h tools/author/afx_compile_c.h tools/test/test_afx_n64_cseq.c driver/include/aicaflow/protocol.h
 	mkdir -p build
-	clang -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Idriver/include -Itools/author tools/author/afx_n64_cseq.c tools/test/test_afx_n64_cseq.c -o $@
+	clang -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Iformat/include -Idriver/include -Itools/author tools/author/afx_n64_cseq.c tools/test/test_afx_n64_cseq.c -o $@
 
 $(N64_SFX_TEST): tools/test/test_afx_n64_sfx.c $(N64_COMPILER)
 	mkdir -p build
-	clang -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Idriver/include -Itools/author tools/test/test_afx_n64_sfx.c tools/author/afx_n64_cseq.c tools/author/afx_compile_c.c tools/author/afx_sample_c.c tools/author/afx_ya2beam.c driver/common/codec.c -lm -o $@
+	clang -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -Iformat/include -Idriver/include -Itools/author tools/test/test_afx_n64_sfx.c tools/author/afx_n64_cseq.c tools/author/afx_compile_c.c tools/author/afx_sample_c.c tools/author/afx_ya2beam.c driver/common/codec.c -lm -o $@
 
 $(DEMO_ASSETS): tools/author/afx_demo_assets.c tools/author/afx_compile_c.c tools/author/afx_compile_c.h driver/common/codec.c driver/include/aicaflow/codec.h driver/include/aicaflow/protocol.h
 	mkdir -p build
-	clang -std=c11 -O2 -Wall -Wextra -Werror -Idriver/include tools/author/afx_demo_assets.c tools/author/afx_compile_c.c driver/common/codec.c -lm -o $@
+	clang -std=c11 -O2 -Wall -Wextra -Werror -Iformat/include -Idriver/include tools/author/afx_demo_assets.c tools/author/afx_compile_c.c driver/common/codec.c -lm -o $@
 
 $(BANK_COMPILER): tools/author/afx_bank_c.c tools/author/afx_compile_c.c tools/author/afx_compile_c.h tools/author/afx_midi_c.c tools/author/afx_midi_c.h tools/author/afx_sample_c.c tools/author/afx_sample_c.h tools/author/afx_sf2_c.c tools/author/afx_sf2_c.h tools/author/afx_ya2beam.c driver/common/codec.c driver/include/aicaflow/codec.h driver/include/aicaflow/protocol.h
 	mkdir -p build
-	clang -std=c11 -O2 -Wall -Wextra -Werror -Idriver/include tools/author/afx_bank_c.c tools/author/afx_compile_c.c tools/author/afx_midi_c.c tools/author/afx_sample_c.c tools/author/afx_sf2_c.c tools/author/afx_ya2beam.c driver/common/codec.c -lm -o $@
+	clang -std=c11 -O2 -Wall -Wextra -Werror -Iformat/include -Idriver/include tools/author/afx_bank_c.c tools/author/afx_compile_c.c tools/author/afx_midi_c.c tools/author/afx_sample_c.c tools/author/afx_sf2_c.c tools/author/afx_ya2beam.c driver/common/codec.c -lm -o $@
 
 $(PROFILE_COMPILER): tools/author/afx_profile_c.c driver/common/codec.c driver/include/aicaflow/codec.h driver/include/aicaflow/protocol.h
 	mkdir -p build
-	clang -std=c11 -O2 -Wall -Wextra -Werror -Idriver/include tools/author/afx_profile_c.c driver/common/codec.c -o $@
+	clang -std=c11 -O2 -Wall -Wextra -Werror -Iformat/include -Idriver/include tools/author/afx_profile_c.c driver/common/codec.c -o $@
 
 $(VGM_COMPILER): tools/author/afx_vgm.c tools/author/afx_compile_c.c tools/author/afx_compile_c.h tools/author/afx_sample_c.c tools/author/afx_sample_c.h tools/author/afx_ya2beam.c driver/common/codec.c driver/include/aicaflow/codec.h driver/include/aicaflow/protocol.h
 	mkdir -p build
-	clang -std=c11 -O2 -Wall -Wextra -Werror -Idriver/include -Itools/author tools/author/afx_vgm.c tools/author/afx_compile_c.c tools/author/afx_sample_c.c tools/author/afx_ya2beam.c driver/common/codec.c -lm -lz -o $@
+	clang -std=c11 -O2 -Wall -Wextra -Werror -Iformat/include -Idriver/include -Itools/author tools/author/afx_vgm.c tools/author/afx_compile_c.c tools/author/afx_sample_c.c tools/author/afx_ya2beam.c driver/common/codec.c -lm -lz -o $@
 
 $(N64_COMPILER): tools/author/afx_n64.c tools/author/afx_n64_cseq.c tools/author/afx_n64_cseq.h tools/author/afx_compile_c.c tools/author/afx_compile_c.h tools/author/afx_sample_c.c tools/author/afx_sample_c.h tools/author/afx_ya2beam.c driver/common/codec.c driver/include/aicaflow/codec.h driver/include/aicaflow/protocol.h
 	mkdir -p build
-	clang -std=c11 -O2 -Wall -Wextra -Werror -Idriver/include -Itools/author tools/author/afx_n64.c tools/author/afx_n64_cseq.c tools/author/afx_compile_c.c tools/author/afx_sample_c.c tools/author/afx_ya2beam.c driver/common/codec.c -lm -o $@
+	clang -std=c11 -O2 -Wall -Wextra -Werror -Iformat/include -Idriver/include -Itools/author tools/author/afx_n64.c tools/author/afx_n64_cseq.c tools/author/afx_compile_c.c tools/author/afx_sample_c.c tools/author/afx_ya2beam.c driver/common/codec.c -lm -o $@
 
 firmware:
 	source $(KOS_ENV) && $(MAKE) -C driver/arm7
@@ -130,3 +130,11 @@ clean:
 	$(MAKE) -C driver clean
 	rm -f $(C_COMPILER) $(C_COMPILER_TEST) $(DEMO_ASSETS) $(BANK_COMPILER) $(PROFILE_COMPILER) \
 		$(VGM_COMPILER) $(N64_COMPILER) $(N64_CSEQ_TEST) $(N64_SFX_TEST) build/afx_compile_c build/test_afx_compile_c build/afx_bank_c build/afx_profile_c
+
+# The public format header is an independent dependency of every native tool.
+$(C_COMPILER) $(C_COMPILER_TEST) $(N64_CSEQ_TEST) $(N64_SFX_TEST) $(DEMO_ASSETS) $(BANK_COMPILER) $(PROFILE_COMPILER) $(VGM_COMPILER) $(N64_COMPILER): format/include/aicaflow/format.h
+
+format-check:
+	$(MAKE) -C format check
+
+.PHONY: format-check

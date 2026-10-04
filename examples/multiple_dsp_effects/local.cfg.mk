@@ -2,7 +2,7 @@ ENJ_BASENAME := aicaflow_multiple_dsp_effects
 ENJ_INJECT_QFONT := 1
 OPTLEVEL := 2
 ENJ_CFLAGS += -Wall -Wextra -Werror
-ENJ_INCLUDES += -I../../driver/include -I../../driver/sh4/include
+ENJ_INCLUDES += -I../../format/include -I../../driver/include -I../../driver/sh4/include
 ENJ_LDLIBS += ../../driver/sh4/libaicaflow_host.a
 
 AUTHOR_DEMOS := ../../build/afx_demo_assets

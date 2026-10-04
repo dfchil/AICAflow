@@ -18,13 +18,13 @@ $(ELF): $(OBJS) build/aicaflow.ld
 	$(ARM_CC) $(ARM_CFLAGS) $(ARM_LDFLAGS) -o $@ $(OBJS)
 
 build/aicaflow.ld: aicaflow.ld.S ../include/aicaflow/protocol.h | build
-	$(ARM_CC) -E -P -x assembler-with-cpp -I../include $< -o $@
+	$(ARM_CC) -E -P -x assembler-with-cpp -I../include -I../../format/include $< -o $@
 
 build/crt0.o: crt0.s ../include/aicaflow/protocol.h | build
-	$(ARM_CC) $(ARM_CFLAGS) -x assembler-with-cpp -I../include -c -o $@ $<
+	$(ARM_CC) $(ARM_CFLAGS) -x assembler-with-cpp -I../include -I../../format/include -c -o $@ $<
 
 build/driver.o: driver.c ../include/aicaflow/protocol.h ../include/aicaflow/codec.h | build
-	$(ARM_CC) $(ARM_CFLAGS) -fstack-usage -I../include -c -o $@ $<
+	$(ARM_CC) $(ARM_CFLAGS) -fstack-usage -I../include -I../../format/include -c -o $@ $<
 
 build:
 	mkdir -p $@
@@ -33,3 +33,5 @@ clean:
 	rm -f $(OBJS) build/driver.su build/aicaflow.ld $(ELF) aicaflow.map
 
 .PHONY: all clean
+
+$(OBJS) build/aicaflow.ld: ../../format/include/aicaflow/format.h

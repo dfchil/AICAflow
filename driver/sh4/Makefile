@@ -1,7 +1,7 @@
 KOS_WRAPPER ?= kos-cc
 AR = sh-elf-ar
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror -std=gnu11
-INCLUDES := -Iinclude -I../include
+INCLUDES := -Iinclude -I../include -I../../format/include
 HOST_OBJS := build/allocator.o build/dma.o build/flow.o build/instance.o build/ipc.o build/dsp_scene.o
 OBJS := $(HOST_OBJS) build/dsp.o build/dsp_prefabs.o build/bank.o build/codec.o
 LIB := libaicaflow_host.a
@@ -36,3 +36,5 @@ clean:
 	rm -f $(OBJS) $(LIB)
 
 .PHONY: all clean
+
+$(OBJS): ../../format/include/aicaflow/format.h
