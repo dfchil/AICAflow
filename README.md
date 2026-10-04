@@ -51,7 +51,7 @@ An AFP rewrites AFX register commands. AFC checkpoints stay in SH4 RAM. See the
 ## Included examples
 
 - `quickstart` — minimal generated AFB/AFX playback.
-- `dsp_demo` — runtime DSP program construction in C.
+- `multiple_dsp_effects` — enDjinn-guided separate and simultaneous dual-effect audition.
 - `dsp_effects_player` — interactive DSP-preset audition player.
 - `dynamic_sfx` — SH4-controlled pitch, position and intensity changes.
 - `music_player` — three reproducibly fetched classical MIDI/SoundFont demonstrations.

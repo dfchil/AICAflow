@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 KOS_ENV ?= /opt/toolchains/dc/kos/environ.sh
-EXAMPLES := quickstart dsp_demo dynamic_sfx dsp_effects_player music_player
+EXAMPLES := quickstart multiple_dsp_effects dynamic_sfx dsp_effects_player music_player
 TOOLS := tuner/server
 C_COMPILER := build/afx_compile
 C_COMPILER_TEST := build/test_afx_compile

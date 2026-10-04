@@ -33,15 +33,17 @@
  *   afx_dsp_step_t step = {0};
  *   afx_dsp_program_init(&dsp);
  *
- *   // ACC = MIXS0 * COEF[0]. IRA 32 selects MIXS0.
- *   step.ira = 32; step.xsel = 1; step.ysel = 1; step.zero = 1;
+ *   // ACC = MIXS0 * COEF[0].
+ *   step.ira = AFX_DSP_INPUT_MIXS0; step.xsel = 1;
+ *   step.ysel = AFX_DSP_Y_COEF; step.zero = 1;
  *   afx_dsp_program_step(&dsp, 0, &step);
  *   afx_dsp_program_coefficient(&dsp, 0, 8192); // approximately 1/4
  *
  *   // EWT writes the *previous* ACC, so output starts on the next step.
- *   step = (afx_dsp_step_t){ .ysel = 1, .bsel = 1, .ewt = 1, .ewa = 0 };
+ *   step = (afx_dsp_step_t){ .ysel = AFX_DSP_Y_COEF, .bsel = 1,
+ *                             .ewt = 1, .ewa = AFX_DSP_RETURN_LEFT };
  *   afx_dsp_program_step(&dsp, 1, &step);
- *   step.ewa = 1;
+ *   step.ewa = AFX_DSP_RETURN_RIGHT;
  *   afx_dsp_program_step(&dsp, 2, &step);
  *
  *   afx_dsp_scene_program(&dsp, sizeof(dsp));
@@ -61,13 +63,26 @@ enum {
     AFX_DSP_PROGRAM_BYTES = AFX_DSP_PROGRAM_WORDS * sizeof(uint16_t)
 };
 
+/* Named hardware values for the public afx_dsp_step_t fields. */
+enum {
+    AFX_DSP_INPUT_MEMS0 = 0,
+    AFX_DSP_INPUT_MIXS0 = 32,
+    AFX_DSP_INPUT_MIXS1 = 33,
+    AFX_DSP_Y_COEF = 1,
+    AFX_DSP_MEMORY_AICA_FLOAT = 0,
+    AFX_DSP_MEMORY_LINEAR = 1,
+    AFX_DSP_RETURN_LEFT = 0,
+    AFX_DSP_RETURN_RIGHT = 1,
+};
+
 typedef struct { uint16_t words[AFX_DSP_PROGRAM_WORDS]; } afx_dsp_program_t;
 
 /*
  * One logical MPRO instruction. Fields map directly to the four hardware u16
  * words; reserved bits are not exposed. afx_dsp_program_step() replaces the
  * whole instruction, so set every field needed by the step. In particular,
- * set ysel=1 explicitly when multiplying by that step's coefficient.
+ * set ysel=AFX_DSP_Y_COEF explicitly when multiplying by that step's
+ * coefficient.
  *
  * Arithmetic is conceptually:
  *
@@ -81,12 +96,12 @@ typedef struct { uint16_t words[AFX_DSP_PROGRAM_WORDS]; } afx_dsp_program_t;
  * write the multiplication just described.
  *
  * IRA: 0..31 reads MEMS0..31; 32..47 reads MIXS0..15. A normal audio effect
- * reads the source voice's bus with IRA=32 (MIXS0). Values beyond 47 are
+ * reads the source voice's bus with IRA=AFX_DSP_INPUT_MIXS0. Values beyond 47 are
  * special hardware inputs; use a named/calibrated factory before relying on
  * them.
  *
- * YSEL: 0 = fractional latch, 1 = COEF[step], 2/3 = YREG portions. The common
- * case is 1. YRL loads YREG from the selected input, then a later step can use
+ * YSEL: 0 = fractional latch, AFX_DSP_Y_COEF = COEF[step], 2/3 = YREG portions.
+ * The common case is AFX_DSP_Y_COEF. YRL loads YREG from the selected input, then a later step can use
  * YSEL=2 for ring modulation, tremolo or other calibrated control input.
  *
  * TEMP: TWT writes the selected shifted previous ACC to TEMP[TWA]. TEMP's
@@ -101,13 +116,14 @@ typedef struct { uint16_t words[AFX_DSP_PROGRAM_WORDS]; } afx_dsp_program_t;
  * offsets, never byte offsets. TABLE is intentionally rejected by Aicaflow.
  *
  * NOFL must be identical on every memory-access step in one program:
- *   0: packed AICA float; ring silence is 0x6000 (the default room/delay)
- *   1: signed linear sample; zero-filled ring is silent
+ *   AFX_DSP_MEMORY_AICA_FLOAT: packed AICA float; ring silence is 0x6000
+ *   AFX_DSP_MEMORY_LINEAR: signed linear sample; zero-filled ring is silent
  * The scene uploader picks its clear value from this bit. Mixing formats would
  * make at least one delay path start with invalid data, so it is rejected.
  *
- * EWT writes an effect return. Aicaflow permits EWA 0 (EFREG0/left) and 1
- * (EFREG1/right) only. Build a sum in ACC/TEMP first; repeated EWT writes do
+ * EWT writes an effect return. Aicaflow permits AFX_DSP_RETURN_LEFT
+ * (EFREG0/left) and AFX_DSP_RETURN_RIGHT (EFREG1/right) only. Build a sum in
+ * ACC/TEMP first; repeated EWT writes do
  * not imply accumulation. Return-control words route/mix EFREG after this
  * program; they are not DSP instructions.
  */
@@ -135,7 +151,8 @@ int afx_dsp_program_init(afx_dsp_program_t *program);
 /*
  * Encodes one complete step at index 0..127. Field ranges, odd memory steps,
  * TABLE=0, uniform NOFL and EWA <= 1 are checked here. This routine does not
- * insert defaults: use an explicit .ysel = 1 for ordinary coefficient math.
+ * insert defaults: use an explicit .ysel = AFX_DSP_Y_COEF for ordinary
+ * coefficient math.
  */
 int afx_dsp_program_step(afx_dsp_program_t *program, uint8_t index,
                          const afx_dsp_step_t *step);

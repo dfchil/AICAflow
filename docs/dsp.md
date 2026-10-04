@@ -5,6 +5,22 @@ encode one AICA DSP instruction at a time and validate the resource limits
 before upload. Install a completed program with `afx_dsp_scene_program()` and
 remove it with `afx_dsp_scene_disable()`.
 
+## DSP cheat sheet
+
+| Concept | Meaning when authoring a step |
+| --- | --- |
+| Voice send | A voice's `dsp_send` byte is `IMXL << 4 | ISEL`: the high nibble is send level, the low nibble selects `MIXS0..15`. Thus `0xf0` is a full send to `MIXS0`; `0xf1` is a full send to `MIXS1`. Set `DIRECT=0` to hear only the DSP return. |
+| DSP input | `IRA` selects an input when `XSEL=1`. Use `AFX_DSP_INPUT_MIXS0`/`MIXS1` for voice buses; `AFX_DSP_INPUT_MEMS0` reads the first delay-memory latch. |
+| Multiply | `YSEL=AFX_DSP_Y_COEF` selects the coefficient at the current step. `COEF` values are signed, aligned Q1.15-ish gains: 32760 is near unity, 8192 is about 1/4. |
+| ACC timing | An instruction computes the next `ACC`, but `TWT`, `EWT` and `SHIFT` consume the previous `ACC`. Compute at one step; write or return at the next. |
+| Short state | `TWT` writes `TEMP`; later steps read it with `TRA`. `TEMP` rotates one logical address per sample, so it is for short state, not long delays. |
+| Delay RAM | `MRD`/`MWT` access the configured delay ring and must be on odd steps. Read with `MRD`, latch with `IWT`, then read `MEMS`. Use one `NOFL` format throughout: `AFX_DSP_MEMORY_AICA_FLOAT` or `AFX_DSP_MEMORY_LINEAR`. |
+| Stereo return | `EWT` sends the previous `ACC` to `EWA`: `AFX_DSP_RETURN_LEFT` is `EFREG0`; `AFX_DSP_RETURN_RIGHT` is `EFREG1`. |
+
+Use the named constants above rather than their hardware numbers. The API header
+has the full operand and ordering rules; `examples/multiple_dsp_effects` is a
+complete two-input program that applies them.
+
 DSP belongs to the loaded scene, not to an individual AFX flow. A flow selects
 its existing AICA DSP-send register value; SH4 owns program installation and
 return gating. Use `afx_dsp_scene_returns(false)` to audition dry routing
@@ -32,8 +48,8 @@ the program: it only supplies register send values. The standard
 `afx_dsp_scene_program()` reserves 128 KiB for a memory-using program;
 `afx_dsp_scene_program_ring()` selects an explicit supported RBL.
 
-`examples/dsp_demo` is the smallest programmatic example. The enDjinn-based
-`examples/dsp_effects_player` lets a user audition the built-in C presets with
-generated tones, an impulse and the CC0 Wilhelm-scream input. The detailed
-operand, memory and scheduling notes live beside the API as inline comments in
-`driver/sh4/include/aicaflow/dsp.h`.
+The enDjinn-based `examples/dsp_effects_player` lets a user audition the
+built-in C presets with generated tones, an impulse and the CC0 Wilhelm-scream
+input. `examples/multiple_dsp_effects` demonstrates two separate `MIXS` inputs
+in one scene. The detailed operand, memory and scheduling notes live beside the
+API as inline comments in `driver/sh4/include/aicaflow/dsp.h`.
