@@ -220,14 +220,8 @@ int afx_dsp_program_resonators(afx_dsp_program_t *program, const uint16_t freque
 int afx_dsp_program_pitch_shift(afx_dsp_program_t *program, bool harmony);
 
 /*
- * Named, parameter-free offline presets. The C CLI uses these exact factories:
- *
- *   make dsp-tool
- *   build/afx_dsp_program room build/my-room.dsp
- *
- * The CLI is deliberately only a serializer; no Python generator or alternate
- * DSP encoding exists. Pass the same constructed object to
- * afx_dsp_scene_program() for runtime-defined DSP. Unknown names return
+ * Named, parameter-free presets. Pass the constructed object to
+ * afx_dsp_scene_program() to install it. Unknown names return
  * -AFX_BAD_COMMAND; use afx_dsp_program_preset_description() to discover a
  * known name or show its authoring intent in a UI.
  */

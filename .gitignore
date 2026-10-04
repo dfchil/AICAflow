@@ -12,7 +12,6 @@
 build/
 bin/
 cdrom/
-/examples/nocturne_player/include/songs.h
 
 # Locally retained source media and research; keep large assets out of Git.
 sources/*
