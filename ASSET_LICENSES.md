@@ -2,9 +2,6 @@
 
 Code is MIT unless a file says otherwise.
 
-- `tools/author/afx_ya2beam.c` is a CC0-derived full-buffer AICA-ADPCM encoder
-  built into the native C authoring tools.
-
 - `examples/dsp_effects_player/sources/wilhelm_scream.pcm` is the deterministic
   PCM conversion of Wikimedia Commons' CC0 Wilhelm Scream source. Its source
   URL and input SHA-256 are in `WILHELM_SCREAM.md`.

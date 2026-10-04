@@ -1,10 +1,5 @@
-# Examples consume authoring executables, never authoring source directly.
-# Set an absolute AICAFORGE_BIN to use a standalone AICAforge build.
-ifeq ($(origin AICAFORGE_BIN),undefined)
-AICAFORGE_BIN := ../../build
-.PHONY: aicaforge-tools
-aicaforge-tools:
-	$(MAKE) -C ../.. compiler
-$(addprefix $(AICAFORGE_BIN)/,afx_compile afx_bank afx_profile afx_demo_assets): aicaforge-tools
-	@test -x "$@"
-endif
+# Use a separately built AICAforge checkout; never build a local compiler copy.
+AICAFORGE_BIN ?= $(abspath ../../dependencies/AICAforge/build)
+$(addprefix $(AICAFORGE_BIN)/,afx_compile afx_bank afx_profile afx_demo_assets):
+	@echo "Missing $@. Build AICAforge and set AICAFORGE_BIN=/absolute/path/to/build" >&2
+	@exit 1

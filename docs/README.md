@@ -1,7 +1,7 @@
 # AICAflow documentation
 
 See [Repository split](repository-split.md) for AICAflow/AICAforge ownership,
-the format boundary, test targets and the deprecation window.
+the format boundary, test targets and migration instructions.
 
 AICAflow separates offline sound authoring from Dreamcast playback.
 A control flow contains timed AICA register operations; its samples
@@ -14,10 +14,10 @@ already-resolved commands.
 - [Getting started](getting-started.md) — build and run the smallest example.
 - [Integration](integration.md) and [lifetime](lifetime.md) — embed the driver
   safely in a Dreamcast program.
-- [Authoring](authoring.md) — create a bank, flows and sidecars from MIDI,
+- [Authoring](https://github.com/dfchil/AICAforge/blob/main/docs/authoring.md) — create a bank, flows and sidecars from MIDI,
   PCM, SoundFonts, N64 CSeq or MultiPCM captures; distinguish bank policy from
   performance profiles.
-- [SFX bank maps](specs/afsfx.md) — `.afsfx` grouping/residency, raw N64 IDs,
+- [SFX bank maps](https://github.com/dfchil/AICAforge/blob/main/docs/specs/afsfx.md) — `.afsfx` grouping/residency, raw N64 IDs,
   the implemented DKR grammar and its application-specific limits.
 - [DSP](dsp.md) — construct and install an AICA DSP program.
 - [Tuner](tuner.md) — use the persistent hardware development server.

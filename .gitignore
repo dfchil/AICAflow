@@ -1,5 +1,8 @@
 .DS_Store
 
+# Optional standalone checkout, not a vendored authoring copy.
+/dependencies/AICAforge/
+
 # Build outputs
 *.o
 *.elf

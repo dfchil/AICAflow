@@ -20,14 +20,12 @@ AFC 1 / AFI 1 remain unchanged.
 ## Checks
 
 ```sh
-make runtime-check                       # no authoring build or Python packages
-make authoring-check                     # deprecated monorepo authoring copy
-make compiler
-make compatibility-check                 # defaults to build/ binaries
+make check                              # runtime only; no AICAforge required
+make -C /path/to/AICAforge check         # authoring belongs to AICAforge
 make compatibility-check AICAFORGE_BIN=/absolute/AICAforge/build
 ```
 
-`make check` aggregates all three. Runtime checks include the checked-in firmware
+`make check` is now runtime-only. Runtime checks include the checked-in firmware
 hash and fixed assets produced before extraction, plus real loader tests through
 the simulated transport. Integration adds current authoring output, repeatability,
 bank merging, profiling, format invariants and bank/checkpoint binding rejection.
@@ -35,7 +33,9 @@ Rebuilding the firmware itself remains `make firmware-check` with the ARM toolch
 
 Examples can use `make examples AICAFORGE_BIN=/absolute/AICAforge/build`.
 The core runtime never compiles authoring code. Examples may generate assets
-using either the explicit external binaries or the temporary old workflow.
+using external AICAforge binaries. The default location is an independently
+cloned and built `dependencies/AICAforge/build/`; alternatively set
+`AICAFORGE_BIN`. No compiler sources are duplicated in AICAflow.
 
 ## History-preserving extraction
 
@@ -61,15 +61,23 @@ script. The `repo-split-v1` tags in both repositories identify the initial
 compatible transition pair; repository releases remain independent afterward.
 The vendored format's `VERSION` records the immutable AICAflow source revision.
 
-## Deprecation window
+## Authoring copy removed
 
-This is the first transition release, **not removal day**. `tools/author/`,
-authoring research/tests and `make compiler` remain temporarily available in
-AICAflow so existing consumers can migrate. New authoring work belongs in
-AICAforge; backport only transition-critical fixes, with compatibility tests.
+The initial `repo-split-v1` release retained a deprecated authoring copy.
+At the owner's request, the follow-up cleanup removes that copy now rather
+than extending the transition window. This changes the build workflow, not
+the asset formats or runtime ABI.
 
-The next transition release should default examples and downstream builds to
-AICAforge. Remove the deprecated copy only in a later announced release, after
-consumers have switched and fresh-clone compatibility CI has remained green.
-Do not remove the tuner client/tests with the authoring copy. No format change
-or forced downstream migration is hidden in this split.
+`tools/author/`, `tools/research/`, authoring-only tests and duplicated
+authoring documentation are now maintained only in AICAforge. The old
+`make compiler` and `make authoring-check` targets have been removed.
+Use `make -C /path/to/AICAforge` and `make -C /path/to/AICAforge check`.
+
+The tuner and its tests stay in AICAflow. Compatibility tests invoke the
+existing AICAforge CLI test suite instead of copying it back into this repo.
+The small public format dependency is deliberately shared: AICAflow is its
+canonical owner, and AICAforge pins a versioned copy.
+
+Older workflows remain recoverable from `repo-split-v1`; history is not
+rewritten. Git's history and existing build/download caches do not shrink
+when source files are removed from the current checkout.

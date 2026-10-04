@@ -20,6 +20,8 @@ registers.
 ```sh
 git clone --recurse-submodules https://github.com/dfchil/aicaflow.git
 cd aicaflow
+git clone https://github.com/dfchil/AICAforge.git dependencies/AICAforge
+make -C dependencies/AICAforge -j8
 source /opt/toolchains/dc/kos/environ.sh
 make examples
 ```
@@ -28,11 +30,11 @@ The checked-in firmware means this needs no ARM7 compiler. Run `make check` for
 host validation; maintainers with the ARM toolchain run `make firmware-check`
 to reproduce the release image.
 
-`make compiler` temporarily retains the deprecated monorepo authoring workflow.
-For new integrations, build AICAforge and pass
-`AICAFORGE_BIN=/absolute/AICAforge/build` when building examples.
+Asset authoring lives only in AICAforge. The example build above uses a separate,
+ignored checkout in `dependencies/AICAforge/`; it is not vendored into AICAflow.
+Alternatively pass `AICAFORGE_BIN=/absolute/AICAforge/build`.
 See the [migration and test guide](docs/repository-split.md).
-`make runtime-check` requires neither AICAforge nor a Dreamcast toolchain.
+`make check` requires neither AICAforge nor a Dreamcast toolchain.
 
 ## Files and ownership
 
@@ -72,8 +74,8 @@ inputs on its first build; see its README to supply a different SoundFont.
 See the [documentation index](docs/README.md) for guides and specifications.
 Asset licences are in [ASSET_LICENSES.md](ASSET_LICENSES.md).
 
-The reusable CSeq/ALBank and MultiPCM importers are included. DKR's game
+The reusable CSeq/ALBank and MultiPCM importers live in AICAforge. DKR's game
 integration, ROM extraction, SFX residency policy and bonus soundtrack player
 live in the DKR repository. Game ROMs, extracted Nintendo/Sega samples and
 soundtracks are not distributed here. OoT AudioSeq uses a separate experimental
-research reader.
+research reader in AICAforge.

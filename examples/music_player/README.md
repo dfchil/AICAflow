@@ -59,7 +59,7 @@ Grieg maps piccolo, flute, clarinet, bassoon, strings, brass and timpani.
 Its exposed pizzicato, percussion and woodwind samples use `auto`: ADPCM must
 pass full-sample and attack-window SNR checks, otherwise PCM8 is used.
 Sustained string and brass layers use ADPCM. See
-[Authoring](../../docs/authoring.md) for quality thresholds and bank-map options.
+[Authoring](https://github.com/dfchil/AICAforge/blob/main/docs/authoring.md) for quality thresholds and bank-map options.
 
 ## Alternative sources
 
@@ -90,7 +90,7 @@ make -C examples/music_player \
 
 A changed source can invalidate its AFP hash. The build then uses the base
 flow with dry DSP and authored tempo. Create a profile against the new AFX to
-restore performance settings; see [Authoring](../../docs/authoring.md#performance-profiles).
+restore performance settings; see [Authoring](https://github.com/dfchil/AICAforge/blob/main/docs/authoring.md#performance-profiles).
 
 ## Source licences
 

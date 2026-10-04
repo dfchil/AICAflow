@@ -1,24 +1,27 @@
 # Testing
 
-`make check` builds the native C tools, runs host driver tests, sanitizer-backed
-C authoring tests and Python checks. It does not
-require an ARM7 toolchain or a game ROM. Use Clang with AddressSanitizer and
-UndefinedBehaviorSanitizer support, zlib, and Python with `mido` and `sf2utils`:
+`make check` (also `make runtime-check`) runs format, driver, DSP, tuner and
+frozen-asset compatibility tests, including the firmware manifest hash.
+It needs Clang with AddressSanitizer/UndefinedBehaviorSanitizer and Python 3's
+standard library. It needs no AICAforge checkout, Python packages, KOS or ROMs.
+
+Authoring tests belong to AICAforge. To additionally exercise its output with
+AICAflow's validator and loader:
 
 ```sh
-python3 -m venv .venv
-. .venv/bin/activate
-python3 -m pip install mido sf2utils
-make check
+make -C /path/to/AICAforge check
+make compatibility-check AICAFORGE_BIN=/path/to/AICAforge/build
 ```
 
-Python packages are test dependencies, not dependencies of the C
-authoring binaries or runtime. Tests include malformed assets, bank bindings,
-lossless merging, compact NOTE/PATCH encodings, AFP transforms, CSeq parsing,
-ALBank SFX lifetimes/quality selection, MultiPCM and the tuner client.
+The integration target reuses AICAforge's CLI tests for bank merging, profiles
+and deterministic output; AICAflow supplies the validator. It also validates
+current and frozen older assets, bank binding and stale-checkpoint rejection.
+`AICAFORGE_DIR` defaults to the parent of `AICAFORGE_BIN`; override it when
+using a custom binary output directory. AICAforge's tests need its documented
+Python dependencies. CI checks both repositories together.
 
-`make firmware-check` is the maintainer check: it rebuilds the ARM7 firmware and
-compares its SHA-256 with `firmware/manifest.json`. A release must pass both.
+`make firmware-check` rebuilds the ARM7 firmware and compares its SHA-256
+with `firmware/manifest.json`; this requires the ARM toolchain.
 
 Host checks prove asset/command properties, not audible equality on hardware.
 Hardware smoke testing is manual: run quickstart, the DSP demo and tuner,
@@ -29,5 +32,4 @@ pieces; its [README](../examples/music_player/README.md#hardware-frame-test)
 also explains how to restore an interactive build afterwards.
 
 Game integration checks require the application's own extracted inputs; the
-generic tests do not distribute or extract game assets. Validate bank residency,
-scene transitions, live controls and audible behavior in the application.
+generic tests do not distribute or extract game assets.
