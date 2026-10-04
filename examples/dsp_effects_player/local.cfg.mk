@@ -1,7 +1,7 @@
 ENJ_INJECT_QFONT := 1
 OPTLEVEL := 2
 ENJ_CFLAGS += -Wall -Wextra -Werror
-ENJ_INCLUDES += -I../../format/include -I../../driver/include -I../../driver/sh4/include
+ENJ_INCLUDES += -I../../driver/format/include -I../../driver/include -I../../driver/sh4/include
 ENJ_LDLIBS += ../../driver/sh4/libaicaflow_host.a
 
 DSP_INPUT_DIR := $(ENJ_ROMDIR)/$(ENJ_BASENAME)

@@ -1,4 +1,4 @@
-/* Deliberately compiled with only format/include, not driver/include. */
+/* Deliberately compiled with only driver/format/include, not driver/include. */
 #include <aicaflow/format.h>
 #include <aicaflow/limits.h>
 #include <aicaflow/result.h>

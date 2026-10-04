@@ -43,15 +43,11 @@ See the [migration and test guide](docs/repository-split.md).
 | `.afb` | Encoded sample bank | Payload in AICA RAM |
 | `.afx` | Timed register commands and reusable note setups | Image in AICA RAM |
 | `.afc` | Optional seek checkpoints | SH4 RAM only |
-| `.afv` | Optional visualizer animation | Player only |
 | `.afi` | Optional binary sample catalog | SH4 code only |
-| `.afbm` | SoundFont/MIDI bank-building map | Offline |
-| `.afp` | Timbre, DSP and performance adjustments | Offline |
-| `.afsfx` | SFX grouping/residency map | Offline DKR pack builder |
 
 Several flows can share one resident bank. A flow always binds to exactly one
 bank; it does not contain samples or look them up by instrument name at runtime.
-An AFP rewrites AFX register commands. AFC checkpoints stay in SH4 RAM. See the
+AFC checkpoints stay in SH4 RAM. See the
 [format reference](docs/specs/assets.md) for layouts, bindings and limits.
 
 ## Included examples

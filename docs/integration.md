@@ -61,25 +61,25 @@ binding and reject sample-address/loop changes and raw seek/rebuild. Use a
 new bound flow when replacing that sample.
 
 Runtime lane modifiers are persistent SH4-controlled grouping modifiers
-(gain/mute/pan/send) on authored lane maps. An AFP's offline `lanes` entries
-are different: they compile into ordinary timed PATCH operations and require
-no runtime profile state.
+(gain/mute/pan/send) on authored lane maps. These are distinct from ordinary
+timed PATCH operations in the control stream.
 
 ## Seek, DSP and player metadata
 
 Seeking requires a matching AFC and a paused music instance. SH4 reconstructs
 register state, resolves addresses and submits REBUILD. The checkpoint table
 stays on SH4; only prepared state uses temporary AICA staging. This is not a
-sample-phase/DSP-buffer snapshot. AFV visualization is separate and optional.
+sample-phase/DSP-buffer snapshot.
 
 One DSP program belongs to the loaded scene. AFX register words choose channel
-sends; the application installs/gates the DSP program. An AFP's `describe`
-output gives build-time scene/tempo metadata. The runtime does not open AFP,
-AFBM or AFSFX and does not infer a preset or tempo from an AFX filename.
+sends; the application installs/gates the DSP program and sets instance tempo.
+The runtime does not read authoring profiles or infer a preset or tempo from
+an AFX filename. See [AICAforge authoring](https://github.com/dfchil/AICAforge/blob/main/docs/authoring.md)
+for generating application metadata.
 
 For host-backed file playback, map the asset directory as `/pc` with `-m`.
 Keep the host server running and disable computer sleep while playback uses it.
 
 See [lifetime.md](lifetime.md) for the ownership rules and
-[Assets and sidecars](specs/assets.md) for the asset contract. See
+[Runtime asset formats](specs/assets.md) for the asset contract. See
 [Runtime ABI](specs/runtime.md) for the SH-4/ARM7 boundary.

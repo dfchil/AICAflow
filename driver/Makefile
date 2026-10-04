@@ -9,21 +9,21 @@ check: smoke
 	cd .. && PYTHONPATH=tools/tuner python3 tools/test/test_afx_tuner_client.py
 	cd .. && PYTHONPATH=tools/tuner python3 tools/test/test_afx_tuner_example.py
 
-build/test_protocol: tests/test_protocol.c common/firmware.c ../format/src/codec.c ../format/include/aicaflow/codec.h include/aicaflow/protocol.h
+build/test_protocol: tests/test_protocol.c common/firmware.c format/src/codec.c format/include/aicaflow/codec.h include/aicaflow/protocol.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -I../format/include -Iinclude tests/test_protocol.c common/firmware.c ../format/src/codec.c -o $@
+	$(CC) $(CFLAGS) -Iformat/include -Iinclude tests/test_protocol.c common/firmware.c format/src/codec.c -o $@
 
-build/test_bank: tests/test_bank.c tests/test_transport.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/firmware.c ../format/src/codec.c sh4/src/host_internal.h sh4/include/aicaflow/host.h sh4/include/aicaflow/bank.h sh4/include/aicaflow/dsp.h ../format/include/aicaflow/codec.h include/aicaflow/protocol.h tests/stubs/dc/spu.h tests/stubs/dc/g2bus.h tests/stubs/kos/timer.h tests/stubs/kos/cache.h
+build/test_bank: tests/test_bank.c tests/test_transport.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/firmware.c format/src/codec.c sh4/src/host_internal.h sh4/include/aicaflow/host.h sh4/include/aicaflow/bank.h sh4/include/aicaflow/dsp.h format/include/aicaflow/codec.h include/aicaflow/protocol.h tests/stubs/dc/spu.h tests/stubs/dc/g2bus.h tests/stubs/kos/timer.h tests/stubs/kos/cache.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -pthread -Itests/stubs -Ish4/include -I../format/include -Iinclude tests/test_bank.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/firmware.c ../format/src/codec.c -lm -o $@
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -pthread -Itests/stubs -Ish4/include -Iformat/include -Iinclude tests/test_bank.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/firmware.c format/src/codec.c -lm -o $@
 
 build/test_dsp: tests/test_dsp.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/include/aicaflow/dsp.h include/aicaflow/protocol.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -Ish4/include -I../format/include -Iinclude tests/test_dsp.c sh4/src/dsp.c sh4/src/dsp_prefabs.c -lm -o $@
+	$(CC) $(CFLAGS) -Ish4/include -Iformat/include -Iinclude tests/test_dsp.c sh4/src/dsp.c sh4/src/dsp_prefabs.c -lm -o $@
 
-build/afx_validate: tools/afx_validate.c ../format/src/codec.c ../format/include/aicaflow/codec.h include/aicaflow/protocol.h
+build/afx_validate: tools/afx_validate.c format/src/codec.c format/include/aicaflow/codec.h include/aicaflow/protocol.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -I../format/include -Iinclude tools/afx_validate.c ../format/src/codec.c -o $@
+	$(CC) $(CFLAGS) -Iformat/include -Iinclude tools/afx_validate.c format/src/codec.c -o $@
 
 layout: build/test_protocol
 	$(MAKE) -C arm7
@@ -33,15 +33,15 @@ timer-check:
 	$(MAKE) -C arm7
 	$(MAKE) -C sh4
 	mkdir -p build
-	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -I../format/include -Iinclude -Ish4/include tests/check_timer.c sh4/libaicaflow_host.a -o build/check_timer.elf
+	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_timer.c sh4/libaicaflow_host.a -o build/check_timer.elf
 	mkdcdisc -e build/check_timer.elf -o build/check_timer.cdi -n afx_timer -N
 
 upload-bench:
 	$(MAKE) -C arm7
 	$(MAKE) -C sh4
 	mkdir -p build
-	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -I../format/include -Iinclude -Ish4/include tests/bench_upload.c sh4/libaicaflow_host.a -o build/bench_upload.elf
+	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/bench_upload.c sh4/libaicaflow_host.a -o build/bench_upload.elf
 
 .PHONY: smoke check layout timer-check upload-bench
 
-build/test_protocol build/test_bank build/test_dsp build/afx_validate: $(wildcard ../format/include/aicaflow/*.h) include/aicaflow/firmware.h
+build/test_protocol build/test_bank build/test_dsp build/afx_validate: $(wildcard format/include/aicaflow/*.h) include/aicaflow/firmware.h

@@ -7,7 +7,7 @@ Dependency directories are named `dependencies/`, regardless of authorship.
 | AICAflow keeps | AICAforge owns |
 | --- | --- |
 | SH4 runtime, ARM7 firmware, firmware manifest | Native compiler, optimizer and emitters |
-| Canonical `format/` contract and specifications | Pinned `dependencies/AICAflow/` driver SDK |
+| Canonical `driver/format/` contract and specifications | Pinned `dependencies/AICAflow/` driver SDK |
 | Loader, validator and runtime tests | MIDI/SF2/PCM, N64 and VGM importers |
 | Examples, DSP programs and enDjinn dependency | Bank/profile tools and authoring tests |
 | Tuner server, Python client and their tests | Offline research utilities and authoring docs |

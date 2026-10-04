@@ -1,3 +1,3 @@
 # Canonical format specification
 
-See [instruction-language](../../format/docs/instruction-language.md) in the public format contract.
+See [instruction-language](../../driver/format/docs/instruction-language.md) in the public format contract.

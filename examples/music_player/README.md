@@ -1,7 +1,8 @@
 # Classical music player
 
 An enDjinn player for three classical works, with a playlist, progress bar,
-seek controls and AFV visualization. Each work has its own sample bank; only
+seek controls and optional [AFV visualization](https://github.com/dfchil/AICAforge/blob/main/docs/specs/authoring-formats.md#afv--visualisation-sidecar).
+Each work has its own sample bank; only
 the selected bank is resident in AICA RAM.
 
 | Work | Default SoundFont | Sample policy | DSP |

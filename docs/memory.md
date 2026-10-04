@@ -35,8 +35,7 @@ AFB payloads are one contiguous allocation. The file header stays in SH-4
 memory; only its payload is copied to AICA. AFX images are separate assets and
 their bank-relative sample addresses are relocated once during upload. AFC
 seek indexes remain only in SH-4 RAM; seeking may temporarily stage SH4-prepared
-register states in AICA, not the index table. AFV and AFP are offline/player sidecars
-and never consume AICA RAM.
+register states in AICA, not the index table.
 
 AICA channel/DSP registers are memory-mapped I/O at `0x00800000`, not part of
 the 2 MiB RAM pictured above. The allocator must never hand out the fixed

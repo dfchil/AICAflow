@@ -1,7 +1,7 @@
 ENJ_BASENAME := aicaflow_quickstart
 OPTLEVEL := 2
 ENJ_CFLAGS += -Wall -Wextra -Werror
-ENJ_INCLUDES += -I../../format/include -I../../driver/include -I../../driver/sh4/include
+ENJ_INCLUDES += -I../../driver/format/include -I../../driver/include -I../../driver/sh4/include
 ENJ_LDLIBS += ../../driver/sh4/libaicaflow_host.a
 
 include ../authoring.mk

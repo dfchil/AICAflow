@@ -74,4 +74,4 @@ is reported separately by dsp_sequence and dsp_result in the status block.
 
 IPC contains only resolved AICA addresses, channel mappings and control values.
 It never carries AFB/AFX file parsing, MIDI events, sample-name lookup, a seek
-index or an AFP profile.
+index or an authoring profile.

@@ -62,6 +62,6 @@ clean:
 	$(MAKE) -C driver clean
 
 format-check:
-	$(MAKE) -C format check
+	$(MAKE) -C driver/format check
 
 .PHONY: format-check runtime-check compatibility-check dependencies authoring-dependencies update-dependencies authoring
