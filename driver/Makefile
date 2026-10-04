@@ -12,13 +12,13 @@ build/test_protocol: tests/test_protocol.c common/codec.c include/aicaflow/codec
 	mkdir -p build
 	$(CC) $(CFLAGS) -Iinclude tests/test_protocol.c common/codec.c -o $@
 
-build/test_bank: tests/test_bank.c tests/test_transport.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_scene.c sh4/src/bank.c common/codec.c sh4/src/host_internal.h sh4/include/aicaflow/host.h sh4/include/aicaflow/bank.h sh4/include/aicaflow/dsp.h include/aicaflow/codec.h include/aicaflow/protocol.h tests/stubs/dc/spu.h tests/stubs/dc/g2bus.h tests/stubs/kos/timer.h tests/stubs/kos/mutex.h tests/stubs/kos/cache.h
+build/test_bank: tests/test_bank.c tests/test_transport.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/codec.c sh4/src/host_internal.h sh4/include/aicaflow/host.h sh4/include/aicaflow/bank.h sh4/include/aicaflow/dsp.h include/aicaflow/codec.h include/aicaflow/protocol.h tests/stubs/dc/spu.h tests/stubs/dc/g2bus.h tests/stubs/kos/timer.h tests/stubs/kos/cache.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -pthread -Itests/stubs -Ish4/include -Iinclude tests/test_bank.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_scene.c sh4/src/bank.c common/codec.c -lm -o $@
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -pthread -Itests/stubs -Ish4/include -Iinclude tests/test_bank.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/codec.c -lm -o $@
 
-build/test_dsp: tests/test_dsp.c sh4/src/dsp.c sh4/include/aicaflow/dsp.h include/aicaflow/protocol.h
+build/test_dsp: tests/test_dsp.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/include/aicaflow/dsp.h include/aicaflow/protocol.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -Ish4/include -Iinclude tests/test_dsp.c sh4/src/dsp.c -lm -o $@
+	$(CC) $(CFLAGS) -Ish4/include -Iinclude tests/test_dsp.c sh4/src/dsp.c sh4/src/dsp_prefabs.c -lm -o $@
 
 build/afx_validate: ../tools/author/afx_validate.c common/codec.c include/aicaflow/codec.h include/aicaflow/protocol.h
 	mkdir -p build

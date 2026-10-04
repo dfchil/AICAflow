@@ -1,4 +1,4 @@
-/* Offline AICA DSP authoring tool. Runtime and offline presets share dsp.c. */
+/* Offline AICA DSP authoring tool. Runtime and offline use dsp_prefabs.c. */
 #include <aicaflow/dsp.h>
 
 #include <errno.h>
