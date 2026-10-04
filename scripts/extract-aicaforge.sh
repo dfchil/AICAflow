@@ -12,8 +12,7 @@ test ! -e "$destination" || { echo "Destination already exists: $destination" >&
 git filter-repo --version >/dev/null
 paths=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/aicaforge-paths.txt
 git clone --no-local --no-tags --single-branch --branch "$source_tag" "$source_repo" "$destination"
-git -C "$destination" switch -c aicaforge-extraction
 git -C "$destination" filter-repo --paths-from-file "$paths"
-git -C "$destination" branch -M main
+git -C "$destination" switch -c main
 echo "Extracted history at $destination; no remote has been published."
 echo "Inspect git log --follow -- src/afx_compile_c.c and git blame src/afx_compile_c.c."
