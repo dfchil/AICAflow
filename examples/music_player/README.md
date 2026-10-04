@@ -33,6 +33,15 @@ make -C examples/music_player bin/aicaflow_music_player.cdi
 D-pad up/down selects a song, A plays/pauses, B stops, left/right seeks ten
 seconds, and L/R pages the list. START+A+B+X+Y exits through the enDjinn loop.
 
+Hold X and press left/right to change speed in 10-percentage-point steps
+(50–200% of the song's profile tempo, without changing pitch). Hold X and
+press up/down to change playback volume in 5-percentage-point steps (0–100%).
+Y resets both to 100%. Settings also work while paused or stopped and persist
+across songs. The screen shows both values; the time display and spectrum
+follow the chosen tempo. Volume scales the song's existing gain and dynamics;
+100% is the original level, not additional amplification. DSP tails may ring
+out briefly when the source volume is reduced to zero.
+
 ## Assets and profiles
 
 [`classical.afbm`](classical.afbm) maps MIDI instruments to SoundFont sources

@@ -128,6 +128,7 @@ $(ENJ_BINDIR)/$(ENJ_BASENAME).cdi: $(ENJ_BINDIR)/$(ENJ_BASENAME).elf $(DISC_STAM
 .PHONY: assets fetch-assets check frame-test FORCE
 
 check: $(ENJ_BINDIR)/$(ENJ_BASENAME).elf $(DISC_STAMP) ../../driver/build/afx_validate
+	@python3 tests/playback_controls.py
 	@for name in chopin-op27-no1 bach-bwv1007-prelude grieg-mountain-king; do \
 		for extension in afb afx afc afv afi names.afi; do test -s "$(ASSET_DIR)/$$name.$$extension"; done; \
 	done

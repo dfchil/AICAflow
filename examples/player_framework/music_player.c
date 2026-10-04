@@ -65,6 +65,7 @@ static uint8_t last_ltrigger, last_rtrigger;
 static uint32_t paused_ms;
 static uint32_t rate_num, rate_den, authored_duration_ms, duration_ms, started;
 static uint16_t tempo_q8_8 = 256;
+static unsigned speed_percent = 100, volume_percent = 100;
 static char message[80] = "Select a song and press A";
 static uint8_t *visual_data, *visual;
 static uint32_t visual_frames;
@@ -207,7 +208,10 @@ static void render(void *unused) {
     if (loading_label) loading_progress(loading_label,loading_done,loading_total);
     else if (visual_loading_data) loading_progress("Loading AFV",visual_loading_bytes,visual_loading_size);
     else text(28, playing >= 0 ? time : message);
-    text(29,"UP/DOWN select  A play/pause  B stop  L/R page  LEFT/RIGHT seek 10s");
+    snprintf(line,sizeof(line),"Speed %u%%  Volume %u%% | X+LEFT/RIGHT speed  X+UP/DOWN vol  Y reset",
+             speed_percent,volume_percent);
+    text(25,line);
+    text(29,"UP/DOWN select A play/pause B stop L/R page LEFT/RIGHT seek | START+A+B+X+Y exit");
 }
 
 static FILE *open_asset(const char *name) {
@@ -498,14 +502,55 @@ static int room(const char *name) {
     return r;
 #endif
 }
+static uint16_t song_tempo(int index, unsigned percent) {
+    unsigned tempo=(unsigned)PLAYER_SONG_TEMPO(index)*percent/100u;
+    return tempo<16u ? 16u : tempo>4096u ? 4096u : (uint16_t)tempo;
+}
+static int set_volume(int percent) {
+    if (percent<0) percent=0;
+    if (percent>100) percent=100;
+    int r=playing<0 ? 0 : afx_instance_gain(instance,
+        (uint8_t)((PLAYER_SONG_GAIN(playing)*(unsigned)percent+50u)/100u));
+    if (!r) volume_percent=(unsigned)percent;
+    return r;
+}
+static int set_speed(int percent) {
+    if (percent<50) percent=50;
+    if (percent>200) percent=200;
+    if ((unsigned)percent==speed_percent) return 0;
+    if (playing>=0) {
+        uint16_t tempo=song_tempo(playing,(unsigned)percent);
+        int r=0;
+        /* Rebuild at the same authored tick, like seek: a tempo command alone
+           leaves the already scheduled WAIT at its old speed. */
+        if (!paused) r=afx_instance_pause(instance);
+        if (!r && !paused) r=wait_state(AFX_PAUSED);
+        if (r) return r;
+        uint32_t ms=paused ? paused_ms : playback_ms();
+        uint32_t tick=(uint32_t)((uint64_t)ms*tempo_q8_8*rate_num/(256000ull*rate_den));
+        r=afx_instance_tempo(instance,tempo);
+        if (!r && !paused) r=afx_instance_seek(instance,tick);
+        if (!r && !paused) r=wait_state(AFX_RUNNING);
+        if (r) return r;
+        /* Keep the authored position unchanged when the wall-clock scale
+           changes. Seek, resume and the spectrum all use this same scale. */
+        ms=(uint32_t)((uint64_t)ms*tempo_q8_8/tempo);
+        if (paused) paused_ms=ms;
+        else started=afx_status_timer_ticks()-ms;
+        tempo_q8_8=tempo;
+        duration_ms=(uint32_t)((uint64_t)authored_duration_ms*256u/tempo);
+    }
+    speed_percent=(unsigned)percent;
+    return 0;
+}
 static int start(void) {
     int index=loaded;
     int r=afx_instance_activate(asset,&instance);
-    tempo_q8_8=PLAYER_SONG_TEMPO(index);
+    tempo_q8_8=song_tempo(index,speed_percent);
     duration_ms=(uint32_t)((uint64_t)authored_duration_ms*256u/tempo_q8_8);
     if (!r) r=afx_instance_tempo(instance,tempo_q8_8);
+    if (!r) r=afx_instance_gain(instance,(uint8_t)((PLAYER_SONG_GAIN(index)*volume_percent+50u)/100u));
     if (!r) r=wait_state(AFX_RUNNING);
-    if (!r) r=afx_instance_gain(instance,PLAYER_SONG_GAIN(index));
     started=afx_instance_start_tick(instance);
 #ifdef PLAYER_SHARED_BANK_FILE
     if (!r && songs[index].dsp) r=room(songs[index].dsp);
@@ -656,14 +701,25 @@ static void update(void *unused) {
             bool ltrigger=pad->ltrigger>=TRIGGER_PRESSED && last_ltrigger<TRIGGER_PRESSED;
             bool rtrigger=pad->rtrigger>=TRIGGER_PRESSED && last_rtrigger<TRIGGER_PRESSED;
             last_ltrigger=pad->ltrigger; last_rtrigger=pad->rtrigger;
-            if (pad->button.UP==ENJ_BUTTON_DOWN_THIS_FRAME) selected=(selected+SONG_COUNT-1)%SONG_COUNT;
-            if (pad->button.DOWN==ENJ_BUTTON_DOWN_THIS_FRAME) selected=(selected+1)%SONG_COUNT;
-            if (ltrigger) selected=(selected+SONG_COUNT-SONG_ROWS)%SONG_COUNT;
-            if (rtrigger) selected=(selected+SONG_ROWS)%SONG_COUNT;
-            if (pad->button.B==ENJ_BUTTON_DOWN_THIS_FRAME) { r=stop(); snprintf(message,sizeof(message),"Stopped"); }
-            else if (pad->button.A==ENJ_BUTTON_DOWN_THIS_FRAME) r=toggle();
-            else if (pad->button.LEFT==ENJ_BUTTON_DOWN_THIS_FRAME) r=seek(-10);
-            else if (pad->button.RIGHT==ENJ_BUTTON_DOWN_THIS_FRAME) r=seek(10);
+            if (pad->button.X & ENJ_BUTTON_DOWN) {
+                if (pad->button.LEFT==ENJ_BUTTON_DOWN_THIS_FRAME) r=set_speed((int)speed_percent-10);
+                else if (pad->button.RIGHT==ENJ_BUTTON_DOWN_THIS_FRAME) r=set_speed((int)speed_percent+10);
+                else if (pad->button.UP==ENJ_BUTTON_DOWN_THIS_FRAME) r=set_volume((int)volume_percent+5);
+                else if (pad->button.DOWN==ENJ_BUTTON_DOWN_THIS_FRAME) r=set_volume((int)volume_percent-5);
+            } else {
+                if (pad->button.UP==ENJ_BUTTON_DOWN_THIS_FRAME) selected=(selected+SONG_COUNT-1)%SONG_COUNT;
+                if (pad->button.DOWN==ENJ_BUTTON_DOWN_THIS_FRAME) selected=(selected+1)%SONG_COUNT;
+                if (ltrigger) selected=(selected+SONG_COUNT-SONG_ROWS)%SONG_COUNT;
+                if (rtrigger) selected=(selected+SONG_ROWS)%SONG_COUNT;
+                if (pad->button.B==ENJ_BUTTON_DOWN_THIS_FRAME) { r=stop(); snprintf(message,sizeof(message),"Stopped"); }
+                else if (pad->button.A==ENJ_BUTTON_DOWN_THIS_FRAME) r=toggle();
+                else if (pad->button.LEFT==ENJ_BUTTON_DOWN_THIS_FRAME) r=seek(-10);
+                else if (pad->button.RIGHT==ENJ_BUTTON_DOWN_THIS_FRAME) r=seek(10);
+            }
+            if (!r && pad->button.Y==ENJ_BUTTON_DOWN_THIS_FRAME) {
+                r=set_speed(100);
+                if (!r) r=set_volume(100);
+            }
         }
     } else { input_armed=false; last_ltrigger=last_rtrigger=0; }
 #ifdef PLAYER_SONG_BANK_FILE
@@ -671,7 +727,7 @@ static void update(void *unused) {
 #endif
     if (!r && pending>=0 && !bank_loader.file) r=finish_song_load();
     if (!r && visual_file) load_visual_chunk();
-    if (r) { stop(); snprintf(message,sizeof(message),"Could not play/seek (%d). Press A to retry.",r); }
+    if (r) { stop(); snprintf(message,sizeof(message),"Playback/control error (%d). Press A to retry.",r); }
     if (playing>=0) {
         afx_instance_status_t s;
         if (!afx_instance_status(instance,&s) && (s.state==AFX_DONE || s.state==AFX_ERROR)) {
