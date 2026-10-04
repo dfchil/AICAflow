@@ -1,8 +1,9 @@
 # Public asset-format contract
 
-This is the canonical portable contract owned by AICAflow and vendored by
-AICAforge at `dependencies/aicaflow-format/`. It has no runtime, KOS or
-enDjinn dependencies. Add `include/` to the include path and compile
+This is the canonical portable contract owned by AICAflow. AICAforge uses
+this directory directly from its pinned `dependencies/AICAflow/` driver SDK;
+there is no separate format copy. The portable code has no KOS or enDjinn
+dependencies. Add `include/` to the include path and compile
 `src/codec.c` when decoding or validating assets.
 
 - `format.h`: file layouts, field IDs, commands and checkpoint records.
@@ -23,6 +24,6 @@ Run `make check` here for independent C/C++/assembly-header checks.
 Native authoring and runtime suites exercise the codec separately. Firmware
 validation lives in `driver/common/firmware.c`, outside this dependency.
 
-Consumers pin the upstream revision in `VERSION`; maintainers update it
+Consumers pin the driver revision with a Git submodule; maintainers update it
 explicitly and run compatibility tests before publishing. A repository version
 change does not itself change the binary format version.

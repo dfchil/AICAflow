@@ -8,7 +8,7 @@ TOOLS := tuner/server
 
 all: examples tools
 
-examples:
+examples: authoring
 	@for example in $(EXAMPLES); do \
 		source $(KOS_ENV) && $(MAKE) -C examples/$$example || exit $$?; \
 	done
@@ -25,7 +25,22 @@ runtime-check: format-check
 # AICAforge is an external checkout; ordinary runtime checks do not need it.
 AICAFORGE_BIN ?= $(CURDIR)/dependencies/AICAforge/build
 AICAFORGE_DIR ?= $(abspath $(AICAFORGE_BIN)/..)
-compatibility-check:
+authoring-dependencies:
+	git -c submodule.recurse=false submodule update --init --checkout -- dependencies/AICAforge
+	$(MAKE) -C dependencies/AICAforge dependencies
+
+dependencies: authoring-dependencies
+	git -c submodule.recurse=false submodule update --init --checkout -- dependencies/enDjinn
+
+update-dependencies:
+	git -c submodule.recurse=false submodule update --init --remote --checkout -- dependencies/AICAforge
+	$(MAKE) -C dependencies/AICAforge dependencies
+
+authoring:
+	@test -f "$(AICAFORGE_DIR)/Makefile" || { echo "Run make dependencies first" >&2; exit 1; }
+	$(MAKE) -C "$(AICAFORGE_DIR)" BUILD="$(abspath $(AICAFORGE_BIN))" all
+
+compatibility-check: authoring
 	@test -x "$(AICAFORGE_BIN)/afx_demo_assets" || { echo "Build AICAforge and set AICAFORGE_BIN=/absolute/path/to/build" >&2; exit 1; }
 	$(MAKE) -C driver build/afx_validate build/test_bank
 	$(MAKE) -C "$(AICAFORGE_DIR)" -f test/cli.mk BIN="$(abspath $(AICAFORGE_BIN))" VALIDATOR="$(CURDIR)/driver/build/afx_validate" check
@@ -49,4 +64,4 @@ clean:
 format-check:
 	$(MAKE) -C format check
 
-.PHONY: format-check runtime-check compatibility-check
+.PHONY: format-check runtime-check compatibility-check dependencies authoring-dependencies update-dependencies authoring

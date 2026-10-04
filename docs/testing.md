@@ -9,15 +9,17 @@ Authoring tests belong to AICAforge. To additionally exercise its output with
 AICAflow's validator and loader:
 
 ```sh
-make -C /path/to/AICAforge check
-make compatibility-check AICAFORGE_BIN=/path/to/AICAforge/build
+make authoring-dependencies
+make -C dependencies/AICAforge check
+make compatibility-check
 ```
 
 The integration target reuses AICAforge's CLI tests for bank merging, profiles
 and deterministic output; AICAflow supplies the validator. It also validates
 current and frozen older assets, bank binding and stale-checkpoint rejection.
 `AICAFORGE_DIR` defaults to the parent of `AICAFORGE_BIN`; override it when
-using a custom binary output directory. AICAforge's tests need its documented
+using a custom binary output directory. For an external checkout, pass `AICAFORGE_BIN=/absolute/AICAforge/build`.
+AICAforge's tests need its documented
 Python dependencies. CI checks both repositories together.
 
 `make firmware-check` rebuilds the ARM7 firmware and compares its SHA-256

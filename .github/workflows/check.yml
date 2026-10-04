@@ -23,5 +23,18 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install mido sf2utils numpy
+      - run: make -C forge dependencies
       - run: make -C forge -j2 check
       - run: make -C flow compatibility-check AICAFORGE_BIN="$GITHUB_WORKSPACE/forge/build"
+  pinned-authoring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install mido sf2utils numpy
+      - run: make authoring-dependencies
+      - run: make -C dependencies/AICAforge -j2 check
+      - run: make -C dependencies/AICAforge compatibility-check
+      - run: make compatibility-check

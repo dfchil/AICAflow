@@ -18,10 +18,9 @@ registers.
 ## Build an example
 
 ```sh
-git clone --recurse-submodules https://github.com/dfchil/aicaflow.git
+git clone https://github.com/dfchil/aicaflow.git
 cd aicaflow
-git clone https://github.com/dfchil/AICAforge.git dependencies/AICAforge
-make -C dependencies/AICAforge -j8
+make dependencies
 source /opt/toolchains/dc/kos/environ.sh
 make examples
 ```
@@ -30,8 +29,9 @@ The checked-in firmware means this needs no ARM7 compiler. Run `make check` for
 host validation; maintainers with the ARM toolchain run `make firmware-check`
 to reproduce the release image.
 
-Asset authoring lives only in AICAforge. The example build above uses a separate,
-ignored checkout in `dependencies/AICAforge/`; it is not vendored into AICAflow.
+Asset authoring lives only in AICAforge. Examples use the pinned Git submodule
+at `dependencies/AICAforge/`. `make dependencies` initializes the required
+checkouts explicitly and non-recursively; `make examples` builds the toolchain.
 Alternatively pass `AICAFORGE_BIN=/absolute/AICAforge/build`.
 See the [migration and test guide](docs/repository-split.md).
 `make check` requires neither AICAforge nor a Dreamcast toolchain.
