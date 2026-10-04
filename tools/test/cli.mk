@@ -14,7 +14,10 @@ check:
 	$(BIN)/afx_compile "$$task_tmp/fixture.mid" --zones "$$task_tmp/fixture.zones" \
 	"$$task_tmp/one.afb" "$$task_tmp/one.afx" && \
 	$(BIN)/afx_compile "$$task_tmp/fixture.mid" --zones "$$task_tmp/fixture.zones" \
-	"$$task_tmp/two.afb" "$$task_tmp/two.afx" && mkdir "$$task_tmp/controls" && \
+	"$$task_tmp/two.afb" "$$task_tmp/two.afx" && \
+	cmp "$$task_tmp/one.afb" "$$task_tmp/two.afb" && cmp "$$task_tmp/one.afx" "$$task_tmp/two.afx" && \
+	cmp "$$task_tmp/one.afc" "$$task_tmp/two.afc" && cmp "$$task_tmp/one.afv" "$$task_tmp/two.afv" && \
+	mkdir "$$task_tmp/controls" && \
 	$(BIN)/afx_bank --merge "$$task_tmp/music.afb" "$$task_tmp/controls" "$$task_tmp/one.afx" "$$task_tmp/two.afx" && \
 	$(VALIDATOR) "$$task_tmp/controls/one.afx" && $(VALIDATOR) "$$task_tmp/controls/two.afx" && \
 	python3 -c 'import struct,sys; bank,flow,source=(open(p,"rb").read() for p in sys.argv[1:]); assert struct.unpack_from("<2I",bank,8)==struct.unpack_from("<2I",flow,40); assert bank[32:]==source[32:]' "$$task_tmp/music.afb" "$$task_tmp/controls/one.afx" "$$task_tmp/one.afb"
