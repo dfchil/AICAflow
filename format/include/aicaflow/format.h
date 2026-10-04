@@ -74,6 +74,12 @@ typedef struct {
 typedef struct { uint32_t image_offset, byte_size, frames, format; } afx_sample_t;
 typedef struct { uint32_t pair_offset, sample_index, byte_offset; } afx_relocation_t;
 
+/* One AFC checkpoint channel record; also used by runtime rebuild requests. */
+typedef struct {
+    uint32_t local_channel;
+    uint16_t fields[AFX_FIELD_COUNT];
+} afx_checkpoint_channel_t;
+
 #if defined(__cplusplus)
 #define AFX_FORMAT_ASSERT static_assert
 #else
@@ -81,6 +87,7 @@ typedef struct { uint32_t pair_offset, sample_index, byte_offset; } afx_relocati
 #endif
 AFX_FORMAT_ASSERT(sizeof(afx_file_header_t) == 80, "file header");
 AFX_FORMAT_ASSERT(sizeof(afx_sample_t) == 16 && sizeof(afx_relocation_t) == 12, "host tables");
+AFX_FORMAT_ASSERT(sizeof(afx_checkpoint_channel_t) == 40, "checkpoint channel");
 #undef AFX_FORMAT_ASSERT
 #endif
 #endif

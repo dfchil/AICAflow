@@ -565,9 +565,9 @@ static int build_per_song(const char *map_path, const char *directory) {
                                 songs[song].resolved.zones, songs[song].resolved.zone_count, &out)) {
             fprintf(stderr, "%s: cannot compile resolved sample zones\n", songs[song].name); goto failed;
         }
-        if (out.afb_bytes < AFX_BANK_HEADER_BYTES || out.afb_bytes - AFX_BANK_HEADER_BYTES > AFX_ASSET_MAX) {
+        if (out.afb_bytes < AFX_BANK_HEADER_BYTES || out.afb_bytes - AFX_BANK_HEADER_BYTES > AFX_TARGET_MAX_BANK_BYTES) {
             fprintf(stderr, "%s: AFB is %u bytes; AICA asset limit is %u bytes\n",
-                    songs[song].name, out.afb_bytes - AFX_BANK_HEADER_BYTES, AFX_ASSET_MAX); goto failed;
+                    songs[song].name, out.afb_bytes - AFX_BANK_HEADER_BYTES, AFX_TARGET_MAX_BANK_BYTES); goto failed;
         }
         if (
             snprintf(afb, sizeof(afb), "%s/%s.afb", directory, songs[song].name) >= (int)sizeof(afb) ||
@@ -758,10 +758,10 @@ static int merge_final_banks(const char *bank_path, const char *controls_dir, in
     if (collect_merge_samples(flows, flow_count, &samples, &sample_count)) goto done;
     for (uint32_t i = 0; i < sample_count; ++i) {
         payload = align32(payload);
-        if (samples[i].bytes > AFX_ASSET_MAX - payload) goto done;
+        if (samples[i].bytes > AFX_TARGET_MAX_BANK_BYTES - payload) goto done;
         samples[i].offset = payload; payload += samples[i].bytes;
     }
-    if (!payload || payload > AFX_ASSET_MAX || payload > UINT32_MAX - AFX_BANK_HEADER_BYTES) goto done;
+    if (!payload || payload > AFX_TARGET_MAX_BANK_BYTES || payload > UINT32_MAX - AFX_BANK_HEADER_BYTES) goto done;
     bank = calloc(1, AFX_BANK_HEADER_BYTES + payload);
     if (!bank) goto done;
     for (uint32_t i = 0; i < sample_count; ++i) memcpy(bank + AFX_BANK_HEADER_BYTES + samples[i].offset, samples[i].data, samples[i].bytes);
@@ -845,7 +845,7 @@ int main(int argc, char **argv) {
         afx_c_output_t out;
         if (afx_c_compile_zones(songs[song].resolved.notes, songs[song].resolved.note_count, songs[song].tick_rate,
                                 zones, zone_count, &out)) goto failed;
-        if (out.afb_bytes < AFX_BANK_HEADER_BYTES || out.afb_bytes - AFX_BANK_HEADER_BYTES > AFX_ASSET_MAX) {
+        if (out.afb_bytes < AFX_BANK_HEADER_BYTES || out.afb_bytes - AFX_BANK_HEADER_BYTES > AFX_TARGET_MAX_BANK_BYTES) {
             afx_c_output_free(&out); goto failed;
         }
         if (!song) {

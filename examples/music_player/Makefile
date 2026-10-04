@@ -34,9 +34,10 @@ ASSETS := $(addprefix $(ASSET_DIR)/,chopin-op27-no1.afb chopin-op27-no1.afx chop
 DISC := $(ENJ_ROMDIR)/$(ENJ_BASENAME)
 DISC_STAMP := $(DISC)/.assets
 FIRMWARE := $(DISC)/aicaflow.drv
-AUTHOR := ../../build/afx_compile
-BANK_AUTHOR := ../../build/afx_bank
-PROFILE_AUTHOR := ../../build/afx_profile
+include ../authoring.mk
+AUTHOR := $(AICAFORGE_BIN)/afx_compile
+BANK_AUTHOR := $(AICAFORGE_BIN)/afx_bank
+PROFILE_AUTHOR := $(AICAFORGE_BIN)/afx_profile
 # AFBM paths are relative to build/classical.afbm. Absolute user paths remain
 # absolute; repository-relative defaults step out of build/ once.
 map_path = $(if $(filter /%,$(1)),$(1),../$(1))
@@ -45,12 +46,6 @@ assets: $(ASSET_STAMP) $(FIRMWARE)
 
 fetch-assets:
 	sh fetch_assets.sh sources
-
-$(AUTHOR) $(BANK_AUTHOR) $(PROFILE_AUTHOR): ../../tools/author/afx_compile_c.c ../../tools/author/afx_compile_c.h \
-	../../tools/author/afx_compile_c_cli.c ../../tools/author/afx_midi_c.c \
-	../../tools/author/afx_midi_c.h ../../tools/author/afx_sf2_c.c ../../tools/author/afx_sf2_c.h \
-	../../tools/author/afx_bank_c.c ../../tools/author/afx_profile_c.c
-	$(MAKE) -C ../.. compiler
 
 FORCE:
 
@@ -78,7 +73,7 @@ $(MAP): Makefile classical.afbm $(CONFIG) $(BACH_PERFORMANCE_MIDI) fetch-assets
 		-e 's|@ORCHESTRA_RATE@|$(ORCHESTRA_RATE)|g' \
 		-e 's|@GRIEG_MIDI@|$(call map_path,$(GRIEG_MIDI))|g' classical.afbm > "$@"
 
-$(ASSET_STAMP): Makefile $(MAP) $(PROFILES) $(DEFAULT_SOURCES) $(DEFAULT_SOUNDFONT) $(BANK_AUTHOR) $(PROFILE_AUTHOR) ../../tools/author/afx_sample_c.c ../../tools/author/afx_ya2beam.c
+$(ASSET_STAMP): Makefile $(MAP) $(PROFILES) $(DEFAULT_SOURCES) $(DEFAULT_SOUNDFONT) $(AUTHOR) $(BANK_AUTHOR) $(PROFILE_AUTHOR)
 	@mkdir -p $(ASSET_DIR) $(BASE_DIR) build/include
 	$(BANK_AUTHOR) --per-song "$(MAP)" "$(BASE_DIR)"
 	@set -e; for name in chopin-op27-no1 bach-bwv1007-prelude grieg-mountain-king; do \

@@ -1,3 +1,4 @@
+#include <aicaflow/firmware.h>
 #include "host_internal.h"
 
 uint32_t g_dynamic_base, g_asset_limit;

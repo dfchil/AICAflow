@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Small self-contained MultiPCM VGM smoke test for the native importer."""
 from pathlib import Path
+import os
 import struct
 import subprocess
 import tempfile
 
 
-ROOT = Path(__file__).resolve().parents[2]
-TOOL = ROOT / "build" / "afx_vgm"
+TOOL = Path(os.environ.get("AFX_BUILD_DIR", Path(__file__).resolve().parents[1] / "build")) / "afx_vgm"
 
 
 def write_register(data: bytearray, address: int, value: int) -> None:

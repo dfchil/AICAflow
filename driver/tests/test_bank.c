@@ -3,6 +3,8 @@
 #include <aicaflow/dsp.h>
 
 #include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Supplies the simulated SPU transport used by the real allocator and loader. */
@@ -39,7 +41,20 @@ static void flow_file(uint8_t data[160], uint32_t low, uint32_t high) {
     data[96 + AFX_SETUP_BYTES + 8] = AFX_OP_END;
 }
 
-int main(void) {
+static uint8_t *read_fixture(const char *path, uint32_t *bytes) {
+    FILE *file = fopen(path, "rb");
+    assert(file && !fseek(file, 0, SEEK_END));
+    long size = ftell(file);
+    assert(size > 0 && size <= AFX_ASSET_MAX && !fseek(file, 0, SEEK_SET));
+    uint8_t *data = malloc((size_t)size);
+    assert(data && fread(data, 1, (size_t)size, file) == (size_t)size);
+    assert(!fclose(file));
+    *bytes = (uint32_t)size;
+    return data;
+}
+
+int main(int argc, char **argv) {
+    assert(argc == 1 || argc == 4);
     uint8_t fw[64], bank_data[96], flow_data[160], seek_data[48];
     afx_bank_t bank = {0};
     afx_asset_t flow;
@@ -83,6 +98,24 @@ int main(void) {
     assert(afx_bank_release(&bank) == -AFX_ASSET_REFERENCED);
     assert(afx_asset_free(flow) == AFX_OK);
     assert(afx_bank_release(&bank) == AFX_OK);
+    if (argc == 4) {
+        uint32_t bank_bytes, flow_bytes, seek_bytes;
+        uint8_t *b = read_fixture(argv[1], &bank_bytes);
+        uint8_t *f = read_fixture(argv[2], &flow_bytes);
+        uint8_t *s = read_fixture(argv[3], &seek_bytes);
+        assert(afx_bank_load_memory(&bank, b, bank_bytes) == AFX_OK);
+        f[40] ^= 1; /* Reject a valid control stream bound to a different bank. */
+        assert(afx_bank_flow_upload(&bank, f, flow_bytes, &flow) != AFX_OK);
+        f[40] ^= 1;
+        assert(afx_bank_flow_upload(&bank, f, flow_bytes, &flow) == AFX_OK);
+        s[8] ^= 1; /* A stale checkpoint must not attach to a new control image. */
+        assert(afx_flow_seek_index_load_memory(flow, s, seek_bytes) != AFX_OK);
+        s[8] ^= 1;
+        assert(afx_flow_seek_index_load_memory(flow, s, seek_bytes) == AFX_OK);
+        assert(afx_asset_free(flow) == AFX_OK);
+        assert(afx_bank_release(&bank) == AFX_OK);
+        free(b); free(f); free(s);
+    }
     afx_shutdown();
     return 0;
 }

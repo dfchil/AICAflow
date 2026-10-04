@@ -14,5 +14,5 @@ File layouts, bytecode and the SH4/ARM7 interface:
 Binary asset and IPC multibyte values are little-endian. AFP is JSON, and
 AFBM/AFSFX are text; they are not uploaded to AICA. The exact numeric
 constants and C layouts are authoritative in
-[`driver/include/aicaflow/protocol.h`](../../driver/include/aicaflow/protocol.h)
-and the validator in `driver/common/codec.c`.
+[`format/include/aicaflow/format.h`](../../format/include/aicaflow/format.h)
+and the validator in `format/src/codec.c`.

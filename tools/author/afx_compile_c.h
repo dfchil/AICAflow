@@ -3,7 +3,8 @@
 
 #include <stdint.h>
 
-#include <aicaflow/protocol.h>
+#include <aicaflow/format.h>
+#include <aicaflow/limits.h>
 
 typedef struct {
     uint32_t start_tick, end_tick;

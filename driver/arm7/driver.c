@@ -1,3 +1,4 @@
+#include <aicaflow/protocol.h>
 #include <aicaflow/codec.h>
 
 /* The timer FIQ only advances AFX_AICA_TIMER_TICK_ADDR. Stream work stays in

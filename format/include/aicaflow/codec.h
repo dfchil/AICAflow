@@ -1,6 +1,7 @@
 #ifndef AICAFLOW_CODEC_H
 #define AICAFLOW_CODEC_H
-#include <aicaflow/protocol.h>
+#include <aicaflow/format.h>
+#include <aicaflow/result.h>
 
 /* Wire data may be unaligned. Never cast input bytes to these C structs. */
 static inline uint16_t afx_read16(const uint8_t *p) {
@@ -115,6 +116,5 @@ uint32_t afx_control_id(const void *image, uint32_t size);
  * only on success. */
 afx_result_t afx_flow_duration(const void *data, uint32_t size, uint64_t *out_ticks,
                                uint32_t *out_tick_rate_num, uint32_t *out_tick_rate_den);
-afx_result_t afx_firmware_validate(const void *data, uint32_t size, afx_firmware_info_t *out);
 void afx_encode_header(uint8_t out[AFX_FILE_HEADER_BYTES], const afx_file_header_t *header);
 #endif

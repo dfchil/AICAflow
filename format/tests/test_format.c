@@ -1,5 +1,7 @@
 /* Deliberately compiled with only format/include, not driver/include. */
 #include <aicaflow/format.h>
+#include <aicaflow/limits.h>
+#include <aicaflow/result.h>
 
 #if defined(AFX_ABI_VERSION) || defined(AFX_CONTROL_BASE) || defined(AFX_CMD_QUEUE_CAPACITY)
 #error "The public asset format must not expose firmware or IPC internals"
@@ -16,6 +18,10 @@ int main(void) {
     assert(AFX_FILE_VERSION == 7 && AFX_BANK_VERSION == 1);
     assert(AFX_SEEK_VERSION == 1 && AFX_INDEX_VERSION == 1);
     assert(AFX_CHECKPOINT_VERSION == 1 && AFX_MAX_FLOW_CHANNELS == 64);
+    assert(sizeof(afx_checkpoint_channel_t) == 40);
+    assert(AFX_TARGET_MAX_BANK_BYTES == 0x1fc000);
+    assert(AFX_EXECUTION_BUDGET_COMMANDS == 38 && AFX_EXECUTION_BUDGET_WRITES == 171);
+    assert(AFX_BAD_RELOCATION == 5 && AFX_BAD_FIRMWARE == 17 && AFX_TIMEOUT == 18);
     assert(AFX_FILE_HEADER_BYTES == 80 && sizeof(afx_file_header_t) == 80);
     assert(AFX_BANK_HEADER_BYTES == 32 && AFX_SEEK_HEADER_BYTES == 32);
     assert(AFX_INDEX_HEADER_BYTES == 32 && AFX_INDEX_RECORD_BYTES == 16);

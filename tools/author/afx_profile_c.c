@@ -1,4 +1,5 @@
 #include <aicaflow/codec.h>
+#include <aicaflow/limits.h>
 
 #include <ctype.h>
 #include <stdbool.h>

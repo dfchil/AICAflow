@@ -311,11 +311,11 @@ static int seek_grow(uint8_t **data, uint32_t *capacity, uint32_t used, uint32_t
 
 static int seek_append(uint8_t **data, uint32_t *used, uint32_t *capacity,
                        uint32_t tick, uint32_t position, uint32_t remaining,
-                       const afx_restore_channel_t active[AFX_MAX_FLOW_CHANNELS],
+                       const afx_checkpoint_channel_t active[AFX_MAX_FLOW_CHANNELS],
                        const uint8_t present[AFX_MAX_FLOW_CHANNELS], uint32_t channels) {
     uint32_t count = 0;
     for (uint32_t i = 0; i < channels; ++i) count += present[i] != 0;
-    uint32_t bytes = 16u + count * (uint32_t)sizeof(afx_restore_channel_t);
+    uint32_t bytes = 16u + count * (uint32_t)sizeof(afx_checkpoint_channel_t);
     if (seek_grow(data, capacity, *used, bytes)) return -1;
     uint8_t *at = *data + *used;
     afx_write32(at, tick); afx_write32(at + 4, position);
@@ -325,7 +325,7 @@ static int seek_append(uint8_t **data, uint32_t *used, uint32_t *capacity,
         afx_write32(at, i);
         for (uint32_t field = 0; field < AFX_FIELD_COUNT; ++field)
             afx_write16(at + 4 + 2 * field, active[i].fields[field]);
-        at += sizeof(afx_restore_channel_t);
+        at += sizeof(afx_checkpoint_channel_t);
     }
     *used += bytes;
     return 0;
@@ -340,7 +340,7 @@ static int build_seek(afx_c_output_t *out) {
     uint32_t rate_num, rate_den, at, end, tick = 0, target = 0, used = 16, capacity = 0;
     uint8_t *payload = NULL;
     uint8_t present[AFX_MAX_FLOW_CHANNELS] = {0};
-    afx_restore_channel_t active[AFX_MAX_FLOW_CHANNELS] = {{0}};
+    afx_checkpoint_channel_t active[AFX_MAX_FLOW_CHANNELS] = {{0}};
     if (!out || afx_file_validate(out->afx, out->afx_bytes, &header) ||
         afx_flow_duration(out->afx, out->afx_bytes, &duration64, &rate_num, &rate_den) ||
         !rate_num || !rate_den || duration64 > UINT32_MAX) return -1;
@@ -383,7 +383,7 @@ static int build_seek(afx_c_output_t *out) {
     uint32_t cursor = 16, count = 0;
     while (cursor < used) {
         uint32_t states = afx_read32(payload + cursor + 12);
-        cursor += 16u + states * (uint32_t)sizeof(afx_restore_channel_t); ++count;
+        cursor += 16u + states * (uint32_t)sizeof(afx_checkpoint_channel_t); ++count;
     }
     afx_write32(payload + 8, count);
     if (used > UINT32_MAX - AFC_HEADER) goto failed;

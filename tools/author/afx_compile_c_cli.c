@@ -164,7 +164,7 @@ int main(int argc, char **argv) {
     free_zones(zones, owned, zone_count);
     afx_c_sf2_output_free(&sf2);
     if (result) return fprintf(stderr, "cannot compile source\n"), 1;
-    if (out.afb_bytes < AFX_BANK_HEADER_BYTES || out.afb_bytes - AFX_BANK_HEADER_BYTES > AFX_ASSET_MAX) {
+    if (out.afb_bytes < AFX_BANK_HEADER_BYTES || out.afb_bytes - AFX_BANK_HEADER_BYTES > AFX_TARGET_MAX_BANK_BYTES) {
         afx_c_output_free(&out);
         return fprintf(stderr, "AFB payload exceeds the AICA asset arena\n"), 1;
     }

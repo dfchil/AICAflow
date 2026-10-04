@@ -5,10 +5,8 @@ ENJ_CFLAGS += -Wall -Wextra -Werror
 ENJ_INCLUDES += -I../../format/include -I../../driver/include -I../../driver/sh4/include
 ENJ_LDLIBS += ../../driver/sh4/libaicaflow_host.a
 
-AUTHOR_DEMOS := ../../build/afx_demo_assets
-
-$(AUTHOR_DEMOS): ../../tools/author/afx_demo_assets.c ../../tools/author/afx_compile_c.c ../../tools/author/afx_compile_c.h ../../driver/common/codec.c ../../driver/include/aicaflow/codec.h ../../driver/include/aicaflow/protocol.h
-	$(MAKE) -C ../.. compiler
+include ../authoring.mk
+AUTHOR_DEMOS := $(AICAFORGE_BIN)/afx_demo_assets
 
 $(ENJ_BUILDDIR)/dual.afb $(ENJ_BUILDDIR)/dual.afx &: $(AUTHOR_DEMOS)
 	@mkdir -p $(@D)

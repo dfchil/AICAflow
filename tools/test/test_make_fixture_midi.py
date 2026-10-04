@@ -7,11 +7,10 @@ import tempfile
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
 
 with tempfile.TemporaryDirectory() as directory:
     midi = Path(directory) / "fixture.mid"
-    subprocess.run(["python3", str(ROOT / "tools/research/make_fixture_midi.py"), str(midi)], check=True)
+    subprocess.run(["python3", str(Path(afx_midi.__file__).with_name("make_fixture_midi.py")), str(midi)], check=True)
     timeline = afx_midi.parse(midi)
     assert [(note["key"], note["start_tick"], note["end_tick"])
             for note in timeline["notes"]] == [(69, 0, 4320), (81, 4800, 5280), (84, 7680, 8160)]

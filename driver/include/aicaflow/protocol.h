@@ -2,6 +2,8 @@
 #ifndef AICAFLOW_PROTOCOL_H
 #define AICAFLOW_PROTOCOL_H
 #include <aicaflow/format.h>
+#include <aicaflow/limits.h>
+#include <aicaflow/result.h>
 
 /* ABI 6: optional lane maps and per-instance modifiers. Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
@@ -64,14 +66,6 @@ typedef uint32_t afx_handle_t;
 #define AFX_HANDLE_INDEX(handle) (((handle) & 0xffffu) - 1u)
 #define AFX_HANDLE_GENERATION(handle) ((handle) >> 16)
 
-/* Public status APIs return 0 on success or -AFX_* on failure. */
-typedef enum {
-    AFX_OK, AFX_BAD_FORMAT, AFX_BAD_BOUNDS, AFX_BAD_COMMAND, AFX_BAD_SAMPLE,
-    AFX_BAD_RELOCATION, AFX_NO_AICA_RAM, AFX_NO_HOST_RAM, AFX_NO_CHANNELS,
-    AFX_NO_FLOW_SLOTS, AFX_NO_EXEC_BUDGET, AFX_IPC_FULL, AFX_INVALID_HANDLE,
-    AFX_STALE_GENERATION, AFX_ASSET_REFERENCED, AFX_BUSY, AFX_UNSUPPORTED,
-    AFX_BAD_FIRMWARE, AFX_TIMEOUT
-} afx_result_t;
 enum { AFX_FREE, AFX_RUNNING, AFX_PAUSED, AFX_PARKED, AFX_DONE, AFX_ERROR };
 enum {
     AFX_CMD_NOP, AFX_CMD_ACTIVATE, AFX_CMD_STOP, AFX_CMD_PAUSE,
@@ -82,11 +76,6 @@ enum {
 #define AFX_KEYON_EXECUTE 0x8000u
 #define AFX_EXECUTOR_MAX_EVENTS_PER_PASS 32u
 #define AFX_EXECUTOR_MAX_COMMANDS_PER_PASS 8u
-/* A dense 38-KEYOFF cluster has only 38 writes; 171 remains the hard ceiling
- * that rejects 38 NOTE starts (722 writes). Hardware calibration is recorded
- * in ACCEPTANCE_PLAN.md. */
-#define AFX_EXECUTION_BUDGET_COMMANDS 38u
-#define AFX_EXECUTION_BUDGET_WRITES 171u
 enum { AFX_LANE_GAIN, AFX_LANE_MUTE, AFX_LANE_PAN, AFX_LANE_DSP_SEND,
        AFX_LANE_MODIFIER_COUNT };
 enum { AFX_CAP_BOOTSTRAP = 1, AFX_CAP_LIFECYCLE = 2, AFX_CAP_PLAYBACK = 4, AFX_CAP_DSP = 8 };
@@ -124,10 +113,7 @@ typedef struct {
     uint32_t states_address, state_count, stream_position, local_tick, next_deadline;
     uint32_t reserved[7];
 } afx_rebuild_payload_t;
-typedef struct {
-    uint32_t local_channel;
-    uint16_t fields[AFX_FIELD_COUNT];
-} afx_restore_channel_t;
+typedef afx_checkpoint_channel_t afx_restore_channel_t;
 typedef struct { uint32_t gain, reserved[11]; } afx_gain_payload_t;
 typedef struct { uint32_t period_q8_8, reserved[11]; } afx_tempo_payload_t;
 /* One command changes up to 32 consecutive lane values. Mask bits select values
@@ -164,6 +150,7 @@ AFX_ASSERT(sizeof(afx_rebuild_payload_t) == 48 && sizeof(afx_gain_payload_t) == 
            sizeof(afx_tempo_payload_t) == 48 &&
            sizeof(afx_lane_payload_t) == 48, "IPC transport");
 AFX_ASSERT(sizeof(afx_restore_channel_t) == 40, "prepared channel state");
+AFX_ASSERT(AFX_ASSET_MAX == AFX_TARGET_MAX_BANK_BYTES, "public target bank limit");
 AFX_ASSERT(offsetof(afx_cmd_queue_t, commands) == 64, "IPC payload alignment");
 AFX_ASSERT(sizeof(afx_status_t) <= AFX_QUEUE_ADDR - AFX_STATUS_ADDR, "status overlap");
 AFX_ASSERT(AFX_QUEUE_ADDR + sizeof(afx_cmd_queue_t) <= AFX_OBSERVED_ADDR, "queue overlap");

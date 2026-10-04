@@ -1,32 +1,28 @@
 # Public asset-format contract
 
-This directory is the canonical portable format interface owned by AICAflow.
-It is the future vendoring boundary for AICAforge, not a third repository.
-Consumers add `format/include` to their include path and include
-`<aicaflow/format.h>`. It requires no KOS headers or runtime implementation.
+This is the canonical portable contract owned by AICAflow and vendored by
+AICAforge at `dependencies/aicaflow-format/`. It has no runtime, KOS or
+enDjinn dependencies. Add `include/` to the include path and compile
+`src/codec.c` when decoding or validating assets.
 
-`AFX_FORMAT_API_VERSION` versions the source interface independently of
-repository releases and the SH-4/ARM7 runtime ABI. Existing on-disk versions
-remain unchanged: AFB 1, AFX 7, AFC 1, AFI 1 and checkpoint payload 1.
-The `abi` member of `afx_file_header_t` contains the **AFX file version**,
-not the firmware ABI.
+- `format.h`: file layouts, field IDs, commands and checkpoint records.
+- `codec.h` / `src/codec.c`: little-endian access, event codec and validation.
+- `limits.h`: target acceptance limits, not firmware addresses.
+- `result.h`: stable result numbers shared with runtime callers.
 
-The header documents layouts; callers must still decode little-endian bytes
-instead of casting unaligned file data to C structs. The canonical descriptions
-are [Assets and sidecars](../docs/specs/assets.md) and
-[Instruction language](../docs/specs/instruction-language.md).
+`AFX_FORMAT_API_VERSION=1` versions this source interface independently of
+repository releases. On-disk versions remain AFB 1, AFX 7, AFC 1, AFI 1 and
+checkpoint payload 1. The AFX header's `abi` field is the **file version**;
+firmware ABI 6 and IPC/memory layout stay private to the runtime protocol.
 
-Run `make -C format check` (also included in the top-level `make check`).
-The header is checked independently in C, C++ and assembly preprocessing.
+Read [Assets and sidecars](docs/assets.md) and
+[Instruction language](docs/instruction-language.md). Decode little-endian
+bytes; do not cast unaligned file data to C structs.
 
-## Migration status
+Run `make check` here for independent C/C++/assembly-header checks.
+Native authoring and runtime suites exercise the codec separately. Firmware
+validation lives in `driver/common/firmware.c`, outside this dependency.
 
-This first step extracts definitions without changing format values or runtime
-behavior. `driver/include/aicaflow/protocol.h` includes the public header for
-existing runtime consumers. It retains firmware, IPC and memory-layout details.
-
-Authoring is **not standalone yet**: portable codec extraction, checkpoint
-types, target limits and independent build/test targets are subsequent steps.
-Do not vendor the complete driver protocol into AICAforge to bypass that work.
-The eventual vendored copy belongs at `dependencies/aicaflow-format/`, with
-an explicit upstream revision and format API version.
+Consumers pin the upstream revision in `VERSION`; maintainers update it
+explicitly and run compatibility tests before publishing. A repository version
+change does not itself change the binary format version.

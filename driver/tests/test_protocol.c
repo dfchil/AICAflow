@@ -1,3 +1,4 @@
+#include <aicaflow/firmware.h>
 #include <aicaflow/codec.h>
 
 #include <assert.h>

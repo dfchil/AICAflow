@@ -1,6 +1,6 @@
 /* Test the private lowering boundary without adding a runtime/public API. */
 #define main afx_n64_cli_main
-#include "../author/afx_n64.c"
+#include "afx_n64.c"
 #undef main
 #include <assert.h>
 

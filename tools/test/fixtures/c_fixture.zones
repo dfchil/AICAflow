@@ -1,3 +1,0 @@
-# key_min key_max root_key loop_start loop_end format pcm_path
-0 70 69 -1 -1 pcm8 examples/dynamic_sfx/assets/drxlax_mine_slide.pcm
-71 127 81 0 22789 adpcm examples/dynamic_sfx/assets/drxlax_thrust_red_loop.pcm

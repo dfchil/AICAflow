@@ -5,8 +5,7 @@ import subprocess
 import sys
 
 
-ROOT = Path(__file__).resolve().parents[2]
-TOOL = ROOT / "tools/research/afx_n64.py"
+TOOL = Path(__file__).resolve().parents[1] / "research/afx_n64.py"
 
 
 def check(*arguments: str) -> None:
