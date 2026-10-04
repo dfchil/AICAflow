@@ -2,7 +2,9 @@
 
 [Documentation](README.md)
 
-Candidates: AICAflow 0.2.0-rc1 and AICAforge 0.1.0-rc1 (not tagged or published).
+Candidates: AICAflow 0.2.0-rc1 (pending publication) and
+[AICAforge 0.1.0-rc1](https://github.com/dfchil/AICAforge/releases/tag/v0.1.0-rc1)
+(published prerelease).
 Checked 2026-10-04 from fresh origin clones of AICAflow `082b6e6` and
 AICAforge `83774c3`, followed by candidate changes in AICAflow `7506997`
 and AICAforge `3e7b377` (build fixes, gain calibration and release notes).
@@ -28,6 +30,8 @@ The 2026-10-05 DSP, dynamic-SFX and tuner changes are in AICAflow `c5f4f1c`.
   [AICAforge e35836b](https://github.com/dfchil/AICAforge/actions/runs/37241869941).
 - PASS: all five Dreamcast examples, tuner and firmware manifest rechecked
   locally on 2026-10-05; runtime and cross-repository compatibility tests pass.
+- PASS: final pinned authoring SDK combination in
+  [AICAforge 2ede015](https://github.com/dfchil/AICAforge/actions/runs/37241923785).
 
 Build environment: macOS, KOS `c22f26c9`, enDjinn `a30476f`, firmware ABI 6.
 Firmware SHA-256: `5328d3a2a7f24b68a78194579ed3181b3a81900c9f8b70d250f9503156bef571`.
@@ -83,7 +87,8 @@ Dreamcast with BBA at `10.0.0.184`, loaded using kos-tool.
   its effect unclear. The prefab remains available through the API; nine
   effects remain in the demo.
 - PASS: DSP player exit returned `Program returned 0` after the listening test.
-- PENDING: revised DSP player's explicit stop confirmation.
+- PASS: DSP stop/replay and program reuse in the host regression test.
+  Separate manual B-button confirmation was not collected.
 
 HDMI measurement uses native Live Gamer channels 0/1 at 48 kHz, without a
 four-channel downmix. Measurements are not a guarantee of subjective audibility.
