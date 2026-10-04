@@ -1,7 +1,6 @@
 # AICAflow documentation
 
-See [Repository split](repository-split.md) for AICAflow/AICAforge ownership,
-the format boundary, test targets and migration instructions.
+See [Dependencies](dependencies.md) for repository contents, setup and updates.
 
 AICAflow separates offline sound authoring from Dreamcast playback.
 A control flow contains timed AICA register operations; its samples

@@ -31,9 +31,6 @@ an ARM7 toolchain. To use an existing authoring build, pass
 To run the resident BBA tuner, run `make tools` and follow [Tuner](tuner.md).
 `make check` tests the runtime without authoring dependencies; see [Testing](testing.md).
 
-The `dependencies/enDjinn` submodule is used only by the interactive examples.
-After updating a checkout that used `third_party/enDjinn`, clean the example
-and tuner build directories before rebuilding: generated `.d` files may still
-contain absolute paths to the old location. The pinned enDjinn revision is
-unchanged by the directory rename.
-The driver itself has no enDjinn dependency.
+Interactive examples and the tuner use `dependencies/enDjinn`; the driver does not.
+After moving a checkout or its dependencies, clean the example and tuner build
+directories to remove generated `.d` files containing old absolute paths.

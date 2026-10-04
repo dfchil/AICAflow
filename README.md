@@ -29,11 +29,11 @@ The checked-in firmware means this needs no ARM7 compiler. Run `make check` for
 host validation; maintainers with the ARM toolchain run `make firmware-check`
 to reproduce the release image.
 
-Asset authoring lives only in AICAforge. Examples use the pinned Git submodule
+Examples use the pinned AICAforge submodule
 at `dependencies/AICAforge/`. `make dependencies` initializes the required
 checkouts explicitly and non-recursively; `make examples` builds the toolchain.
 Alternatively pass `AICAFORGE_BIN=/absolute/AICAforge/build`.
-See the [migration and test guide](docs/repository-split.md).
+See [Dependencies](docs/dependencies.md) and [Testing](docs/testing.md).
 `make check` requires neither AICAforge nor a Dreamcast toolchain.
 
 ## Files and ownership
@@ -70,8 +70,4 @@ inputs on its first build; see its README to supply a different SoundFont.
 See the [documentation index](docs/README.md) for guides and specifications.
 Asset licences are in [ASSET_LICENSES.md](ASSET_LICENSES.md).
 
-The reusable CSeq/ALBank and MultiPCM importers live in AICAforge. DKR's game
-integration, ROM extraction, SFX residency policy and bonus soundtrack player
-live in the DKR repository. Game ROMs, extracted Nintendo/Sega samples and
-soundtracks are not distributed here. OoT AudioSeq uses a separate experimental
-research reader in AICAforge.
+Game ROMs, extracted Nintendo/Sega samples and soundtracks are not distributed here.
