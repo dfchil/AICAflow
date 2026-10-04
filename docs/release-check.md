@@ -2,9 +2,9 @@
 
 [Documentation](README.md)
 
-Candidates: AICAflow 0.2.0-rc1 (pending publication) and
+Release candidates: AICAflow 0.2.0-rc1 and
 [AICAforge 0.1.0-rc1](https://github.com/dfchil/AICAforge/releases/tag/v0.1.0-rc1)
-(published prerelease).
+(prerelease).
 Checked 2026-10-04 from fresh origin clones of AICAflow `082b6e6` and
 AICAforge `83774c3`, followed by candidate changes in AICAflow `7506997`
 and AICAforge `3e7b377` (build fixes, gain calibration and release notes).
@@ -76,7 +76,8 @@ Dreamcast with BBA at `10.0.0.184`, loaded using kos-tool.
   regression checks cover all 32 pan positions, cutoff targets, Q and muting.
   Dreamcast build passes. A 20-second HDMI capture peaks at -13.38 dBFS with
   no full-scale samples; this is not an exhaustive clipping guarantee.
-- PENDING: user confirmation of corrected dynamic SFX pan/filter behavior.
+- PASS: user confirmed corrected dynamic SFX pan/filter behavior on 2026-10-05;
+  the demo exited with `Aicaflow dynamic SFX: PASS (0)`.
 - PASS: tuner seek on 2026-10-05 with Bach AFB/AFX/AFC: forward/backward to
   0, 5, 10 and 30 seconds using one resident bank/flow, 1.5-second region stops
   and invalid-bound rejection. Fixed duration parsing: use `afx_flow_duration`
@@ -94,4 +95,5 @@ HDMI measurement uses native Live Gamer channels 0/1 at 48 kHz, without a
 four-channel downmix. Measurements are not a guarantee of subjective audibility.
 
 Local logs and clean test checkouts: `/tmp/aica-release.jdm0NJ/`.
-Do not publish final releases until the pending checks are resolved.
+The candidates retain the known tuner issues above. They are prereleases,
+not stable releases.

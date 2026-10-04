@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0-rc1 (unreleased)
+## 0.2.0-rc1 — 2026-10-05
 
 - Bank-bound AFB/AFX playback with shared sample banks and setup templates.
 - SH4 memory management, seeking, live controls and programmable DSP scenes.
