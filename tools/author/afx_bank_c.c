@@ -1,3 +1,5 @@
+/* realpath and PATH_MAX are POSIX interfaces, not ISO C11. */
+#define _XOPEN_SOURCE 700
 #include "afx_compile_c.h"
 #include "afx_midi_c.h"
 #include "afx_sample_c.h"

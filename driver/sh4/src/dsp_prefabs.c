@@ -3,6 +3,8 @@
 #include <math.h>
 #include <string.h>
 
+static const double pi = 3.14159265358979323846; /* M_PI is not ISO C11. */
+
 /* Public, ready-to-use DSP algorithms and their named presets.
  * Each builder starts a complete program; calling two builders does not chain
  * effects. Step numbers below are MPRO indices executed once per audio sample.
@@ -343,7 +345,7 @@ int afx_dsp_program_resonators(afx_dsp_program_t *program, const uint16_t freque
     for (uint8_t i = 0; !result && i < 3; ++i) {
         uint8_t b = i * 4, temp = 60 + i * 4;
         result = coefficient((1 - radius) * .125, &c0);
-        if (!result) result = coefficient(radius * cos(2 * M_PI * frequencies[i] / 44100.0), &c1);
+        if (!result) result = coefficient(radius * cos(2 * pi * frequencies[i] / 44100.0), &c1);
         if (!result) result = coefficient(-radius * radius / 2, &c2);
         if (!result) result = put(program, b, (afx_dsp_step_t){.ira = texture ? 33 : 32, .xsel = 1, .zero = 1});
         if (!result) result = put(program, b + 1, (afx_dsp_step_t){.tra = temp + 1, .bsel = 1});
@@ -432,7 +434,7 @@ int afx_dsp_program_equalizer(afx_dsp_program_t *program, int frequency, double 
                               double db, bool resonant) {
     if (frequency < 100 || frequency > 15000 || q < .3 || q > 8 || db < -18 || db > 18)
         return -AFX_BAD_COMMAND;
-    double w = 2 * M_PI * frequency / 44100.0, cs = cos(w), alpha = sin(w) / (2 * q);
+    double w = 2 * pi * frequency / 44100.0, cs = cos(w), alpha = sin(w) / (2 * q);
     double a_gain = pow(10, db / 40), b[3], a[3];
     if (resonant) {
         b[0] = (1 - cs) / 2; b[1] = 1 - cs; b[2] = (1 - cs) / 2;
