@@ -6,6 +6,7 @@ Candidates: AICAflow 0.2.0-rc1 and AICAforge 0.1.0-rc1 (not tagged or published)
 Checked 2026-10-04 from fresh origin clones of AICAflow `082b6e6` and
 AICAforge `83774c3`, followed by candidate changes in AICAflow `7506997`
 and AICAforge `3e7b377` (build fixes, gain calibration and release notes).
+The 2026-10-05 DSP, dynamic-SFX and tuner changes are in AICAflow `c5f4f1c`.
 
 ## Automated checks
 
@@ -22,6 +23,11 @@ and AICAforge `3e7b377` (build fixes, gain calibration and release notes).
 - PASS: candidate CI including the build fix:
   [AICAflow 7506997](https://github.com/dfchil/AICAflow/actions/runs/37234484487),
   [AICAforge 3e7b377](https://github.com/dfchil/AICAforge/actions/runs/37234474270).
+- PASS: DSP and tuner candidate CI:
+  [AICAflow c5f4f1c](https://github.com/dfchil/AICAflow/actions/runs/37241880777),
+  [AICAforge e35836b](https://github.com/dfchil/AICAforge/actions/runs/37241869941).
+- PASS: all five Dreamcast examples, tuner and firmware manifest rechecked
+  locally on 2026-10-05; runtime and cross-repository compatibility tests pass.
 
 Build environment: macOS, KOS `c22f26c9`, enDjinn `a30476f`, firmware ABI 6.
 Firmware SHA-256: `5328d3a2a7f24b68a78194579ed3181b3a81900c9f8b70d250f9503156bef571`.

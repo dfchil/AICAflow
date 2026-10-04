@@ -39,7 +39,7 @@ The demo's pan value is 0 (left) through 31 (right). Its helper converts it to
 AICA's direction/attenuation encoding: 0x1f is left, 0x10/0x00 centre and 0x0f right.
 `MIX` uses the upper byte as total-level attenuation, so lower attenuation means
 a louder sound. `PITCH` is AICA's native octave/FNS word; the demo sweeps
-`0x0080` through `0x03ff`, approximately one to two times the source rate.
+`0x0040` through `0x03ff`, approximately one to two times the source rate.
 `DIRECT` bits 8–11 hold direct output level, fixed at 15. `MIX` bits 0–4
 hold filter Q; bits 5 and 6 stay clear to enable the filter and attenuation.
 Brightness 0–15 maps to cutoff words 0x1500–0x1e00 in all five filter-envelope
