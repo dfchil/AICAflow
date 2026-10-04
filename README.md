@@ -59,7 +59,7 @@ An AFP rewrites AFX register commands. AFC checkpoints stay in SH4 RAM. See the
 The persistent BBA tuner is a development tool at `tools/tuner/server`; build
 it with `make tools`.
 
-Interactive examples use the pinned `third_party/enDjinn` submodule. The core
+Interactive examples use the pinned `dependencies/enDjinn` submodule. The core
 driver does not. `music_player` downloads its declared MIDI and SoundFont
 inputs on its first build; see its README to supply a different SoundFont.
 

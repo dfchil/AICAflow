@@ -29,5 +29,9 @@ an ARM7 toolchain. To run the resident BBA tuner, run `make tools` and follow
 [Tuner](tuner.md). `make check` is a developer check and has separate Python
 dependencies described in [Testing](testing.md).
 
-The `third_party/enDjinn` submodule is used only by the interactive examples.
+The `dependencies/enDjinn` submodule is used only by the interactive examples.
+After updating a checkout that used `third_party/enDjinn`, clean the example
+and tuner build directories before rebuilding: generated `.d` files may still
+contain absolute paths to the old location. The pinned enDjinn revision is
+unchanged by the directory rename.
 The driver itself has no enDjinn dependency.

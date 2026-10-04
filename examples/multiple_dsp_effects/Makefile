@@ -1,1 +1,1 @@
-include ../../third_party/enDjinn/base_link.mk
+include ../../dependencies/enDjinn/base_link.mk

@@ -1,4 +1,4 @@
-include ../../third_party/enDjinn/base_link.mk
+include ../../dependencies/enDjinn/base_link.mk
 
 GRIEG_DEFAULT_MIDI := sources/grieg-mountain-king-orchestra.mid
 BACH_PERFORMANCE_MIDI := performance/bach-bwv1007-prelude-performance.mid
