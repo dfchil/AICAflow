@@ -47,6 +47,17 @@ out briefly when the source volume is reduced to zero.
 
 ## Assets and profiles
 
+The bundled maps and profiles raise the authored level by about 4 dB compared
+with the original rendition. Volume 100% uses this level; lower settings attenuate
+it. Sample bytes and note timing are unchanged. Audition loud passages with DSP
+enabled to check the combined output for clipping.
+
+To compare the gain change against previously generated base assets:
+
+```sh
+python3 tests/gain_levels.py /path/to/previous/build/base build/base
+```
+
 [`classical.afbm`](classical.afbm) maps MIDI instruments to SoundFont sources
 and selects sample coding, rate and channel. The builder includes only samples
 used by the scores and emits AFB, AFX, AFC, AFV, AFI and named AFI files per work.

@@ -653,7 +653,7 @@ static int toggle(void) {
     return r;
 }
 #ifdef PLAYER_FRAME_TEST
-#include "tests/frame_test.h"
+#include "../music_player/tests/frame_test.h"
 #endif
 int main(void) {
     enj_state_init_defaults();

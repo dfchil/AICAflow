@@ -47,6 +47,9 @@ assets: $(ASSET_STAMP) $(FIRMWARE)
 fetch-assets:
 	sh fetch_assets.sh sources
 
+$(filter sources/%,$(DEFAULT_SOURCES)) $(DEFAULT_SOUNDFONT) sources/cello_solo.sf2: | fetch-assets
+	@test -s "$@"
+
 FORCE:
 
 $(CONFIG): FORCE

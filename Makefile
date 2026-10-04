@@ -21,6 +21,7 @@ tools:
 runtime-check: format-check
 	$(MAKE) -C driver check
 	python3 driver/tests/test_compatibility.py
+	python3 examples/music_player/tests/fresh_sources.py
 
 # AICAforge is an external checkout; ordinary runtime checks do not need it.
 AICAFORGE_BIN ?= $(CURDIR)/dependencies/AICAforge/build

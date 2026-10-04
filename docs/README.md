@@ -9,6 +9,7 @@
 - [Lifetime](lifetime.md) — instances, banks and resource ownership.
 - [Dependencies](dependencies.md) — setup and version updates.
 - [Testing](testing.md) — host checks and hardware verification.
+- [Release verification](release-check.md) — candidate checks and remaining work.
 
 ## Reference
 

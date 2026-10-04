@@ -1,7 +1,7 @@
 {
   "format": "aicaflow.afp",
   "version": 4,
-  "base": { "afx_version": 7, "canonical_sha256": "7030303a2bcf96751747c4bba75cbe013d0394d2b1c5ce6cb134ca9a20853aeb" },
+  "base": { "afx_version": 7, "canonical_sha256": "16128ce0c12e87d250a1ec2ff266dcfeb1e2c942ad5f3160092e282c2bb516a5" },
   "dsp": { "preset": "room_large" },
   "tempo_q8_8": 256,
   "defaults": { "dsp_send": 160 },

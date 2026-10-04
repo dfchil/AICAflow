@@ -23,4 +23,4 @@ Dreamcast loader.
 - A starts the selected effect.
 - B stops it.
 - Y switches the DSP return between wet+dry and dry.
-- Start exits.
+- START+A+B+X+Y exits.
