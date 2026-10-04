@@ -16,7 +16,7 @@ source /opt/toolchains/dc/kos/environ.sh
 make -C examples/dsp_effects_player
 ```
 
-Load `examples/dsp_effects_player/bin/aicaflow_dsp_effects.elf` with the normal
+Load `examples/dsp_effects_player/bin/dsp_effects_player.elf` with the normal
 Dreamcast loader.
 
 - D-pad up/down selects an effect; left/right selects an input.
