@@ -83,7 +83,7 @@ static int dual_effects_program(afx_dsp_program_t *program) {
     if (!result) result = afx_dsp_program_coefficient(program, 16, DSP_UNITY);
     if (!result) result = afx_dsp_program_coefficient(program, 25, DISTORTION_OUTPUT_GAIN);
     if (!result) result = afx_dsp_program_address(program, 0, ECHO_DELAY_SAMPLES);
-    if (!result) result = afx_dsp_program_address(program, 2, 0);
+    if (!result) result = afx_dsp_program_address(program, 1, 0);
     return result;
 }
 

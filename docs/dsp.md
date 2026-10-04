@@ -16,7 +16,7 @@ remove it with `afx_dsp_scene_disable()`.
 | Multiply | `YSEL=AFX_DSP_Y_COEF` selects the coefficient at the current step. `COEF` values are signed, aligned Q1.15-ish gains: 32760 is near unity, 8192 is about 1/4. |
 | ACC timing | An instruction computes the next `ACC`, but `TWT`, `EWT` and `SHIFT` consume the previous `ACC`. Compute at one step; write or return at the next. |
 | Short state | `TWT` writes `TEMP`; later steps read it with `TRA`. `TEMP` rotates one logical address per sample, so it is for short state, not long delays. |
-| Delay RAM | `MRD`/`MWT` access the configured delay ring and must be on odd steps. Read with `MRD`, latch with `IWT`, then read `MEMS`. Use one `NOFL` format throughout: `AFX_DSP_MEMORY_AICA_FLOAT` or `AFX_DSP_MEMORY_LINEAR`. |
+| Delay RAM | `MRD`/`MWT` use `MADRS[MASA]` and must be on odd steps. MADRS indices are 0–63; do not double them. Read with `MRD`, latch with `IWT`, then read `MEMS`. Use one `NOFL` format throughout: `AFX_DSP_MEMORY_AICA_FLOAT` or `AFX_DSP_MEMORY_LINEAR`. |
 | Stereo return | `EWT` sends the previous `ACC` to `EWA`: `AFX_DSP_RETURN_LEFT` is `EFREG0`; `AFX_DSP_RETURN_RIGHT` is `EFREG1`. |
 
 Use the named constants above rather than their hardware numbers. The API header

@@ -109,7 +109,7 @@ typedef struct { uint16_t words[AFX_DSP_PROGRAM_WORDS]; } afx_dsp_program_t;
  * TEMP127 is visible as TEMP0 next sample. This is why the one-pole factory
  * writes 127 and reads 0. TEMP is good for state/short histories, not a room.
  *
- * External delay memory: MRD/MWT use MADRS[MASA << 1] and are permitted only on
+ * External delay memory: MRD/MWT use MADRS[MASA] and are permitted only on
  * odd step indices (1, 3, ... 127). A validated read sequence is MRD at step
  * 1, IWT at step 3, then arithmetic reads MEMS at step 4. IWT does not make a
  * just-read word available in the same instruction. MADRS values are word
@@ -167,8 +167,8 @@ int afx_dsp_program_coefficient(afx_dsp_program_t *program, uint8_t index,
                                 int16_t value);
 
 /*
- * Sets one addressable MADRS entry: index must be even because hardware reads
- * MADRS[MASA << 1]. MASA is consequently 0..31. Values are non-negative
+ * Sets MADRS[index], selected directly by MASA (0..63). Register spacing is
+ * handled by the scene uploader; do not double the index. Values are non-negative
  * 16-bit word offsets into the configured 128 KiB delay ring. Account for
  * every read/write window before sharing the ring between delays.
  */

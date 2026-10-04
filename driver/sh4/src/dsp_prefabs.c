@@ -55,9 +55,9 @@ int afx_dsp_program_delay(afx_dsp_program_t *program, uint16_t samples,
     if (!result) result = afx_dsp_program_coefficient(program, 4, 32760);
     if (!result) result = afx_dsp_program_coefficient(program, 6, 8192);
     if (!result) result = afx_dsp_program_coefficient(program, 7, feedback);
-    /* MASA 0 reads at MADRS[0]; MASA 1 writes at MADRS[2]. */
+    /* MASA is the MADRS register index; the uploader handles register spacing. */
     if (!result) result = afx_dsp_program_address(program, 0, samples);
-    if (!result) result = afx_dsp_program_address(program, 2, 0);
+    if (!result) result = afx_dsp_program_address(program, 1, 0);
     return result;
 }
 
@@ -89,10 +89,10 @@ int afx_dsp_program_pingpong(afx_dsp_program_t *program, uint16_t samples,
     if (!result) result = afx_dsp_program_coefficient(program, 11, feedback);
     if (!result) result = afx_dsp_program_coefficient(program, 14, feedback);
     if (!result) result = afx_dsp_program_address(program, 0, samples);
-    if (!result) result = afx_dsp_program_address(program, 2, 0);
+    if (!result) result = afx_dsp_program_address(program, 1, 0);
     /* The second line's base is 32768 words into the shared ring. */
-    if (!result) result = afx_dsp_program_address(program, 4, (uint16_t)(32768u + samples));
-    if (!result) result = afx_dsp_program_address(program, 6, 32768);
+    if (!result) result = afx_dsp_program_address(program, 2, (uint16_t)(32768u + samples));
+    if (!result) result = afx_dsp_program_address(program, 3, 32768);
     return result;
 }
 
@@ -197,7 +197,7 @@ int afx_dsp_program_modulated_delay(afx_dsp_program_t *program, uint16_t base_sa
         if (!result) result = afx_dsp_program_coefficient(program, 8, 8192);
     }
     if (!result) result = afx_dsp_program_address(program, 0, base_samples);
-    if (!result) result = afx_dsp_program_address(program, 2, 0);
+    if (!result) result = afx_dsp_program_address(program, 1, 0);
     return result;
 }
 
@@ -269,7 +269,7 @@ int afx_dsp_program_multitap(afx_dsp_program_t *program) {
         uint8_t b = 3 + i * 4;
         result = put(program, b, (afx_dsp_step_t){.mrd = 1, .masa = i + 1, .zero = 1});
         if (!result) result = put(program, b + 2, (afx_dsp_step_t){.iwt = 1, .iwa = i, .zero = 1});
-        if (!result) result = afx_dsp_program_address(program, (uint8_t)(2u * (i + 1u)), taps[i]);
+        if (!result) result = afx_dsp_program_address(program, i + 1, taps[i]);
     }
     /* Steps 20–25 sum taps 0/2 left and 1/3 right, with quieter later taps. */
     if (!result) result = put(program, 20, (afx_dsp_step_t){.ira = 0, .xsel = 1, .zero = 1});
@@ -423,7 +423,7 @@ int afx_dsp_program_pitch_shift(afx_dsp_program_t *program, bool harmony) {
     }
     /* Both readers share a 2048-sample base offset; each ramp adds its offset. */
     if (!result) result = afx_dsp_program_address(program, 0, 2048);
-    if (!result) result = afx_dsp_program_address(program, 2, 0);
+    if (!result) result = afx_dsp_program_address(program, 1, 0);
     return result;
 }
 
@@ -494,9 +494,9 @@ static int room_allpass(afx_dsp_program_t *p, uint8_t b, uint8_t memory, uint8_t
     if (!result) result = afx_dsp_program_coefficient(p, b + 5, first ? -4096 : -16384);
     if (!result) result = afx_dsp_program_coefficient(p, b + 6, first ? 8192 : 32760);
     if (!result) result = afx_dsp_program_coefficient(p, b + 7, 16384);
-    /* MASA selects MADRS pairs: read at base+length, write at base. */
-    if (!result) result = afx_dsp_program_address(p, memory * 4, base + length);
-    if (!result) result = afx_dsp_program_address(p, memory * 4 + 2, base);
+    /* Each delay uses two MADRS registers: read at base+length, write at base. */
+    if (!result) result = afx_dsp_program_address(p, memory * 2, base + length);
+    if (!result) result = afx_dsp_program_address(p, memory * 2 + 1, base);
     (void)large;
     return result;
 }
@@ -533,8 +533,8 @@ int afx_dsp_program_room(afx_dsp_program_t *program, int16_t feedback,
         if (!result) result = put(program, 7, (afx_dsp_step_t){.mwt = 1, .masa = 19, .zero = 1});
         if (!result) result = afx_dsp_program_coefficient(program, 4, 32760);
         if (!result) result = afx_dsp_program_coefficient(program, 5, 8192);
-        if (!result) result = afx_dsp_program_address(program, 36, 8 * spacing + 1323);
-        if (!result) result = afx_dsp_program_address(program, 38, 8 * spacing);
+        if (!result) result = afx_dsp_program_address(program, 18, 8 * spacing + 1323);
+        if (!result) result = afx_dsp_program_address(program, 19, 8 * spacing);
         /* Patch the first diffuser (base 12) to take predelay TEMP70. */
         if (!result) result = put(program, 17, (afx_dsp_step_t){.tra = 70, .bsel = 1});
         if (!result) result = put(program, 18, (afx_dsp_step_t){.tra = 70, .zero = 1, .twt = 1, .twa = 80});
@@ -567,8 +567,8 @@ int afx_dsp_program_room(afx_dsp_program_t *program, int16_t feedback,
         if (!result) result = afx_dsp_program_coefficient(program, b + 5, damping);
         if (!result) result = afx_dsp_program_coefficient(program, b + 6, 16384);
         if (!result) result = afx_dsp_program_coefficient(program, b + 7, feedback);
-        if (!result) result = afx_dsp_program_address(program, memory * 4, (uint16_t)(memory * spacing + lengths[i]));
-        if (!result) result = afx_dsp_program_address(program, memory * 4 + 2, memory * spacing);
+        if (!result) result = afx_dsp_program_address(program, memory * 2, (uint16_t)(memory * spacing + lengths[i]));
+        if (!result) result = afx_dsp_program_address(program, memory * 2 + 1, memory * spacing);
     }
     /* Alternating 1/4 and 1/8 comb weights give different left/right sums.
      * Apply Q8 wet gain and coefficient alignment before emitting each sum. */
@@ -667,6 +667,8 @@ int afx_dsp_program_demo(afx_dsp_program_t *program, const char *name) {
     static const uint8_t room[] = {72, 73, 74, 75, 77, 78, 79, 80};
     static const uint8_t large[] = {108, 109, 110, 111, 112, 113, 115, 116, 117, 118, 119, 120};
     static const uint8_t delay[] = {6};
+    static const uint8_t pingpong[] = {10};
+    static const uint8_t multitap[] = {0};
     static const uint8_t modulation[] = {13};
     const uint8_t *coefficients = NULL;
     uint32_t count = 0;
@@ -681,6 +683,10 @@ int afx_dsp_program_demo(afx_dsp_program_t *program, const char *name) {
         coefficients = large; count = sizeof(large);
     } else if (!strcmp(name, "delay") || !strcmp(name, "echo")) {
         coefficients = delay; count = sizeof(delay);
+    } else if (!strcmp(name, "pingpong")) {
+        coefficients = pingpong; count = sizeof(pingpong);
+    } else if (!strcmp(name, "multitap")) {
+        coefficients = multitap; count = sizeof(multitap);
     } else if (!strcmp(name, "chorus") || !strcmp(name, "flanger")) {
         coefficients = modulation; count = sizeof(modulation);
     }

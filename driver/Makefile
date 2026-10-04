@@ -6,6 +6,8 @@ smoke: build/test_protocol build/test_bank build/test_dsp build/afx_validate
 	./build/test_dsp
 
 check: smoke
+	cd .. && python3 tools/test/test_dynamic_sfx.py
+	cd .. && python3 tools/test/test_afx_tuner_properties.py
 	cd .. && PYTHONPATH=tools/tuner python3 tools/test/test_afx_tuner_client.py
 	cd .. && PYTHONPATH=tools/tuner python3 tools/test/test_afx_tuner_example.py
 

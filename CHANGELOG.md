@@ -10,6 +10,17 @@
 - Correct first-build download dependencies for parallel music-player builds.
 - Correct the shared player's frame-test header path.
 - Approximately +4 dB authored music levels with matching performance profiles.
+- Correct MADRS register indexing in DSP delay, multitap and room prefabs.
+- Calculate tuner playback duration from AFX instructions so region seeking works.
+- Correct dynamic-SFX pan encoding, filter resonance and live cutoff control.
+- Nine hardware-auditioned DSP examples using one resident sample bank.
+
+### Known issues
+
+- Extended tuner testing encountered one unreproduced `BAD_SAMPLE` upload and
+  two network/HDMI outages. Causes remain unconfirmed; see the release checks.
+- DSP prefabs outside the listener's nine selected effects are experimental;
+  pitch-shift and harmonizer musical ratios are not calibrated.
 
 ### Migration from the combined repository
 
@@ -22,6 +33,8 @@
 - Change custom include/source paths from `format/` to `driver/format/`.
 - The unused `afx_dsp_program` exporter is removed. Construct DSP programs with
   `<aicaflow/dsp.h>` and install them with `afx_dsp_scene_program()`.
+- Custom DSP programs must use `afx_dsp_program_address(program, masa, offset)`
+  directly; do not double `masa`. All 64 MADRS registers are addressable.
 
 Since `repo-split-v1`, runtime C API signatures, firmware IPC ABI 6 and file
 versions AFB 1 / AFX 7 / AFC 1 / AFI 1 are unchanged. Existing runtime assets

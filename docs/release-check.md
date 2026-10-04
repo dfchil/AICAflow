@@ -44,11 +44,43 @@ Dreamcast with BBA at `10.0.0.184`, loaded using kos-tool.
 - PASS: music-player song changes, seek and pause/stop, confirmed by user.
 - PASS: music-player automated frame test on hardware (all three songs and AFV);
   corrected the test-header include path. Interactive executable rebuilt afterwards.
-- PENDING: DSP preset player and dynamic SFX listening/controller tests.
-- PENDING: tuner upload, replacement, seek, DSP, STOP/recycle and reset.
+- PASS: isolated dry/wet captures of all 24 DSP presets and targeted-input tests
+  of all 17 initially excluded presets. Initial exclusions are superseded by
+  [retest measurements](../examples/dsp_effects_player/tests/hardware-retest.json).
+- PASS: tuner bank/control uploads, DSP upload/readback, returns, STOP/recycle
+  and reset during the audition runs.
+- OPEN: one control upload returned `BAD_SAMPLE` after the pitch-shift audition;
+  cause remains unconfirmed. Six pitch-shift/harmonizer pairs (12 plays) with
+  one resident bank and no resets passed. A deliberately mismatched bank ID
+  returned `BAD_SAMPLE`; restoring the matching flow recovered without reset.
+- PASS: corrected doubled MADRS indexing in the encoder contract and all prefab
+  callers. Hardware verifies Ping-pong, Multitap, Diffusion and Large room;
+  regression tests cover direct MADRS indexing and six-bit MASA encoding.
+- PASS: Ping-pong and Multitap demo levels retested without captured clipping;
+  both and Large room restored to the menu.
+- OPEN: two network/HDMI outages during extended tuner testing; recovered using
+  `ensure_dctool_ready`. Cause is not established and is separate from BAD_SAMPLE.
+- PASS: dynamic SFX engine/slide selection, controller response and graphics,
+  confirmed by the user on 2026-10-05.
+- PASS: dynamic SFX pan conversion and filter register packing corrected;
+  regression checks cover all 32 pan positions, cutoff targets, Q and muting.
+  Dreamcast build passes. A 20-second HDMI capture peaks at -13.38 dBFS with
+  no full-scale samples; this is not an exhaustive clipping guarantee.
+- PENDING: user confirmation of corrected dynamic SFX pan/filter behavior.
+- PASS: tuner seek on 2026-10-05 with Bach AFB/AFX/AFC: forward/backward to
+  0, 5, 10 and 30 seconds using one resident bank/flow, 1.5-second region stops
+  and invalid-bound rejection. Fixed duration parsing: use `afx_flow_duration`
+  instead of reserved header words. Host regression and Dreamcast build pass.
+- PASS: user confirmed nine effects in the revised DSP menu sound good on
+  hardware on 2026-10-05, including the Echo wet/dry comparison.
+- RESOLVED: Bow texture removed from the demo menu after user listening found
+  its effect unclear. The prefab remains available through the API; nine
+  effects remain in the demo.
+- PASS: DSP player exit returned `Program returned 0` after the listening test.
+- PENDING: revised DSP player's explicit stop confirmation.
 
-HDMI capture was not enumerated by AVFoundation; audio assessment uses the
-user's listening confirmation, not a captured measurement.
+HDMI measurement uses native Live Gamer channels 0/1 at 48 kHz, without a
+four-channel downmix. Measurements are not a guarantee of subjective audibility.
 
 Local logs and clean test checkouts: `/tmp/aica-release.jdm0NJ/`.
 Do not publish final releases until the pending checks are resolved.

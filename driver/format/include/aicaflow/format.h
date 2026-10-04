@@ -18,8 +18,8 @@
 enum {
     AFX_FIELD_CONTROL, AFX_FIELD_SAMPLE_LOW, AFX_FIELD_LOOP_START,
     AFX_FIELD_LOOP_END, AFX_FIELD_ENV_AD, AFX_FIELD_ENV_DR, AFX_FIELD_PITCH,
-    /* 0x20 is DSP sends, 0x24 is direct pan/filter-Q, and 0x28 is the
-     * mixer TL/LPF word. Each field is one whole AICA register word. */
+    /* 0x20 is DSP sends, 0x24 is direct pan/level, and 0x28 is total-level
+     * attenuation, filter Q and bypass flags. Each field is one register word. */
     AFX_FIELD_LFO, AFX_FIELD_DSP_SEND, AFX_FIELD_DIRECT, AFX_FIELD_MIX,
     AFX_FIELD_FILTER_LEVEL0, AFX_FIELD_FILTER_LEVEL1, AFX_FIELD_FILTER_LEVEL2,
     AFX_FIELD_FILTER_LEVEL3, AFX_FIELD_FILTER_LEVEL4, AFX_FIELD_FILTER_AD,

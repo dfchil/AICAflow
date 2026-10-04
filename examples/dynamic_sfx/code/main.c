@@ -66,8 +66,11 @@ enum { ENGINE_PAN_MIN = 5, ENGINE_PAN_SPAN = 21 };
 static_assert(ENGINE_PAN_MIN + ENGINE_PAN_SPAN < 31,
               "engine pan must remain inside the stereo field");
 
-/* The SCSP direct pan field is right-to-left; the UI is left-to-right. */
-static uint8_t direct_pan(uint8_t pan) { return 31u - pan; }
+/* UI: left 0..31 right. AICA: bit 4 selects left, low bits attenuate
+ * the opposite side. Both 0x10 and 0x00 are centre. */
+static uint8_t direct_pan(uint8_t pan) {
+    return pan < 16 ? (uint8_t)(0x10u | (15u - pan)) : pan - 16u;
+}
 
 static uint8_t slide_pan(uint32_t step, bool left_to_right) {
     uint8_t pan = (uint8_t)((SLIDE_PAN_STEPS - step) * 31u / SLIDE_PAN_STEPS);
@@ -86,6 +89,8 @@ static void configure_setup(uint16_t fields[AFX_FIELD_COUNT], uint32_t bank_offs
     fields[AFX_FIELD_MIX] = 0x0024;     /* No attenuation, open filter. */
     for (unsigned field = AFX_FIELD_FILTER_LEVEL0; field <= AFX_FIELD_FILTER_LEVEL4; ++field)
         fields[field] = 0x1fff;
+    /* Let the filter envelope follow new cutoff targets while the loop plays. */
+    fields[AFX_FIELD_FILTER_AD] = fields[AFX_FIELD_FILTER_DR] = 0x1f1f;
 }
 
 static int make_bank_flow(const afx_bank_t *bank, const uint16_t fields[AFX_FIELD_COUNT],
@@ -132,7 +137,7 @@ static int append_event(uint8_t *stream, uint32_t capacity, uint32_t *written,
 static int make_engine_loop(const afx_bank_t *bank, afx_asset_t *out_flow) {
     uint16_t fields[AFX_FIELD_COUNT];
     uint8_t stream[9];
-    uint16_t note[] = {0x0000, 0x0024}; /* Source pitch, full level and open filter. */
+    uint16_t note[] = {0x0000, 0xff24}; /* Muted until the first live engine patch. */
     uint32_t written = 0;
     afx_event_t event = {.opcode = AFX_OP_NOTE_PL, .channel = 0, .setup = 0,
                          .mask = AFX_NOTE_PL_MASK};
@@ -179,19 +184,27 @@ static int make_slide_sequence(const afx_bank_t *bank, bool left_to_right, afx_a
 static int update_engine(afx_instance_t instance, uint8_t pan, uint8_t intensity,
                          uint16_t pitch, uint8_t filter_q, uint8_t brightness,
                          uint16_t lfo) {
+    /* Brightness 0..15 maps to native 13-bit cutoff words, not MIX bits.
+     * All envelope targets agree; the sustain stage follows live changes. */
+    uint16_t cutoff = (uint16_t)(0x1500u + (uint32_t)brightness * 0x0900u / 15u);
     uint16_t values[] = {
         pitch,
         lfo,
-        (uint16_t)((uint16_t)filter_q << 8 | direct_pan(pan)),
-        (uint16_t)(((uint32_t)(255u - intensity) * 20u / 255u) << 8 | brightness)
+        (uint16_t)(0x0f00u | direct_pan(pan)),
+        /* TL includes 24 steps of headroom; Q is MIX bits 0..4.
+         * LPOFF and VOFF stay clear: filter and attenuation remain enabled. */
+        (uint16_t)((24u + (uint32_t)(255u - intensity) * 20u / 255u) << 8 | filter_q),
+        cutoff, cutoff, cutoff, cutoff, cutoff
     };
     uint32_t mask = (1u << AFX_FIELD_PITCH) | (1u << AFX_FIELD_LFO) |
                     (1u << AFX_FIELD_DIRECT) | (1u << AFX_FIELD_MIX);
+    for (unsigned field = AFX_FIELD_FILTER_LEVEL0; field <= AFX_FIELD_FILTER_LEVEL4; ++field)
+        mask |= 1u << field;
     return afx_instance_patch(instance, 0, mask, values);
 }
 
-static int mute_engine(afx_instance_t instance, uint8_t brightness) {
-    uint16_t mix = (uint16_t)(0xff00u | brightness);
+static int mute_engine(afx_instance_t instance, uint8_t filter_q) {
+    uint16_t mix = (uint16_t)(0xff00u | filter_q);
     return afx_instance_patch(instance, 0, 1u << AFX_FIELD_MIX, &mix);
 }
 
@@ -388,7 +401,7 @@ static void update(void *data) {
         ++state->frame;
     }
     if (!state->result && !state->engine_enabled && !state->engine_muted) {
-        int result = mute_engine(state->engine, state->brightness);
+        int result = mute_engine(state->engine, state->filter_q);
         if (!result) state->engine_muted = true;
         else if (result != -AFX_BUSY && result != -AFX_IPC_FULL) state->result = result;
     }

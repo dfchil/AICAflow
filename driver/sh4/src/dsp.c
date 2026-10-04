@@ -9,7 +9,7 @@ static int step_valid(const afx_dsp_step_t *s) {
            s->table <= 1 && s->mwt <= 1 && s->mrd <= 1 && s->ewt <= 1 &&
            s->ewa <= 15 && s->adrl <= 1 && s->frcl <= 1 && s->shift <= 3 &&
            s->yrl <= 1 && s->negb <= 1 && s->zero <= 1 && s->bsel <= 1 &&
-           s->nofl <= 1 && s->masa <= 31 && s->adreb <= 1 && s->nxadr <= 1;
+           s->nofl <= 1 && s->masa <= 63 && s->adreb <= 1 && s->nxadr <= 1;
 }
 
 int afx_dsp_program_init(afx_dsp_program_t *program) {
@@ -57,7 +57,7 @@ int afx_dsp_program_coefficient(afx_dsp_program_t *program, uint8_t index,
 
 int afx_dsp_program_address(afx_dsp_program_t *program, uint8_t index,
                             uint16_t value) {
-    if (!program || index >= AFX_DSP_ADDRESSES || (index & 1u)) return -AFX_BAD_COMMAND;
+    if (!program || index >= AFX_DSP_ADDRESSES) return -AFX_BAD_COMMAND;
     program->words[AFX_DSP_MPRO_WORDS + AFX_DSP_COEFFICIENTS + index] = value;
     return AFX_OK;
 }

@@ -115,11 +115,13 @@ static int bank_flow_properties(const uint8_t *file, uint32_t bytes, tuner_state
         for (uint32_t i = 0; i < channels; ++i)
             if (lanes[i] + 1u > state->lane_count) state->lane_count = lanes[i] + 1u;
     }
-    uint64_t ticks = (uint64_t)afx_read32(file + 60) << 32 | afx_read32(file + 56);
+    uint64_t ticks;
+    afx_result_t result = afx_flow_duration(file, bytes, &ticks,
+                                          &state->playback_tick_rate_num,
+                                          &state->playback_tick_rate_den);
+    if (result) return -(int)result;
     state->playback_ticks = ticks > UINT32_MAX ? UINT32_MAX : (uint32_t)ticks;
-    state->playback_tick_rate_num = afx_read32(file + 68);
-    state->playback_tick_rate_den = afx_read32(file + 72);
-    return state->playback_tick_rate_num && state->playback_tick_rate_den ? AFX_OK : -AFX_BAD_FORMAT;
+    return AFX_OK;
 }
 static uint32_t playback_milliseconds(const tuner_state_t *state, uint32_t ticks) {
     return (uint32_t)(((uint64_t)ticks * 1000u * state->playback_tick_rate_den) /
