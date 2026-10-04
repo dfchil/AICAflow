@@ -1,0 +1,28 @@
+name: Runtime and format compatibility
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -j2 runtime-check
+  compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: flow
+      - uses: actions/checkout@v4
+        with:
+          repository: dfchil/AICAforge
+          ref: main
+          path: forge
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install mido sf2utils numpy
+      - run: make -C forge -j2 check
+      - run: make -C flow -j2 authoring-check
+      - run: make -C flow compatibility-check AICAFORGE_BIN="$GITHUB_WORKSPACE/forge/build"

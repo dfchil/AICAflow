@@ -1,8 +1,9 @@
 # AICAflow
 
-AICAflow is a Dreamcast audio runtime and native authoring toolkit for the
-Yamaha AICA. Native C tools turn MIDI/SoundFonts, raw PCM, N64 CSeq/ALBank or
-Sega MultiPCM VGM/VGZ into sample banks and timed AICA register flows.
+AICAflow is a Dreamcast audio runtime for the Yamaha AICA.
+[AICAforge](https://github.com/dfchil/AICAforge) is its standalone native
+authoring toolchain: MIDI/SoundFonts, raw PCM, N64 CSeq/ALBank and Sega MultiPCM
+VGM/VGZ become sample banks and timed AICA register flows.
 SH4 owns AICA RAM, asset validation, bank binding, instances, seeking, live
 controls and DSP scenes. ARM7 schedules prepared commands and writes AICA
 registers.
@@ -27,8 +28,11 @@ The checked-in firmware means this needs no ARM7 compiler. Run `make check` for
 host validation; maintainers with the ARM toolchain run `make firmware-check`
 to reproduce the release image.
 
-`make compiler` builds the native C authoring tools; see the
-[tool inventory](tools/README.md) and [authoring workflow](docs/authoring.md).
+`make compiler` temporarily retains the deprecated monorepo authoring workflow.
+For new integrations, build AICAforge and pass
+`AICAFORGE_BIN=/absolute/AICAforge/build` when building examples.
+See the [migration and test guide](docs/repository-split.md).
+`make runtime-check` requires neither AICAforge nor a Dreamcast toolchain.
 
 ## Files and ownership
 

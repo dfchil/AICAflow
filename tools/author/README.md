@@ -1,5 +1,8 @@
 # Native authoring tools
 
+This AICAflow copy is deprecated during the repository transition.
+New authoring development belongs in [AICAforge](https://github.com/dfchil/AICAforge).
+
 Build from the repository root:
 
 ```sh

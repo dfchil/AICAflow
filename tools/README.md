@@ -1,5 +1,10 @@
 # Tools and build targets
 
+Native authoring now belongs in [AICAforge](https://github.com/dfchil/AICAforge).
+The authoring/research copy here is deprecated during the transition; the tuner
+and its Python client remain AICAflow-owned. See the
+[migration guide](../docs/repository-split.md).
+
 `make compiler` builds the supported native C authoring tools:
 
 - `build/afx_compile` — one MIDI plus PCM zones or one SoundFont to AFB/AFX,

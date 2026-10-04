@@ -1,5 +1,8 @@
 # AICAflow documentation
 
+See [Repository split](repository-split.md) for AICAflow/AICAforge ownership,
+the format boundary, test targets and the deprecation window.
+
 AICAflow separates offline sound authoring from Dreamcast playback.
 A control flow contains timed AICA register operations; its samples
 live in a separately loaded bank. The SH-4 owns memory, validation, instances,
