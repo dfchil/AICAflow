@@ -40,3 +40,6 @@ register states in AICA, not the index table.
 AICA channel/DSP registers are memory-mapped I/O at `0x00800000`, not part of
 the 2 MiB RAM pictured above. The allocator must never hand out the fixed
 control region starting at `0x1fc000`.
+
+For sample conversion and bank sizing, see
+[AICAforge resource budgets](https://github.com/dfchil/AICAforge/blob/main/docs/authoring.md#output-and-resource-budgets).

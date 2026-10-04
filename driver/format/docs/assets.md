@@ -4,8 +4,7 @@
 
 Every sampled flow is one **AFB** sample bank plus one **AFX** control flow.
 Several AFX files may bind to the same AFB, but an individual AFX never binds
-to more than one bank. If a piece needs material from several SoundFonts or
-sample sets, the offline tool combines the selected samples into that one AFB.
+to more than one bank.
 
 At runtime the SH-4 loads the AFB payload as one contiguous AICA allocation,
 then validates and uploads AFX images that carry the bank's identity. The AFB
@@ -82,8 +81,7 @@ the setup CONTROL/SAMPLE_LOW pair; `sample_offset` is **AFB-payload-relative**,
 not a sample index or a file offset. The validator in `driver/format/src/codec.c`
 is authoritative for ranges, flags and work-profile constraints.
 
-`control_id` identifies the exact control image. It changes when an offline
-profile derives a new AFX and lets its AFC sidecar be rejected if stale.
+`control_id` identifies the exact control image and binds its AFC sidecar.
 
 ## AFC — seek sidecar
 
@@ -133,9 +131,8 @@ seeking is musical reconstruction, not bit-exact sample-phase restoration.
 
 AFI is the optional binary catalog that lets SH4-side code start AFB samples
 as direct one-shots without scanning an AFX setup dictionary. It is never
-uploaded to AICA or interpreted by ARM7. The bank builder emits two variants
-next to every AFB: `bank.afi` has compact records and `bank.names.afi` adds
-fixed-width source sample names. Both bind to exactly the same AFB.
+uploaded to AICA or interpreted by ARM7. Compact and named records are supported;
+each catalog binds to one AFB.
 
 An AFI begins with a fixed, 32-byte little-endian header:
 
@@ -160,6 +157,5 @@ Each compact 16-byte record is little-endian:
 | 13 | 3 | reserved, zero |
 
 The 32-byte named record appends a zero-padded, fixed 16-byte source sample
-name at offset 16. Duplicate AFX setups that refer to the same AFB sample
-produce one AFI record. AFI describes direct one-shots; loop points, root key
+name at offset 16. AFI describes direct one-shots; loop points, root key
 and tuning are stored in AFX setups.

@@ -5,22 +5,19 @@ frozen-asset compatibility tests, including the firmware manifest hash.
 It needs Clang with AddressSanitizer/UndefinedBehaviorSanitizer and Python 3's
 standard library. It needs no AICAforge checkout, Python packages, KOS or ROMs.
 
-Authoring tests belong to AICAforge. To additionally exercise its output with
-AICAflow's validator and loader:
+To exercise AICAforge output with AICAflow's validator and loader:
 
 ```sh
 make authoring-dependencies
-make -C dependencies/AICAforge check
 make compatibility-check
 ```
 
-The integration target reuses AICAforge's CLI tests for bank merging, profiles
-and deterministic output; AICAflow supplies the validator. It also validates
-current and frozen older assets, bank binding and stale-checkpoint rejection.
+This checks current and frozen assets, bank binding and stale-checkpoint rejection.
+Compiler tests, Python dependencies and generated-asset troubleshooting are
+documented in [AICAforge testing](https://github.com/dfchil/AICAforge/blob/main/docs/testing.md).
 `AICAFORGE_DIR` defaults to the parent of `AICAFORGE_BIN`; override it when
 using a custom binary output directory. For an external checkout, pass `AICAFORGE_BIN=/absolute/AICAforge/build`.
-AICAforge's tests need its documented
-Python dependencies. CI checks both repositories together.
+CI checks both repositories together.
 
 `make firmware-check` rebuilds the ARM7 firmware and compares its SHA-256
 with `firmware/manifest.json`; this requires the ARM toolchain.
