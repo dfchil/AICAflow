@@ -1,5 +1,7 @@
 # DSP effects player
 
+[Documentation](../../docs/README.md)
+
 An interactive enDjinn Dreamcast listener for AICAflow's twenty-four named DSP
 programs. It constructs the selected program in C at runtime and applies it to
 the selected input. It has effect-tuned, impulse, tone, modulated-tone and

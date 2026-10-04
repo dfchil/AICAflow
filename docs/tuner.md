@@ -1,5 +1,7 @@
 # Persistent tuner
 
+[Documentation](README.md)
+
 The tuner receives AFB/AFX assets and DSP programs over TCP while staying
 resident on Dreamcast. Use it to audition songs, regions and live register
 changes. Compile MIDI, SF2 and profiles on the host before upload.

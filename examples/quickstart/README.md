@@ -1,5 +1,7 @@
 # Quickstart
 
+[Documentation](../../docs/README.md)
+
 The smallest complete AICAflow program. It builds one generated sample bank
 and one bank-bound flow, loads both from the executable, installs a room DSP
 scene, plays the flow once, verifies lifecycle completion, then returns a

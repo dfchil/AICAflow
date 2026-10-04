@@ -1,7 +1,9 @@
 # AICAflow runtime contract
 
+[Documentation](../docs/README.md)
+
 See [Runtime ABI](../docs/specs/runtime.md) for ownership and execution,
-and [Runtime asset formats](../docs/specs/assets.md) for file layouts.
+and [Runtime asset formats](format/docs/assets.md) for file layouts.
 
 The headers define the numeric contract:
 

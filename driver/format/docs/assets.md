@@ -1,5 +1,7 @@
 # Runtime asset formats
 
+[Documentation](../../../docs/README.md)
+
 ## One playback model
 
 Every sampled flow is one **AFB** sample bank plus one **AFX** control flow.

@@ -48,15 +48,15 @@ See [Dependencies](docs/dependencies.md) and [Testing](docs/testing.md).
 Several flows can share one resident bank. A flow always binds to exactly one
 bank; it does not contain samples or look them up by instrument name at runtime.
 AFC checkpoints stay in SH4 RAM. See the
-[format reference](docs/specs/assets.md) for layouts, bindings and limits.
+[format reference](driver/format/docs/assets.md) for layouts, bindings and limits.
 
 ## Included examples
 
-- `quickstart` — minimal generated AFB/AFX playback.
-- `multiple_dsp_effects` — enDjinn-guided separate and simultaneous dual-effect audition.
-- `dsp_effects_player` — interactive DSP-preset audition player.
-- `dynamic_sfx` — SH4-controlled pitch, position and intensity changes.
-- `music_player` — three reproducibly fetched classical MIDI/SoundFont demonstrations.
+- [Quickstart](examples/quickstart/README.md) — minimal generated AFB/AFX playback.
+- [Multiple DSP effects](examples/multiple_dsp_effects/README.md) — separate and simultaneous dual-effect audition.
+- [DSP effects player](examples/dsp_effects_player/README.md) — interactive DSP-preset audition player.
+- [Dynamic SFX](examples/dynamic_sfx/README.md) — SH4-controlled pitch, position and intensity changes.
+- [Music player](examples/music_player/README.md) — three classical MIDI/SoundFont demonstrations.
 
 The persistent BBA tuner is a development tool at `tools/tuner/server`; build
 it with `make tools`.

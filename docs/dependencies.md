@@ -1,5 +1,7 @@
 # Dependencies
 
+[Documentation](README.md)
+
 AICAflow contains the SH4 driver, ARM7 firmware, public runtime formats,
 DSP programs, examples and tuner. [AICAforge](https://github.com/dfchil/AICAforge)
 contains the importers, asset compilers, bank/profile tools and authoring documentation.

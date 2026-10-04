@@ -1,5 +1,7 @@
 # DSP programming
 
+[Documentation](README.md)
+
 Use `<aicaflow/dsp.h>` to construct an `afx_dsp_program_t` in C. The helpers
 encode one AICA DSP instruction at a time and validate the resource limits
 before upload. Install a completed program with `afx_dsp_scene_program()` and

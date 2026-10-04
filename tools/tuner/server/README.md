@@ -1,6 +1,8 @@
 
 # Persistent tuner server
 
+[Documentation](../../../docs/README.md)
+
 The tuner receives assets and DSP programs over BBA while staying resident on
 Dreamcast. Build from the repository root:
 

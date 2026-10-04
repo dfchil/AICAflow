@@ -1,5 +1,7 @@
 # AFX instruction language
 
+[Documentation](../../../docs/README.md)
+
 This is the bytecode inside a sample-free AFX image. It describes AFX file
 version 7; that is distinct from the firmware SH-4/ARM7 ABI carried in the
 status block.

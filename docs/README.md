@@ -1,30 +1,41 @@
 # AICAflow documentation
 
-See [Dependencies](dependencies.md) for repository contents, setup and updates.
+[Project overview](../README.md)
 
-AICAflow separates offline sound authoring from Dreamcast playback.
-A control flow contains timed AICA register operations; its samples
-live in a separately loaded bank. The SH-4 owns memory, validation, instances,
-seeking, live controls and DSP scenes. The ARM7 firmware only runs bounded,
-already-resolved commands.
+## Guides
 
-## Read by task
+- [Getting started](getting-started.md) — prerequisites, builds and playback.
+- [Integration](integration.md) — load assets and control playback.
+- [Lifetime](lifetime.md) — instances, banks and resource ownership.
+- [Dependencies](dependencies.md) — setup and version updates.
+- [Testing](testing.md) — host checks and hardware verification.
 
-- [Getting started](getting-started.md) — build and run the smallest example.
-- [Integration](integration.md) and [lifetime](lifetime.md) — embed the driver
-  safely in a Dreamcast program.
-- [Authoring](https://github.com/dfchil/AICAforge/blob/main/docs/authoring.md) — create a bank, flows and sidecars from MIDI,
-  PCM, SoundFonts, N64 CSeq or MultiPCM captures; distinguish bank policy from
-  performance profiles.
-- [SFX bank maps](https://github.com/dfchil/AICAforge/blob/main/docs/specs/afsfx.md) — `.afsfx` grouping/residency, raw N64 IDs,
-  the implemented DKR grammar and its application-specific limits.
-- [DSP](dsp.md) — construct and install an AICA DSP program.
-- [Tuner](tuner.md) — use the persistent hardware development server.
-- [Memory layout](memory.md) — ownership and the AICA RAM arena.
-- [Specifications](specs/README.md) — assets, bytecode and SH-4/ARM7 wire ABI.
-- [Testing](testing.md) — host and firmware checks.
+## Reference
 
-The source headers define the numeric contract:
-[`protocol.h`](../driver/include/aicaflow/protocol.h) defines the ARM7/SH-4
-wire ABI and [`bank.h`](../driver/sh4/include/aicaflow/bank.h) defines the
-bank loader API.
+- [DSP](dsp.md) — programming guide and instruction cheatsheet.
+- [Memory layout](memory.md) — AICA RAM and reservations.
+- [Runtime ABI](specs/runtime.md) — firmware bootstrap and execution.
+- [SH4/ARM7 IPC](specs/ipc.md) — queues, commands and observations.
+- [Runtime asset formats](../driver/format/docs/assets.md) — AFB, AFX, AFC and AFI.
+- [AFX instruction language](../driver/format/docs/instruction-language.md) — control-stream bytecode.
+- [Public format code](../driver/format/README.md) — portable headers and codec.
+- C API: [playback](../driver/sh4/include/aicaflow/host.h),
+  [banks](../driver/sh4/include/aicaflow/bank.h), [DSP](../driver/sh4/include/aicaflow/dsp.h).
+- [Driver contract](../driver/CONTRACT.md) and [ARM7 executor](../driver/arm7/README.md).
+
+## Examples and tools
+
+- [Quickstart](../examples/quickstart/README.md) — minimal playback.
+- [Multiple DSP effects](../examples/multiple_dsp_effects/README.md) — independent effect paths.
+- [DSP effects player](../examples/dsp_effects_player/README.md) — preset audition.
+- [Dynamic SFX](../examples/dynamic_sfx/README.md) — live sound controls.
+- [Music player](../examples/music_player/README.md) — playlist, profiles and visualisation.
+- [Player framework](../examples/player_framework/README.md) — shared example UI.
+- [Runtime tools](../tools/README.md) — tuner and asset validator.
+- [Tuner reference](tuner.md) and [server setup](../tools/tuner/server/README.md).
+
+## Asset authoring
+
+[AICAforge documentation](https://github.com/dfchil/AICAforge/blob/main/docs/README.md)
+covers importers, bank building, profiles, authoring formats and asset tests.
+See [asset licences](../ASSET_LICENSES.md) for distributed example inputs.

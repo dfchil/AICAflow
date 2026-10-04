@@ -1,5 +1,7 @@
 # ARM7 timed executor
 
+[Documentation](../../docs/README.md)
+
 The firmware owns Timer A, but its FIQ only increments the reserved clock
 and reloads the timer. Bounded normal-context code drains IPC and executes due
 stream operations. It advertises bootstrap, lifecycle and playback capabilities.

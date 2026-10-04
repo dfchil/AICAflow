@@ -1,5 +1,7 @@
 # Getting started
 
+[Documentation](README.md)
+
 AICAflow runs prepared AFB/AFX assets on Dreamcast AICA hardware.  The package
 includes a verified ARM7 firmware image, so normal example builds need only a
 KallistiOS SH4 environment and host utilities (Clang with C11 support, zlib,

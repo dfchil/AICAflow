@@ -1,5 +1,7 @@
 # SH4 integration
 
+[Documentation](README.md)
+
 There is one runtime path: load a sample bank, bind a control flow, then create
 instances. The driver library does not depend on enDjinn. Link
 `driver/sh4/libaicaflow_host.a`, add `driver/include` and `driver/sh4/include`
@@ -81,5 +83,5 @@ For host-backed file playback, map the asset directory as `/pc` with `-m`.
 Keep the host server running and disable computer sleep while playback uses it.
 
 See [lifetime.md](lifetime.md) for the ownership rules and
-[Runtime asset formats](specs/assets.md) for the asset contract. See
+[Runtime asset formats](../driver/format/docs/assets.md) for the asset contract. See
 [Runtime ABI](specs/runtime.md) for the SH-4/ARM7 boundary.

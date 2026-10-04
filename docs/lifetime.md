@@ -1,5 +1,7 @@
 # Lifetime
 
+[Documentation](README.md)
+
 An AFB owns one contiguous AICA sample allocation. An uploaded AFX flow retains
 that bank; an active instance retains its flow. Release in this order:
 

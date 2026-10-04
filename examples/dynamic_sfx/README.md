@@ -1,5 +1,7 @@
 # Dynamic SFX
 
+[Documentation](../../docs/README.md)
+
 This self-contained Dreamcast demo runs a dRxLaX engine loop. Its engine stays inside the stereo field (pan 5 through 26), while
 its intensity, pitch, filter resonance, low-pass brightness and triangle LFO
 change every 16 ms through calls from the SH-4. A dRxLaX slide starts on the right and crosses to

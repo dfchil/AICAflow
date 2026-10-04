@@ -1,5 +1,7 @@
 # Multiple DSP effects demo
 
+[Documentation](../../docs/README.md)
+
 An enDjinn on-screen audition of one AICA DSP program with two independent
 paths. It plays: echo alone on the left (`MIXS0`), distortion alone on the
 right (`MIXS1`), then both together. The source direct paths are muted, so the

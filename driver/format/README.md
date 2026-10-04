@@ -1,5 +1,7 @@
 # Public asset-format contract
 
+[Documentation](../../docs/README.md)
+
 Portable runtime format definitions, decoding and validation, used by AICAflow
 and AICAforge. No KOS or enDjinn dependency. Add `include/` to the include path
 and compile `src/codec.c`.

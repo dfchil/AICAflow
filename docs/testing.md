@@ -1,5 +1,7 @@
 # Testing
 
+[Documentation](README.md)
+
 `make check` (also `make runtime-check`) runs format, driver, DSP, tuner and
 frozen-asset compatibility tests, including the firmware manifest hash.
 It needs Clang with AddressSanitizer/UndefinedBehaviorSanitizer and Python 3's

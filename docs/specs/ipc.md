@@ -1,5 +1,7 @@
 # SH-4 ↔ ARM7 IPC
 
+[Documentation](../README.md)
+
 The fixed IPC area is the control plane between the SH-4 host library and the
 ARM7 executor. Applications should use the public SH-4 API in
 driver/sh4/include/aicaflow/host.h, not write the queue directly. This document

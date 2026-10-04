@@ -1,5 +1,7 @@
 # Runtime ABI
 
+[Documentation](../README.md)
+
 ## Responsibilities
 
 The SH-4 owns the AICA RAM arena, firmware bootstrap, AFB validation and
@@ -25,7 +27,7 @@ The relevant stream operations are `WAIT8`, `WAIT16`, `WAIT32`, `NOTE`,
 must explicitly reach `KEYOFF` then `END`, even if its source sample loops.
 `PARK` is only for a controlled flow that the SH-4 will resume or stop.
 
-[AFX instruction language](instruction-language.md) specifies every opcode,
+[AFX instruction language](../../driver/format/docs/instruction-language.md) specifies every opcode,
 field mask, byte layout and stream validation rule. [SH-4 ↔ ARM7 IPC](ipc.md)
 specifies the separate control queue; it is not part of an AFX file.
 

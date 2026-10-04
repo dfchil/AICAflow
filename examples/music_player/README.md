@@ -1,5 +1,7 @@
 # Classical music player
 
+[Documentation](../../docs/README.md)
+
 An enDjinn player for three classical works, with a playlist, progress bar,
 seek controls and optional [AFV visualization](https://github.com/dfchil/AICAforge/blob/main/docs/specs/authoring-formats.md#afv--visualisation-sidecar).
 Each work has its own sample bank; only

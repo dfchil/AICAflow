@@ -1,5 +1,7 @@
 # Runtime tools
 
+[Documentation](../docs/README.md)
+
 - `tuner/`: persistent Dreamcast BBA server and Python client.
   Build with `make tools`; see [Tuner](../docs/tuner.md).
 - `test/`: tuner client/server protocol tests, run by `make check`.

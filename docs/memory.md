@@ -1,5 +1,7 @@
 # AICA memory layout
 
+[Documentation](README.md)
+
 AICAflow treats AICA RAM as one SH-4-owned arena. The ARM7 firmware reports
 the first usable asset address and the active asset ceiling; it does not
 allocate samples or interpret file formats. All uploads and asset allocations
