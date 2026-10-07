@@ -28,13 +28,13 @@ its existing AICA DSP-send register value; SH4 owns program installation and
 return gating. Use `afx_dsp_scene_returns(false)` to audition dry routing
 without replacing the program.
 
-The SH4 also owns the AICA asset arena. The DSP ring is the only variable
-top-of-arena reservation: a program without `MRD`/`MWT` delay instructions
-reserves 0 bytes; RBL 0, 1, 2 and 3 reserve 16, 32, 64 and 128 KiB
-respectively. All AFB data is 32-byte aligned and is allocated below that
-reservation. Install a memory-using scene before loading its AFB; an attempted
-ring expansion that would overlap a live bank fails safely. Disabling the
-scene returns that range to the ordinary allocator.
+SH4 allocates DSP rings within the AICA asset arena, on 2 KiB boundaries.
+A program without `MRD`/`MWT` instructions needs no ring; RBL 0, 1, 2 and 3
+allocate 16, 32, 64 and 128 KiB respectively. Install a memory-using scene
+before loading assets to avoid fragmentation. Replacement stops the old scene
+before allocating its replacement; allocation failure leaves DSP off.
+An acknowledged disable clears and frees the ring. A timeout keeps it allocated
+until a later disable is acknowledged or the driver is shut down.
 
 The exact placement of the ring relative to the asset arena, IPC state and
 ARM7 stacks is shown in [Memory layout](memory.md). The runtime ownership

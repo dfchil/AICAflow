@@ -18,10 +18,13 @@ static inline int afx_range(uint32_t offset, uint32_t bytes, uint32_t limit) {
     return offset <= limit && bytes <= limit - offset;
 }
 typedef struct {
-    uint8_t opcode, channel;
-    uint16_t setup;
-    uint32_t wait, mask, bytes;
-    const uint8_t *values;
+    uint8_t opcode; /* Decoded opcode; compact NOTE_PL/PATCH_LEVEL normalize to NOTE/PATCH. */
+    uint8_t channel; /* Local channel index for NOTE, PATCH and KEYOFF. */
+    uint16_t setup; /* Setup template index used by NOTE. */
+    uint32_t wait; /* Authored tick duration for a WAIT instruction. */
+    uint32_t mask; /* Selected AFX_FIELD_* bits for NOTE/PATCH values. */
+    uint32_t bytes; /* Total encoded instruction length in bytes. */
+    const uint8_t *values; /* Borrowed pointer to packed little-endian 16-bit selected values. */
 } afx_event_t;
 
 static inline uint32_t afx_field_value_bytes(uint32_t mask) {
@@ -61,7 +64,8 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
         if (e.opcode == AFX_OP_NOTE) e.setup = afx_read16(p + 2);
         e.mask = p[0] == AFX_OP_NOTE_PL ? AFX_NOTE_PL_MASK :
                  p[0] == AFX_OP_PATCH_LEVEL ? (1u << AFX_FIELD_TOTAL_LEVEL) : afx_read32(p + prefix - 4);
-        if (e.mask & ~AFX_FIELD_MASK) return AFX_BAD_COMMAND;
+        if (e.mask & ~(e.opcode == AFX_OP_PATCH ? AFX_PATCH_FIELD_MASK : AFX_FIELD_MASK))
+            return AFX_BAD_COMMAND;
         e.values = p + prefix;
     }
     if (e.opcode == AFX_OP_WAIT8) e.wait = p[1];

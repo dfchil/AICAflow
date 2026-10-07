@@ -75,7 +75,9 @@ enum {
     AFX_DSP_RETURN_RIGHT = 1,
 };
 
-typedef struct { uint16_t words[AFX_DSP_PROGRAM_WORDS]; } afx_dsp_program_t;
+typedef struct {
+    uint16_t words[AFX_DSP_PROGRAM_WORDS]; /* Packed MPRO, COEF, MADRS and stereo return words in upload order. */
+} afx_dsp_program_t;
 
 /*
  * One logical MPRO instruction. Fields map directly to the four hardware u16
@@ -128,15 +130,30 @@ typedef struct { uint16_t words[AFX_DSP_PROGRAM_WORDS]; } afx_dsp_program_t;
  * program; they are not DSP instructions.
  */
 typedef struct {
-    /* W0: TEMP read/write addresses. TRA/TWA are 0..127. */
-    uint8_t tra, twt, twa;
-    /* W1: operand selection. XSEL/YSEL/IWT are single-bit except YSEL 0..3. */
-    uint8_t xsel, ysel, ira, iwt, iwa;
-    /* W2: external access, output, accumulator shaping and arithmetic B. */
-    uint8_t table, mwt, mrd, ewt, ewa;
-    uint8_t adrl, frcl, shift, yrl, negb, zero, bsel;
-    /* W3: external-memory format/address controls. */
-    uint8_t nofl, masa, adreb, nxadr;
+    uint8_t tra; /* TEMP read index, 0..127, relative to the rotating TEMP base. */
+    uint8_t twt; /* Enable shifted previous-ACC write to TEMP. */
+    uint8_t twa; /* TEMP write index, 0..127, relative to the rotating TEMP base. */
+    uint8_t xsel; /* X source: 0=TEMP[TRA], 1=input selected by IRA. */
+    uint8_t ysel; /* Y source: 0=fraction latch, 1=COEF[step], 2/3=YREG portions. */
+    uint8_t ira; /* Input selector, 0..63; MEMS=0..31 and MIXS=32..47. */
+    uint8_t iwt; /* Latch a completed external-memory read into MEMS[IWA]. */
+    uint8_t iwa; /* MEMS write destination, 0..31. */
+    uint8_t table; /* Table-addressing mode; must be zero in this API. */
+    uint8_t mwt; /* External-memory write enable; permitted only on odd steps. */
+    uint8_t mrd; /* External-memory read enable; permitted only on odd steps. */
+    uint8_t ewt; /* Write shifted previous ACC to the effect return selected by EWA. */
+    uint8_t ewa; /* Effect return index; this API permits 0=left and 1=right when EWT is set. */
+    uint8_t adrl; /* Load the address register from the selected datapath value. */
+    uint8_t frcl; /* Load the fractional latch from the shifted accumulator result. */
+    uint8_t shift; /* Hardware accumulator shift/saturation mode, 0..3. */
+    uint8_t yrl; /* Load YREG from the selected input for later YSEL use. */
+    uint8_t negb; /* Negate the arithmetic B operand. */
+    uint8_t zero; /* Force the arithmetic B operand to zero. */
+    uint8_t bsel; /* B source: 0=TEMP[TRA], 1=previous ACC, unless ZERO is set. */
+    uint8_t nofl; /* Memory encoding: 0=AICA packed float, 1=linear; uniform across accesses. */
+    uint8_t masa; /* MADRS address selector, 0..63. */
+    uint8_t adreb; /* Add the address-register offset to the external-memory address. */
+    uint8_t nxadr; /* Advance the external-memory address by one word. */
 } afx_dsp_step_t;
 
 /*

@@ -66,18 +66,10 @@ bool allocator_reset(uint32_t dynamic_base) {
     g_free_count = g_alloc_count = 0;
     for (uint32_t i = 0; i < g_asset_capacity; ++i) {
         free(g_assets[i].checkpoints);
-        free(g_assets[i].image);
-        free(g_assets[i].dependencies);
-        g_assets[i].dependencies = NULL;
-        g_assets[i].dependency_count = 0;
-        g_assets[i].sample = g_assets[i].sfx = false;
+        g_assets[i].bank = AFX_ASSET_INVALID;
         g_assets[i].sample_bank = false;
-        g_assets[i].owns_allocation = false;
-        g_assets[i].backing = AFX_ASSET_INVALID;
-        g_assets[i].sample_frames = g_assets[i].sample_format = 0;
         g_assets[i].checkpoints = NULL;
         g_assets[i].checkpoints_size = 0;
-        g_assets[i].image = NULL;
         if (g_assets[i].live) {
             if (g_assets[i].generation == UINT16_MAX) g_assets[i].retired = true;
             else ++g_assets[i].generation;
@@ -103,6 +95,7 @@ bool allocator_reset(uint32_t dynamic_base) {
     g_available_channels = UINT64_MAX;
     g_reserved_peak_commands = g_reserved_peak_writes = 0;
     g_dsp_scene = false;
+    g_dsp_ring = 0;
     g_dsp_return_left = g_dsp_return_right = 0;
     g_next_sequence = 1;
     if (!dynamic_base || dynamic_base >= g_asset_limit || !reserve_free(1))
@@ -111,37 +104,6 @@ bool allocator_reset(uint32_t dynamic_base) {
     g_free_blocks[0] = (afx_block_t){dynamic_base, g_asset_limit - dynamic_base};
     g_free_count = 1;
     return true;
-}
-/* The DSP ring is the sole top-of-arena reservation.  Shrinking is allowed
- * only when every existing asset remains below it; expanding returns the old
- * ring range to the ordinary SH4-owned allocator. */
-bool allocator_set_limit(uint32_t limit) {
-    if (!g_ready || limit < g_dynamic_base || limit > AFX_ASSET_MAX ||
-        (limit & (AFX_DSP_MIN_BYTES - 1u))) return false;
-    if (limit == g_asset_limit) return true;
-    upload_dma_wait();
-    if (limit < g_asset_limit) {
-        for (uint32_t i = 0; i < g_alloc_count; ++i)
-            if (g_allocs[i].addr > limit || g_allocs[i].size > limit - g_allocs[i].addr)
-                return false;
-        for (uint32_t i = 0; i < g_free_count;) {
-            afx_block_t *block = g_free_blocks + i;
-            if (block->addr >= limit) {
-                memmove(block, block + 1, (g_free_count - i - 1u) * sizeof(*block));
-                --g_free_count;
-            } else {
-                if (block->size > limit - block->addr) block->size = limit - block->addr;
-                ++i;
-            }
-        }
-        g_asset_limit = limit;
-        return true;
-    }
-    uint32_t old_limit = g_asset_limit;
-    g_asset_limit = limit;
-    if (insert_free_block(old_limit, limit - old_limit)) return true;
-    g_asset_limit = old_limit;
-    return false;
 }
 static bool insert_free_block(uint32_t address, uint32_t size) {
     if (!in_asset_arena(address, size)) return false;
@@ -226,6 +188,7 @@ bool free_allocation(uint32_t address) {
 }
 int afx_mem_free(uint32_t address) {
     HOST_GUARD(-AFX_BUSY);
+    if (address && address == g_dsp_ring) return -AFX_ASSET_REFERENCED;
     for (uint32_t i = 0; i < g_asset_capacity; ++i)
         if ((g_assets[i].live || g_assets[i].uploading) && g_assets[i].addr == address)
             return -AFX_ASSET_REFERENCED;
@@ -242,6 +205,7 @@ int afx_mem_upload(uint32_t address, const void *data, uint32_t size) {
     for (uint32_t i = 0; i < g_alloc_count; ++i)
         if (address >= g_allocs[i].addr &&
             afx_range(address - g_allocs[i].addr, rounded, g_allocs[i].size)) {
+            if (g_allocs[i].addr == g_dsp_ring) return -AFX_ASSET_REFERENCED;
             upload_words(address, data, size);
             return AFX_OK;
         }
@@ -294,8 +258,7 @@ afx_asset_t reserve_asset(uint32_t size, uint32_t align, bool live) {
     slot->size = size;
     slot->allocation_size = allocation_size;
     slot->upload_cursor = 0;
-    slot->owns_allocation = true;
-    slot->backing = AFX_ASSET_INVALID;
+    slot->bank = AFX_ASSET_INVALID;
     slot->sample_bank = false;
     return AFX_MAKE_HANDLE(index, slot->generation);
 }
@@ -317,32 +280,20 @@ int afx_asset_free(afx_asset_t asset) {
     afx_asset_slot_t *slot = &g_assets[index];
     if (g_upload_dma_asset == asset) upload_dma_wait();
     if (slot->references) return -AFX_ASSET_REFERENCED;
-    if (slot->owns_allocation && !free_allocation(slot->addr)) return -AFX_BAD_BOUNDS;
-    for (uint32_t i = 0; i < slot->dependency_count; ++i) {
-        uint32_t dependency;
-        if (resolve_asset(slot->dependencies[i], &dependency)) --g_assets[dependency].references;
+    if (!free_allocation(slot->addr)) return -AFX_BAD_BOUNDS;
+    if (slot->bank) {
+        uint32_t bank_index;
+        if (resolve_asset(slot->bank, &bank_index)) --g_assets[bank_index].references;
     }
-    free(slot->dependencies);
-    slot->dependencies = NULL;
-    slot->dependency_count = 0;
-    if (slot->backing) {
-        uint32_t backing;
-        if (resolve_asset(slot->backing, &backing) && g_assets[backing].references)
-            --g_assets[backing].references;
-    }
-    slot->sample = slot->sfx = slot->sample_bank = false;
-    slot->sample_frames = slot->sample_format = 0;
+    slot->bank = AFX_ASSET_INVALID;
+    slot->sample_bank = false;
     free(slot->checkpoints);
-    if (slot->image_owned) free(slot->image);
     slot->checkpoints = NULL;
     slot->checkpoints_size = 0;
-    slot->image = NULL;
     slot->live = false;
     slot->flow = false;
     slot->uploading = false;
     slot->addr = slot->size = slot->allocation_size = 0;
-    slot->owns_allocation = false;
-    slot->backing = AFX_ASSET_INVALID;
     slot->upload_cursor = 0;
     slot->peak_commands = slot->peak_register_writes = 0;
     if (slot->generation == UINT16_MAX) slot->retired = true;

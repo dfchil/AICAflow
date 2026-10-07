@@ -76,13 +76,15 @@ $(MAP): Makefile classical.afbm $(CONFIG) $(BACH_PERFORMANCE_MIDI) fetch-assets
 		-e 's|@ORCHESTRA_RATE@|$(ORCHESTRA_RATE)|g' \
 		-e 's|@GRIEG_MIDI@|$(call map_path,$(GRIEG_MIDI))|g' classical.afbm > "$@"
 
-$(ASSET_STAMP): Makefile $(MAP) $(PROFILES) $(DEFAULT_SOURCES) $(DEFAULT_SOUNDFONT) $(AUTHOR) $(BANK_AUTHOR) $(PROFILE_AUTHOR)
+$(ASSET_STAMP): Makefile tests/checkpoints.py $(MAP) $(PROFILES) $(DEFAULT_SOURCES) $(DEFAULT_SOUNDFONT) $(AUTHOR) $(BANK_AUTHOR) $(PROFILE_AUTHOR)
 	@mkdir -p $(ASSET_DIR) $(BASE_DIR) build/include
 	$(BANK_AUTHOR) --per-song "$(MAP)" "$(BASE_DIR)"
 	@set -e; for name in chopin-op27-no1 bach-bwv1007-prelude grieg-mountain-king; do \
 		profile="profiles/$$name.afp"; use_profile=0; \
 		if $(PROFILE_AUTHOR) describe "$(BASE_DIR)/$$name.afx" "$$profile" >/dev/null 2>&1; then use_profile=1; fi; \
 		if [ $$use_profile = 1 ]; then $(PROFILE_AUTHOR) apply "$(BASE_DIR)/$$name.afx" "$(BASE_DIR)/$$name.afc" "$$profile" "$(ASSET_DIR)/$$name.afx" "$(ASSET_DIR)/$$name.afc"; else cp "$(BASE_DIR)/$$name.afx" "$(BASE_DIR)/$$name.afc" "$(ASSET_DIR)/"; fi; \
+		$(AUTHOR) --seek "$(ASSET_DIR)/$$name.afx" "$(ASSET_DIR)/$$name.afc" --checkpoint-seconds 10; \
+		python3 tests/checkpoints.py "$(ASSET_DIR)/$$name.afx"; \
 		$(AUTHOR) --visual "$(ASSET_DIR)/$$name.afx" "$(ASSET_DIR)/$$name.afv"; \
 		cp "$(BASE_DIR)/$$name.afb" "$(BASE_DIR)/$$name.afi" "$(BASE_DIR)/$$name.names.afi" "$(ASSET_DIR)/"; \
 	done
@@ -127,6 +129,7 @@ $(ENJ_BINDIR)/$(ENJ_BASENAME).cdi: $(ENJ_BINDIR)/$(ENJ_BASENAME).elf $(DISC_STAM
 
 check: $(ENJ_BINDIR)/$(ENJ_BASENAME).elf $(DISC_STAMP) ../../driver/build/afx_validate
 	@python3 tests/playback_controls.py
+	@python3 tests/checkpoints.py $(ASSET_DIR)/chopin-op27-no1.afx $(ASSET_DIR)/bach-bwv1007-prelude.afx $(ASSET_DIR)/grieg-mountain-king.afx
 	@for name in chopin-op27-no1 bach-bwv1007-prelude grieg-mountain-king; do \
 		for extension in afb afx afc afv afi names.afi; do test -s "$(ASSET_DIR)/$$name.$$extension"; done; \
 	done

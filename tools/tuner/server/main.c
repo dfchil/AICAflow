@@ -12,6 +12,7 @@
 #include <enDjinn/enj_state.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -292,11 +293,11 @@ static int play_region(tuner_state_t *state, uint32_t start_ms, uint32_t duratio
     if (!result) result = wait_state(state->instance, AFX_PAUSED);
     int restored = afx_instance_gain(state->instance, state->music_gain);
     if (!result) result = restored;
-    if (!result) result = afx_instance_seek(state->instance, tick);
+    if (!result) result = afx_instance_seek_checkpoint(state->instance, tick, &tick);
     if (!result) result = wait_running(state->instance);
     if (result) { stop_instance(state); return result; }
     playback_begin(state);
-    state->playback_started -= start_ms;
+    state->playback_started -= playback_milliseconds(state, tick);
     state->region_end = afx_status_timer_ticks() + duration_ms;
     state->region_active = 1;
     return AFX_OK;
@@ -567,7 +568,17 @@ int main(void) {
         struct pollfd pollfd = { .fd = server, .events = POLLIN };
         if (poll(&pollfd, 1, 20) == 1 && (pollfd.revents & POLLIN)) {
             int client = accept(server, NULL, NULL);
-            if (client >= 0) { serve_client(client, &state); close(client); }
+            if (client >= 0) {
+                /* KOS retains TCP buffers through TIME_WAIT. Replies are small;
+                 * shrink the still-empty send buffer, not an already active
+                 * receive ring. ponytail: per-request connections still cost
+                 * TIME_WAIT memory; reuse connections if sustained traffic grows. */
+                int send_bytes = 4096;
+                if (!setsockopt(client, SOL_SOCKET, SO_SNDBUF, &send_bytes, sizeof(send_bytes)))
+                    serve_client(client, &state);
+                else trace("TUNER send-buffer setup failed (%d)", errno);
+                close(client);
+            }
         }
         (void)afx_update();
         playback_update(&state);

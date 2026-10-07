@@ -67,12 +67,14 @@ order. Therefore an instruction is base bytes plus 2 × popcount(mask) bytes.
 | 11–15 | FILTER_LEVEL0 … FILTER_LEVEL4 | filter envelope levels |
 | 16–17 | FILTER_AD, FILTER_DR | filter envelope rates |
 
-The accepted mask is exactly the low 18 bits represented above. A NOTE setup
+NOTE accepts the low 18 bits represented above. PATCH accepts the same mask
+except CONTROL and SAMPLE_LOW, which return AFX_BAD_COMMAND. A NOTE setup
 index must be below setup_count; channels used by NOTE, PATCH and KEYOFF must
 be below required_channels.
 
 A NOTE copies its setup template and applies its masked values. A PATCH
-updates the channel's running register state.
+updates the channel's running register state. Sample binding, format, loop mode
+and source are set by NOTE; use KEYOFF to release a voice.
 
 ## Termination and timing constraints
 

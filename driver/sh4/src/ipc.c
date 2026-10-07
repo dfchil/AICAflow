@@ -11,6 +11,7 @@ uint64_t g_available_channels = UINT64_MAX;
 uint64_t g_map_used[AFX_CHANNEL_MAP_ARENAS];
 uint32_t g_reserved_peak_commands, g_reserved_peak_writes;
 bool g_dsp_scene;
+uint32_t g_dsp_ring;
 uint16_t g_dsp_return_left, g_dsp_return_right;
 uint32_t g_next_sequence = 1;
 bool g_ready, g_lifecycle;
@@ -67,12 +68,22 @@ bool read_observed(uint32_t index, afx_instance_status_t *out) {
     *out = copy;
     return true;
 }
+static void stop_driver(void) {
+    spu_disable();
+    /* ARM reset does not stop DSP. Remove memory accesses and drain the DSP
+     * pipeline before its former ring can become firmware or asset memory. */
+    g2_write_32(0xa0702000u, 0);
+    g2_write_32(0xa0702004u, 0);
+    for (uint32_t step = 0; step < 128; ++step)
+        g2_write_32(0xa0703408u + step * 16u, 2);
+    thd_sleep(2);
+}
 int afx_init(const void *firmware, uint32_t size) {
     afx_firmware_info_t info;
     afx_result_t valid = afx_firmware_validate(firmware, size, &info);
     if (valid) return -(int)valid; /* No reset on rejected image. */
     g_ready = g_lifecycle = false;
-    spu_disable();
+    stop_driver();
     spu_memset(0, 0, AFX_AICA_RAM_SIZE);
     upload_words(0, firmware, size);
     spu_enable();
@@ -101,7 +112,7 @@ int afx_init(const void *firmware, uint32_t size) {
 }
 void afx_shutdown(void) {
     g_ready = g_lifecycle = false;
-    spu_disable();
+    stop_driver();
     (void)allocator_reset(0);
 }
 uint32_t afx_status_heartbeat(void) {

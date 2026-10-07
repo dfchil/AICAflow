@@ -585,7 +585,10 @@ int afx_dsp_program_room(afx_dsp_program_t *program, int16_t feedback,
     return result;
 }
 
-typedef struct { const char *name, *description; } preset_info_t;
+typedef struct {
+    const char *name; /* Stable preset name exposed by the preset lookup API. */
+    const char *description; /* Short human-readable description of the effect. */
+} preset_info_t;
 /* Human-readable descriptions correspond to the factory choices below. */
 static const preset_info_t presets[] = {
     {"room_large", "30 ms pre-delay, two allpasses, six damped combs, stereo."},

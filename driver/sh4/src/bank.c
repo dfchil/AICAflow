@@ -13,14 +13,18 @@
 #define BANK_BUFFER_BYTES (BANK_DMA_CHUNK + AFX_UPLOAD_ALIGN)
 
 typedef struct {
-    afx_bank_id_t id;
-    uint32_t data_offset, data_size, total_size;
+    afx_bank_id_t id; /* Authored identity of the AFB payload. */
+    uint32_t data_offset; /* Payload byte offset from the beginning of the AFB file. */
+    uint32_t data_size; /* Payload length in bytes. */
+    uint32_t total_size; /* Complete AFB file length in bytes. */
 } bank_header_t;
 
 typedef struct {
-    uint32_t control_id;
-    afx_bank_id_t bank_id;
-    uint32_t data_offset, data_size, total_size;
+    uint32_t control_id; /* AFX control identity to which these checkpoints belong. */
+    afx_bank_id_t bank_id; /* Required sample-bank identity, or zero for a bankless flow. */
+    uint32_t data_offset; /* Checkpoint payload byte offset from the AFC file start. */
+    uint32_t data_size; /* Checkpoint payload length in bytes. */
+    uint32_t total_size; /* Complete AFC file length in bytes. */
 } seek_header_t;
 
 static int decode_header(const void *data, uint32_t size, bank_header_t *out) {
@@ -160,9 +164,9 @@ int afx_flow_seek_index_load_memory(afx_asset_t flow, const void *data, uint32_t
     int result = decode_seek_header(data, size, &header);
     if (result) return result;
     afx_asset_slot_t *slot = &g_assets[index];
-    if (header.control_id != slot->header.control_id ||
-        header.bank_id.low != slot->header.bank_id_low ||
-        header.bank_id.high != slot->header.bank_id_high) return -AFX_BAD_SAMPLE;
+    if (header.control_id != slot->control_id ||
+        header.bank_id.low != slot->bank_id_low ||
+        header.bank_id.high != slot->bank_id_high) return -AFX_BAD_SAMPLE;
     /* Catch a corrupt sidecar at load time; detailed bounds are checked while
      * selecting a checkpoint, where the flow channel count is available. */
     const uint8_t *payload = (const uint8_t *)data + header.data_offset;

@@ -23,7 +23,8 @@ SECTIONS {
     }
     __private_end = .;
     .stacks AFX_STACK_BASE (NOLOAD) : { . += AFX_CLOCK_BASE - AFX_STACK_BASE; }
-    .clock AFX_CLOCK_BASE (NOLOAD) : { . += AFX_AICA_RAM_SIZE - AFX_CLOCK_BASE; }
+    .clock AFX_CLOCK_BASE (NOLOAD) : { . += AFX_QUEUE_ADDR - AFX_CLOCK_BASE; }
+    .queue AFX_QUEUE_ADDR (NOLOAD) : { . += AFX_AICA_RAM_SIZE - AFX_QUEUE_ADDR; }
     /DISCARD/ : { *(.comment) *(.note*) *(.ARM.exidx*) *(.ARM.extab*) }
     ASSERT(__asset_base < AFX_ASSET_MAX, "firmware overlaps asset arena")
     ASSERT(__private_end <= AFX_STACK_BASE, "runtime BSS/data overlaps stacks")

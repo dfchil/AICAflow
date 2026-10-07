@@ -537,7 +537,7 @@ static int set_speed(int percent) {
     if (playing>=0) {
         uint16_t tempo=song_tempo(playing,(unsigned)percent);
         int r=0;
-        /* Rebuild at the same authored tick, like seek: a tempo command alone
+        /* Rebuild at the preceding checkpoint: a tempo command alone
            leaves the already scheduled WAIT at its old speed. */
         if (!paused) r=afx_instance_pause(instance);
         if (!r && !paused) r=wait_state(AFX_PAUSED);
@@ -545,12 +545,11 @@ static int set_speed(int percent) {
         uint32_t ms=paused ? paused_ms : playback_ms();
         uint32_t tick=(uint32_t)((uint64_t)ms*tempo_q8_8*rate_num/(256000ull*rate_den));
         r=afx_instance_tempo(instance,tempo);
-        if (!r && !paused) r=afx_instance_seek(instance,tick);
+        if (!r && !paused) r=afx_instance_seek_checkpoint(instance,tick,&tick);
         if (!r && !paused) r=wait_state(AFX_RUNNING);
         if (r) return r;
-        /* Keep the authored position unchanged when the wall-clock scale
-           changes. Seek, resume and the spectrum all use this same scale. */
-        ms=(uint32_t)((uint64_t)ms*tempo_q8_8/tempo);
+        /* Use the selected checkpoint for the display and spectrum too. */
+        ms=(uint32_t)((uint64_t)tick*256000ull*rate_den/((uint64_t)tempo*rate_num));
         if (paused) paused_ms=ms;
         else started=afx_status_timer_ticks()-ms;
         tempo_q8_8=tempo;
@@ -635,9 +634,10 @@ static int seek(int seconds) {
     if (paused) { paused_ms=(uint32_t)target; return 0; }
     int r=afx_instance_pause(instance);
     if (!r) r=wait_state(AFX_PAUSED);
-    if (!r) r=afx_instance_seek(instance,(uint32_t)((uint64_t)target*tempo_q8_8*rate_num/(256000ull*rate_den)));
+    uint32_t tick=(uint32_t)((uint64_t)target*tempo_q8_8*rate_num/(256000ull*rate_den));
+    if (!r) r=afx_instance_seek_checkpoint(instance,tick,&tick);
     if (!r) r=wait_state(AFX_RUNNING);
-    if (!r) started=afx_status_timer_ticks()-(uint32_t)target;
+    if (!r) started=afx_status_timer_ticks()-(uint32_t)((uint64_t)tick*256000ull*rate_den/((uint64_t)tempo_q8_8*rate_num));
     printf("PLAYER SEEK %lld result=%d\n",(long long)target,r);
     return r;
 }
@@ -657,9 +657,13 @@ static int toggle(void) {
     if (playing!=selected) return play(selected);
     int r;
     if (paused) {
-        r=afx_instance_seek(instance,(uint32_t)((uint64_t)paused_ms*tempo_q8_8*rate_num/(256000ull*rate_den)));
+        uint32_t tick=(uint32_t)((uint64_t)paused_ms*tempo_q8_8*rate_num/(256000ull*rate_den));
+        r=afx_instance_seek_checkpoint(instance,tick,&tick);
         if (!r) r=wait_state(AFX_RUNNING);
-        if (!r) { started=afx_status_timer_ticks()-paused_ms; paused=false; }
+        if (!r) {
+            paused_ms=(uint32_t)((uint64_t)tick*256000ull*rate_den/((uint64_t)tempo_q8_8*rate_num));
+            started=afx_status_timer_ticks()-paused_ms; paused=false;
+        }
     } else {
         r=afx_instance_pause(instance);
         if (!r) r=wait_state(AFX_PAUSED);

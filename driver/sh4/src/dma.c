@@ -57,36 +57,31 @@ void upload_words(uint32_t address, const void *data, uint32_t size) {
     }
 }
 static int upload_sample_data(const void *data, uint32_t bytes, afx_asset_t *out) {
-    void *staging;
-    uint32_t padded;
-    padded = align_up(bytes, AFX_UPLOAD_ALIGN);
-    staging = upload_image_alloc(bytes);
-    if (!padded || !staging || g_upload_dma_asset) {
-        free(staging);
-        return g_upload_dma_asset ? -AFX_BUSY : -AFX_NO_HOST_RAM;
+    if (g_upload_dma_asset) return -AFX_BUSY;
+    /* Reuse one bounded bounce buffer; never duplicate an entire sample bank. */
+    uint32_t capacity = bytes < 65536u ? bytes : 65536u;
+    void *staging = upload_image_alloc(capacity);
+    if (!staging) return -AFX_NO_HOST_RAM;
+    afx_asset_t asset = AFX_ASSET_INVALID;
+    int result = afx_sample_bank_stream_begin(bytes, &asset);
+    for (uint32_t offset = 0; !result && offset < bytes;) {
+        uint32_t count = bytes - offset;
+        if (count > capacity) count = capacity;
+        memset(staging, 0, align_up(count, AFX_UPLOAD_ALIGN));
+        memcpy(staging, (const uint8_t *)data + offset, count);
+        result = afx_sample_bank_stream_dma_begin(asset, offset, staging, count);
+        bool complete = false;
+        while (!result && !complete) {
+            result = afx_sample_bank_stream_dma_poll(asset, &complete);
+            if (!result && !complete) thd_pass();
+        }
+        offset += count;
     }
-    memcpy(staging, data, bytes);
-    afx_asset_t asset = reserve_asset(bytes, AFX_UPLOAD_ALIGN, true);
-    if (!asset) { free(staging); return -AFX_NO_AICA_RAM; }
-    dcache_wback_range((uintptr_t)staging, padded);
-    g_upload_dma_asset = asset;
-    g_upload_dma_bytes = bytes;
-    g_upload_dma_offset = 0;
-    g_upload_dma_stream = false;
-    g_upload_dma_done = false;
-    if (spu_dma_transfer(staging, afx_asset_addr(asset), padded, 0, upload_dma_complete, NULL)) {
-        g_upload_dma_asset = AFX_ASSET_INVALID;
-        g_upload_dma_bytes = 0;
-        free(staging);
-        (void)afx_asset_free(asset);
-        return -AFX_BUSY;
-    }
-    upload_dma_wait();
+    if (!result) result = afx_sample_bank_stream_finish(asset);
+    if (result && asset) (void)afx_asset_free(asset);
     free(staging);
-    uint32_t index;
-    (void)resolve_asset(asset, &index);
-    *out = asset;
-    return AFX_OK;
+    if (!result) *out = asset;
+    return result;
 }
 
 

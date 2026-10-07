@@ -14,28 +14,38 @@ static uint8_t dsp_registers[0x4000];
 static int running, boot_ok = 1;
 static unsigned resets;
 static uint32_t asset_base;
+static unsigned asset_reads;
 static uint64_t clock_ms;
 static const void *dma_source;
 static uintptr_t dma_address;
 static size_t dma_size;
 static unsigned dma_transfers;
+static unsigned dma_fail_at;
+static size_t dma_max_size;
 static spu_dma_callback_t dma_callback;
 static void *dma_callback_data;
 static pthread_mutex_t stall_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t stall_condition = PTHREAD_COND_INITIALIZER;
 static int stall_write, write_entered, release_write;
 static uint32_t sleep_observe_reference;
+static int auto_dsp_ack;
+static uint32_t dsp_reply_result;
 static void observed(uint32_t index, uint32_t reference, uint32_t state,
                      uint32_t sequence, uint32_t result);
 void spu_disable(void) { running = 0; ++resets; }
 void spu_memload(uintptr_t address, const void *source, size_t size) {
     assert(!(address & 3) && !((uintptr_t)source & 3) && !(size & 3));
     assert(address <= sizeof(ram) && size <= sizeof(ram) - address);
-    if (running) assert(address >= asset_base && size <= AFX_ASSET_MAX - address);
+    if (running) assert((address >= asset_base && address <= AFX_ASSET_MAX &&
+                         size <= AFX_ASSET_MAX - address) ||
+                        (address >= AFX_CHANNEL_MAP_ARENA_ADDR && address <= AFX_PRIVATE_BASE &&
+                         size <= AFX_PRIVATE_BASE - address));
     memcpy(ram + address, source, size);
 }
 void spu_memset(uintptr_t address, uint32_t value, size_t size) {
     assert(!running && value == 0 && address == 0 && size == sizeof(ram));
+    for (uint32_t step = 0; step < 128; ++step)
+        assert(!(afx_read32(dsp_registers + 0x3408 + step * 16) & 0x6000));
     memset(ram, 0, size);
 }
 int spu_dma_transfer(const void *source, uintptr_t address, size_t size, int block,
@@ -43,8 +53,10 @@ int spu_dma_transfer(const void *source, uintptr_t address, size_t size, int blo
     assert(!dma_source && source && !(address & 31u) && !((uintptr_t)source & 31u) &&
            !(size & 31u));
     assert(!block && callback);
-    dma_source = source; dma_address = address; dma_size = size;
     ++dma_transfers;
+    if (dma_transfers == dma_fail_at) return -1;
+    if (size > dma_max_size) dma_max_size = size;
+    dma_source = source; dma_address = address; dma_size = size;
     dma_callback = callback; dma_callback_data = data;
     return 0;
 }
@@ -65,6 +77,8 @@ uint32_t g2_read_32(uintptr_t address) {
     }
     assert(address >= 0xa0800000 && address - 0xa0800000 <= sizeof(ram) - 4);
     assert(!(address & 3));
+    if (address - 0xa0800000 >= asset_base && address - 0xa0800000 < AFX_ASSET_MAX)
+        ++asset_reads;
     return afx_read32(ram + (address - 0xa0800000));
 }
 void g2_write_32(uintptr_t address, uint32_t value) {
@@ -117,22 +131,23 @@ static void observed(uint32_t index, uint32_t reference, uint32_t state,
 }
 void thd_sleep(uint32_t milliseconds) {
     (void)milliseconds;
-    if (!sleep_observe_reference) return;
+    if (!sleep_observe_reference && !auto_dsp_ack) return;
     uint32_t head = afx_read32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, head));
     afx_cmd_t command;
     memcpy(&command, ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, commands) +
-           ((head - 1u) & 63u) * sizeof(command), sizeof(command));
-    uint32_t reference = sleep_observe_reference;
+           ((head - 1u) & (AFX_CMD_QUEUE_CAPACITY - 1u)) * sizeof(command), sizeof(command));
+    uint32_t reference = sleep_observe_reference ? sleep_observe_reference : command.reference;
     sleep_observe_reference = 0;
     if (reference == AFX_DSP_SCENE_REFERENCE) {
-        afx_write32(ram + AFX_STATUS_ADDR + offsetof(afx_status_t, dsp_result), AFX_OK);
+        afx_write32(ram + AFX_STATUS_ADDR + offsetof(afx_status_t, dsp_result), dsp_reply_result);
         afx_write32(ram + AFX_STATUS_ADDR + offsetof(afx_status_t, dsp_sequence), command.sequence);
+        afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), head);
     } else observed(0, reference, AFX_RUNNING, command.sequence, AFX_OK);
 }
 static __attribute__((unused)) afx_cmd_t queued(uint32_t index) {
     afx_cmd_t command;
     memcpy(&command, ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, commands) +
-           (index & 63u) * sizeof(command), sizeof(command));
+           (index & (AFX_CMD_QUEUE_CAPACITY - 1u)) * sizeof(command), sizeof(command));
     return command;
 }
 static __attribute__((unused)) uint32_t queue_head(void) {

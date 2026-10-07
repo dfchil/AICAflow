@@ -47,6 +47,50 @@ state, execution budget and the observed ARM7 result. Preserve successfully
 created handles until their normal cleanup has completed, including on partial
 startup failure. `afx_shutdown()` requires flows, instances and banks released.
 
+## Omitting KOS sound and its embedded firmware
+
+For an AICAflow-only application, bypass KOS sound startup and shutdown by
+adding this C file to the application's compiled sources:
+
+```c
+/* no_kos_audio.c */
+int __wrap_snd_init(void) { return 0; }
+void __wrap_snd_shutdown(void) {}
+```
+
+Pass these options to the final `kos-cc` link:
+
+```sh
+-Wl,--wrap=snd_init,--wrap=snd_shutdown,--gc-sections
+```
+
+For enDjinn builds, add them through `ENJ_LDFLAGS`. Other makefiles may use
+`LDFLAGS`; confirm that the options appear in the final link command. Link the
+wrapper object directly with the application objects. KOS must be built with
+function/data sections so unused sound code and firmware can be discarded.
+
+This wraps only `snd_init()` and `snd_shutdown()`, not every `snd_*` API.
+Do not use KOS SFX/stream playback or enDjinn sound helpers in this configuration;
+they require the bypassed subsystem and can pull its code back into the link.
+Keep KOS's low-level SPU/G2/DMA support, which AICAflow uses, and retain the
+normal `afx_init()`/`afx_shutdown()` lifecycle with AICAflow's own firmware.
+
+Check the unstripped executable:
+
+```sh
+sh-elf-nm -S app.elf | grep -E 'snd_(init|shutdown|mem_|stream_drv_data)'
+sh-elf-size app.elf
+```
+
+The two wrapper symbols should remain, but the original sound functions and
+`snd_stream_drv_data` should be absent. The latter is KOS's embedded AICA
+firmware. Symbol names may have leading underscores.
+
+In an `-O2` music-player comparison, this removed 4,704 bytes of linked
+sections, including 3,344 bytes of KOS firmware. Linker alignment reduced the
+actual SH4 RAM saving to 3,520 bytes. Savings depend on the application and
+KOS build. This configuration was link-tested, not hardware-tested.
+
 ## Shared banks and live controls
 
 An uploaded flow retains its bank; an instance retains its flow. Several
@@ -68,8 +112,11 @@ timed PATCH operations in the control stream.
 
 ## Seek, DSP and player metadata
 
-Seeking requires a matching AFC and a paused music instance. SH4 reconstructs
-register state, resolves addresses and submits REBUILD. The checkpoint table
+Seeking requires a matching AFC and a paused music instance. SH4 selects the
+checkpoint at or before the requested tick and submits its state with REBUILD;
+ARM7 resolves sample addresses. No between-checkpoint replay occurs.
+`afx_instance_seek_checkpoint` also returns the selected tick for player clocks.
+The checkpoint table
 stays on SH4; only prepared state uses temporary AICA staging. This is not a
 sample-phase/DSP-buffer snapshot.
 
