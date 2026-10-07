@@ -35,6 +35,9 @@ make -C examples/music_player bin/aicaflow_music_player.cdi
 
 D-pad up/down selects a song, A plays/pauses, B stops, left/right seeks ten
 seconds, and L/R pages the list. START+A+B+X+Y exits through the enDjinn loop.
+Seeking snaps to the preceding checkpoint. The build regenerates checkpoints
+every ten authored seconds from the final profiled AFX and rejects start-only
+seek data.
 
 Hold X and press left/right to change speed in 10-percentage-point steps
 (50–200% of the song's profile tempo, without changing pitch). Hold X and

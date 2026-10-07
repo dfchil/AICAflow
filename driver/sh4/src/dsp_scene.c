@@ -6,16 +6,22 @@ static uint16_t dsp_word(const uint8_t *program, uint32_t offset) {
 static uint32_t ring_bytes(uint8_t rbl) {
     return rbl == AFX_DSP_RING_NONE ? 0 : AFX_DSP_MIN_BYTES << rbl;
 }
-static uint32_t ring_limit(uint8_t rbl) {
-    return AFX_ASSET_MAX - ring_bytes(rbl);
-}
-static int scene_command(uint32_t opcode, uint32_t flags) {
+static int scene_command(uint32_t opcode, uint32_t bytes) {
+    afx_dsp_payload_t payload = {0};
+    if (opcode == AFX_CMD_DSP_ENABLE) {
+        payload.ring_address = g_dsp_ring;
+        payload.ring_bytes = bytes;
+    }
     uint32_t sequence = new_sequence();
-    int result = enqueue(opcode, AFX_DSP_SCENE_REFERENCE, sequence, flags, NULL, 0);
+    int result = enqueue(opcode, AFX_DSP_SCENE_REFERENCE, sequence, 1, &payload, sizeof(payload));
     if (result) return result;
+    /* A timed-out enable may still execute: pin its allocation until DISABLE
+     * is acknowledged, rather than returning live DSP memory to the allocator. */
+    if (opcode == AFX_CMD_DSP_ENABLE) g_dsp_scene = true;
     for (unsigned waited = 0; waited < 2000; ++waited) {
         if (read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, dsp_sequence)) == sequence) {
             uint32_t status = read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, dsp_result));
+            if (opcode == AFX_CMD_DSP_ENABLE && status) g_dsp_scene = false;
             return status ? -(int)status : AFX_OK;
         }
         thd_sleep(1);
@@ -47,18 +53,19 @@ static int dsp_scene_program(const void *data, uint32_t bytes, uint8_t rbl) {
             if (dsp_word(program, 1024u + AFX_DSP_COEFFICIENTS * 2u + address * 2u) >= words)
                 return -AFX_BAD_BOUNDS;
     }
-    uint32_t previous_limit = g_asset_limit;
-    if (!allocator_set_limit(ring_limit(rbl))) return -AFX_NO_AICA_RAM;
-    /* ARM7 clears its DSP ownership and installs safe NOPs before every
-       program, including a replacement of an active scene. */
-    /* Preserve the established flags=1 wire form for the normal 64 Kiword
-       scene. Smaller rings carry their RBL+1 in bits 8..9; bit 10 means
-       the DSP program uses no delay ring. */
-    uint32_t flags = rbl == AFX_DSP_RING_NONE ? 0x401u :
-                     rbl == 3 ? 1u : 1u | ((uint32_t)(rbl + 1u) << 8);
-    int result = scene_command(AFX_CMD_DSP_ENABLE, flags);
-    if (result) { (void)allocator_set_limit(previous_limit); return result; }
-    g_dsp_scene = true;
+    if (g_dsp_scene || g_dsp_ring) {
+        int result = afx_dsp_scene_disable();
+        if (result) return result;
+    }
+    if (bytes_reserved) {
+        g_dsp_ring = afx_mem_alloc(bytes_reserved, AFX_DSP_RING_ALIGN);
+        if (!g_dsp_ring) return -AFX_NO_AICA_RAM;
+    }
+    int result = scene_command(AFX_CMD_DSP_ENABLE, bytes_reserved);
+    if (result) {
+        if (!g_dsp_scene && g_dsp_ring && free_allocation(g_dsp_ring)) g_dsp_ring = 0;
+        return result;
+    }
     g2_write_32(0xa0702000u, 0);
     g2_write_32(0xa0702004u, 0);
     /* Remove all memory/output writes before replacing their operands. */
@@ -66,7 +73,7 @@ static int dsp_scene_program(const void *data, uint32_t bytes, uint8_t rbl) {
     thd_sleep(2);
     if (memory_format == 0)
         for (uint32_t i = 0; i < bytes_reserved; i += 4)
-            g2_write_32(g_spu_base + ring_limit(rbl) + i, 0x60006000u);
+            g2_write_32(g_spu_base + g_dsp_ring + i, 0x60006000u);
     for (uint32_t i = 0; i < 128; ++i)
         g2_write_32(0xa0703000u + i * 4u, dsp_word(program, 1024u + i * 2u));
     for (uint32_t i = 0; i < 64; ++i)
@@ -98,12 +105,14 @@ int afx_dsp_scene_returns(bool enabled) {
 }
 int afx_dsp_scene_disable(void) {
     HOST_GUARD(-AFX_BUSY);
-    if (!g_dsp_scene) return -AFX_BUSY;
-    int result = scene_command(AFX_CMD_DSP_DISABLE, 1);
-    if (!result) {
-        g_dsp_scene = false;
-        g_dsp_return_left = g_dsp_return_right = 0;
-        if (!allocator_set_limit(AFX_ASSET_MAX)) return -AFX_NO_HOST_RAM;
+    if (!g_dsp_scene && !g_dsp_ring) return -AFX_BUSY;
+    if (g_dsp_scene) {
+        int result = scene_command(AFX_CMD_DSP_DISABLE, 0);
+        if (result) return result;
     }
-    return result;
+    g_dsp_scene = false;
+    g_dsp_return_left = g_dsp_return_right = 0;
+    if (g_dsp_ring && !free_allocation(g_dsp_ring)) return -AFX_NO_HOST_RAM;
+    g_dsp_ring = 0;
+    return AFX_OK;
 }

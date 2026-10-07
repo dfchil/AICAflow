@@ -37,7 +37,7 @@ clean:
 
 .PHONY: all clean
 
-build/firmware.o: ../common/firmware.c ../include/aicaflow/firmware.h
+build/firmware.o: ../common/firmware.c ../include/aicaflow/firmware.h ../include/aicaflow/protocol.h
 	@mkdir -p build
 	$(KOS_WRAPPER) $(CFLAGS) $(INCLUDES) -c $< -o $@
 

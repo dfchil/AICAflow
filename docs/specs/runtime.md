@@ -5,12 +5,12 @@
 ## Responsibilities
 
 The SH-4 owns the AICA RAM arena, firmware bootstrap, AFB validation and
-upload, AFX validation and relocation, asset lifetime, instance handles,
+upload, AFX validation and bank binding, asset lifetime, instance handles,
 seeking, live register updates and DSP scene installation. The ARM7 owns the
 bounded scheduler and writes AICA channel/DSP registers. It never parses a
 file, allocates sample memory or looks up a sample by name or index.
 
-The firmware reports its ABI, layout ID, asset base and active asset limit in
+The firmware reports its ABI, layout ID, asset base and fixed asset limit in
 the fixed status block. The host rejects a firmware image whose ABI or layout
 does not match its headers. See [the memory map](../memory.md).
 
@@ -32,8 +32,12 @@ field mask, byte layout and stream validation rule. [SH-4 ↔ ARM7 IPC](ipc.md)
 specifies the separate control queue; it is not part of an AFX file.
 
 At upload, the SH-4 validates the AFX and every relocation against the bound
-AFB payload, turns bank-relative addresses into AICA addresses once, and
-submits the resolved image. No per-note lookup happens on ARM7.
+AFB payload and uploads the image unchanged. Activation supplies the bank base
+in 32-byte units and the bank size. ARM7 adds that base when applying sample
+addresses and rejects starts outside the bank. Noise bypasses address resolution.
+NOTE and reconstructed seek state use bank-relative addresses; there is no
+sample-table lookup on ARM7. PATCH rejects CONTROL and SAMPLE_LOW; sample
+binding, format, loop mode and source are set by NOTE, and KEYOFF stops a voice.
 
 ## Live control and DSP
 
@@ -44,7 +48,7 @@ address, loop points, envelope, pitch, LFO, direct path, filter, mixer level
 and DSP send.
 
 SH4 maintains seek reconstruction and lane state. A DSP scene may
-reserve an external delay ring; its selected size changes the asset ceiling as
+own an external delay-ring allocation without changing the asset ceiling, as
 described in [Memory layout](../memory.md).
 
 ## Lifetime rule

@@ -27,6 +27,8 @@ enum {
 };
 #define AFX_FIELD_TOTAL_LEVEL AFX_FIELD_MIX
 #define AFX_FIELD_MASK ((1u << AFX_FIELD_COUNT) - 1u)
+/* PATCH cannot change sample binding, format, loop mode or key flags. */
+#define AFX_PATCH_FIELD_MASK (AFX_FIELD_MASK & ~((1u << AFX_FIELD_CONTROL) | (1u << AFX_FIELD_SAMPLE_LOW)))
 #define AFX_SETUP_BYTES (AFX_FIELD_COUNT * 2u)
 #define AFX_NOTE_PL_MASK ((1u << AFX_FIELD_PITCH) | (1u << AFX_FIELD_TOTAL_LEVEL))
 
@@ -63,21 +65,43 @@ enum { AFX_PCM16 = 0, AFX_PCM8 = 1, AFX_ADPCM = 2 };
 #define AFX_WORK_PROFILE_COMMANDS(profile) ((profile) >> 16)
 #define AFX_WORK_PROFILE_WRITES(profile) ((profile) & 0xffffu)
 typedef struct {
-    uint32_t magic, abi, total_size, flags;
-    uint32_t image_offset, image_size, stream_offset, stream_size;
-    /* AFX version 7: control_id identifies an optional SH-4 seek sidecar; bank_id
-     * identifies the sole AFB payload.  No metadata follows this header. */
-    uint32_t control_id, setup_count, bank_id_low, bank_id_high;
-    uint32_t relocations_offset, relocation_count, reserved0, reserved1;
-    uint32_t required_channels, tick_rate_num, tick_rate_den, work_profile;
+    uint32_t magic; /* AFX_FILE_MAGIC signature. */
+    uint32_t abi; /* AFX file-format version, not the host/firmware ABI. */
+    uint32_t total_size; /* Complete AFX file length in bytes. */
+    uint32_t flags; /* Authored AFX_FLAG_* options. */
+    uint32_t image_offset; /* Upload-image byte offset from the beginning of the file. */
+    uint32_t image_size; /* Upload-image length in bytes. */
+    uint32_t stream_offset; /* Instruction-stream byte offset relative to the upload image. */
+    uint32_t stream_size; /* Instruction-stream length in bytes. */
+    uint32_t control_id; /* Identity matching the optional AFC checkpoint sidecar. */
+    uint32_t setup_count; /* Number of setup templates at the beginning of the image. */
+    uint32_t bank_id_low; /* Low 32 bits of the required AFB identity; both halves zero means no bank. */
+    uint32_t bank_id_high; /* High 32 bits of the required AFB identity. */
+    uint32_t relocations_offset; /* Binding-table byte offset from the beginning of the file. */
+    uint32_t relocation_count; /* Number of 12-byte binding records. */
+    uint32_t reserved0; /* Must be zero. */
+    uint32_t reserved1; /* Must be zero. */
+    uint32_t required_channels; /* Local voice count required by the flow, 1..64. */
+    uint32_t tick_rate_num; /* Numerator of authored ticks per second. */
+    uint32_t tick_rate_den; /* Denominator of authored ticks per second. */
+    uint32_t work_profile; /* Packed peak commands/writes; zero leaves profiling to the loader. */
 } afx_file_header_t;
-typedef struct { uint32_t image_offset, byte_size, frames, format; } afx_sample_t;
-typedef struct { uint32_t pair_offset, sample_index, byte_offset; } afx_relocation_t;
+typedef struct {
+    uint32_t image_offset; /* Sample byte offset relative to an image in the portable sample descriptor. */
+    uint32_t byte_size; /* Encoded sample payload length in bytes. */
+    uint32_t frames; /* Decoded sample-frame count. */
+    uint32_t format; /* AFX_PCM16, AFX_PCM8 or AFX_ADPCM encoding. */
+} afx_sample_t;
+typedef struct {
+    uint32_t pair_offset; /* Image-relative byte offset of a setup CONTROL/SAMPLE_LOW pair. */
+    uint32_t sample_index; /* Legacy name: version 7 stores the bank-relative sample byte offset. */
+    uint32_t byte_offset; /* Legacy name: version 7 stores the bound sample length in bytes. */
+} afx_relocation_t;
 
 /* One AFC checkpoint channel record; also used by runtime rebuild requests. */
 typedef struct {
-    uint32_t local_channel;
-    uint16_t fields[AFX_FIELD_COUNT];
+    uint32_t local_channel; /* Local channel index restored by this checkpoint record. */
+    uint16_t fields[AFX_FIELD_COUNT]; /* Complete AFX_FIELD_* register words; sample address is bank-relative. */
 } afx_checkpoint_channel_t;
 
 #if defined(__cplusplus)

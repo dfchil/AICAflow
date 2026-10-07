@@ -7,7 +7,7 @@ ARM7 executor. Applications should use the public SH-4 API in
 driver/sh4/include/aicaflow/host.h, not write the queue directly. This document
 describes the wire contract used by that API.
 
-The current firmware ABI is 6 and its fixed layout ID is defined in
+The current firmware ABI is 7 and its fixed layout ID is defined in
 driver/include/aicaflow/protocol.h. Bootstrap rejects a firmware image that
 does not report matching values.
 
@@ -15,15 +15,25 @@ does not report matching values.
 
 | Region | Address | Owner | Purpose |
 | --- | ---: | --- | --- |
-| Status | 0x1fc000 | ARM7 writes | ABI/layout, capabilities, timer, asset range, DSP result and stack margin |
-| Command queue | 0x1fc100 | SH-4 publishes; ARM7 consumes | 64 fixed-size commands |
-| Observed slots | 0x1fd200 | ARM7 writes | durable state/result for up to 64 flow slots |
-| Channel maps | 0x1fda00 | SH-4 prepares | five 64-entry local-to-physical channel maps |
+| Status | 0x1fcec0 | ARM7 writes | ABI/layout, capabilities, timer, asset range, DSP result and stack margin |
+| Command queue | 0x1ff7c0 | SH-4 publishes; ARM7 consumes | 32 fixed-size commands |
+| Observed slots | 0x1fcf10 | ARM7 writes | durable state/result for up to 64 flow slots |
+| Channel maps | 0x1fd710 | SH-4 prepares | five 64-byte local-to-physical channel-map arenas |
+
+Each map entry is one byte: channel 0–63, or `0xff` for unused entries.
+Map allocations start on four-byte boundaries and round up to whole words so
+SH-4 uploads and clearing cannot overwrite neighbouring maps. The actual channel
+count excludes padding. Allocations prefer the channel-count arena and spill
+into other arenas when needed.
 
 The full placement, including private ARM7 state and stacks, is in
 [Memory layout](../memory.md). All fields are little-endian. The queue is
 single producer/single consumer: SH-4 advances head after publishing a command;
 ARM7 advances tail after consuming it.
+The ring holds 32 commands. A full ring returns `-AFX_IPC_FULL` without
+overwriting queued commands; callers may retry after ARM7 makes room. ARM7
+consumes at most eight commands per main-loop pass. Authored AFX events do not
+use this queue. ABI 7 requires rebuilding the host library and firmware together.
 
 ## Command record
 
@@ -45,7 +55,7 @@ generation prevents stale instance references from targeting a recycled slot.
 
 | Opcode | Public API | Meaning |
 | --- | --- | --- |
-| ACTIVATE | afx_instance_activate | Start a validated, resolved AFX image with a channel map. |
+| ACTIVATE | afx_instance_activate | Start a validated AFX image with a channel map and bank base/size. |
 | STOP | afx_instance_stop | Stop and release its mapped voices. |
 | PAUSE | afx_instance_pause | Freeze its timeline without discarding flow state. |
 | REBUILD | afx_instance_rebuild, afx_instance_seek | Restore SH-4-reconstructed channel state and resume or seek. |
@@ -59,8 +69,14 @@ generation prevents stale instance references from targeting a recycled slot.
 
 NOP is reserved. The command payload layouts are the fixed C types
 afx_activation_t, afx_patch_payload_t, afx_rebuild_payload_t,
-afx_gain_payload_t, afx_tempo_payload_t and afx_lane_payload_t in protocol.h;
+afx_gain_payload_t, afx_tempo_payload_t, afx_lane_payload_t and afx_dsp_payload_t in protocol.h;
 each is exactly 48 bytes.
+
+DSP commands use flags=1. ENABLE supplies the allocated ring address and byte
+size (both zero for no ring), followed by ten zero words. ARM7 validates the
+2 KiB alignment, supported size and arena bounds. DISABLE requires a zero
+payload and is safe to retry. SH4 owns the allocation until disable is
+acknowledged; timeout alone never permits freeing it.
 
 ## Results and observations
 
@@ -74,6 +90,10 @@ can be accepted into the queue yet later produce an error, for example because
 the instance became stale or a rebuild payload fails validation. DSP completion
 is reported separately by dsp_sequence and dsp_result in the status block.
 
-IPC contains only resolved AICA addresses, channel mappings and control values.
+Activation encodes the bank base as a 16-bit address in 32-byte units and its
+size as a 32-bit byte count. REBUILD sample address words are bank-relative,
+not absolute AICA addresses. PATCH rejects CONTROL and SAMPLE_LOW. Firmware and host must be upgraded
+together. File layouts are unchanged, but AFX streams that PATCH CONTROL or
+SAMPLE_LOW are now rejected.
 It never carries AFB/AFX file parsing, MIDI events, sample-name lookup, a seek
 index or an authoring profile.

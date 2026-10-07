@@ -18,24 +18,24 @@ typedef uint32_t afx_asset_t;
 typedef uint32_t afx_instance_t;
 
 typedef struct {
-    uint32_t reference;
-    uint32_t state;
-    uint32_t sequence;
-    uint32_t result;
-    uint32_t position;
-    uint32_t next_deadline;
-    uint32_t detail;
+    uint32_t reference; /* Generation-bearing instance handle from ARM7. */
+    uint32_t state; /* Current observed AFX_* playback state. */
+    uint32_t sequence; /* Sequence associated with the latest accepted observation. */
+    uint32_t result; /* Nonnegative ARM7 afx_result_t, unlike negative host API failures. */
+    uint32_t position; /* Instruction byte offset relative to the uploaded AFX image. */
+    uint32_t next_deadline; /* Next event deadline in wrapping hardware timer ticks. */
+    uint32_t detail; /* State-specific diagnostic: lateness, channel or error detail. */
 } afx_instance_status_t;
 
 typedef struct {
-    uint32_t total_bytes;
-    uint32_t used_bytes;
-    uint32_t free_bytes;
-    uint32_t largest_free_block;
-    uint32_t free_block_count;
-    uint32_t active_allocations;
-    uint32_t dynamic_base;
-    uint32_t asset_limit;
+    uint32_t total_bytes; /* Asset arena size in bytes, including space used by DSP allocations. */
+    uint32_t used_bytes; /* Allocated bytes in the asset arena. */
+    uint32_t free_bytes; /* Total unallocated bytes in the asset arena. */
+    uint32_t largest_free_block; /* Largest contiguous free range in bytes. */
+    uint32_t free_block_count; /* Number of free ranges tracked by the allocator. */
+    uint32_t active_allocations; /* Number of live AICA allocations. */
+    uint32_t dynamic_base; /* First usable AICA asset byte address. */
+    uint32_t asset_limit; /* Exclusive current AICA asset ceiling. */
 } afx_mem_stats_t;
 enum {
     AFX_MEM_AVAILABLE,
@@ -43,13 +43,16 @@ enum {
     AFX_MEM_EXHAUSTED
 };
 typedef struct {
-    uint32_t requested_bytes;
-    uint32_t aligned_bytes;
-    uint32_t free_bytes;
-    uint32_t largest_free_block;
-    uint32_t result;
+    uint32_t requested_bytes; /* Caller-requested allocation size in bytes. */
+    uint32_t aligned_bytes; /* Requested size rounded to the 32-byte upload granularity. */
+    uint32_t free_bytes; /* Total currently free asset bytes. */
+    uint32_t largest_free_block; /* Largest free range in bytes, before start-address alignment. */
+    uint32_t result; /* AFX_MEM_AVAILABLE, AFX_MEM_FRAGMENTED or AFX_MEM_EXHAUSTED. */
 } afx_mem_diagnostic_t;
-typedef struct { uint32_t peak_commands, peak_register_writes; } afx_work_profile_t;
+typedef struct {
+    uint32_t peak_commands; /* Peak authored commands between WAIT boundaries. */
+    uint32_t peak_register_writes; /* Peak register writes between WAIT boundaries. */
+} afx_work_profile_t;
 
 /* One caller-selected upload step is capped so gameplay can interleave normal
  * host work. The caller drives it; no hidden worker or retry queue exists. */
@@ -101,19 +104,20 @@ uint32_t afx_instance_start_tick(afx_instance_t instance);
 int afx_instance_stop(afx_instance_t instance);
 int afx_instance_pause(afx_instance_t instance);
 /* SH-4 has reconstructed complete unscaled channel words from a checkpoint.
- * The ARM7 only validates/copies them and optionally re-keys voices. Position
+ * Sample addresses are bank-relative; ARM7 resolves them and optionally re-keys voices. Position
  * is image-relative; staging remains host-owned until ARM acknowledges it. */
 int afx_instance_rebuild(afx_instance_t instance, const afx_restore_channel_t *states,
                          uint32_t state_count, uint32_t stream_position,
-                         uint32_t local_tick, uint32_t next_deadline, bool run);
-/* Replays from the latest compiler checkpoint not after tick on SH-4. The
- * instance must be paused; after afx_flow_release_host_image(), replay reads
- * the resident AICA image. Host-built SFX have no checkpoints and do not
- * support seek/raw rebuild. */
+                         uint32_t remaining_wait, uint32_t next_deadline, bool run);
+/* Restore the latest AFC checkpoint at or before tick and resume. Requires a
+ * paused instance. No AFX replay occurs between checkpoints. */
 int afx_instance_seek(afx_instance_t instance, uint32_t tick);
+/* As above; on success, optionally return the authored tick actually selected. */
+int afx_instance_seek_checkpoint(afx_instance_t instance, uint32_t tick, uint32_t *out_tick);
 /* Writes selected low register words to one mapped running/parked channel. The
  * values array contains popcount(mask) words in ascending field order.
- * Host-built SFX reject CONTROL/SA/LSA/LEA changes; their sample bindings are immutable. */
+ * CONTROL and SAMPLE_LOW are forbidden; use NOTE/KEYOFF for voice lifecycle.
+ */
 int afx_instance_patch(afx_instance_t instance, uint8_t local_channel,
                        uint32_t mask, const uint16_t *values);
 /* Updates the effective gain for all current and future voices in one instance.
@@ -130,16 +134,18 @@ int afx_instance_lanes_set(afx_instance_t instance, uint32_t modifier,
                            uint8_t first_lane, uint32_t mask, const uint8_t values[32]);
 /* The one AICA DSP program belongs to the loaded scene, never to a flow.
  * Build a runtime image with <aicaflow/dsp.h>; this operation prepares,
- * validates and uploads it atomically. It also replaces an active scene with
- * its returns muted. Scene teardown disables it and clears delay RAM.
+ * validates and uploads it under the host lock. Replacement stops the old
+ * scene before allocating the new ring; allocation failure leaves DSP off.
+ * Scene teardown disables it and clears delay RAM before freeing the ring.
  *
  * SH4 owns the shared AICA asset arena. Programs with no MRD/MWT instructions
- * reserve no delay RAM. Programs with delay RAM reserve 128 KiB by default;
- * install the scene before its AFB when choosing a smaller ring. */
+ * allocate no delay RAM. Programs with delay RAM allocate 128 KiB by default;
+ * install the scene before loading assets to avoid fragmentation. A timeout
+ * keeps the ring allocated: retry disable or shut down before reusing it. */
 int afx_dsp_scene_program(const void *program, uint32_t bytes);
 /* As afx_dsp_scene_program(), but selects the AICA delay-ring RBL value
  * (0..3: 8/16/32/64 Kiwords). A no-memory program automatically reserves
- * zero bytes regardless of rbl. A change that overlaps a live asset fails. */
+ * zero bytes regardless of rbl. Rings require a contiguous 2 KiB-aligned block. */
 int afx_dsp_scene_program_ring(const void *program, uint32_t bytes, uint8_t rbl);
 /* Gates the current scene program’s stereo returns without replacing its state. */
 int afx_dsp_scene_returns(bool enabled);

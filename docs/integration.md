@@ -68,8 +68,11 @@ timed PATCH operations in the control stream.
 
 ## Seek, DSP and player metadata
 
-Seeking requires a matching AFC and a paused music instance. SH4 reconstructs
-register state, resolves addresses and submits REBUILD. The checkpoint table
+Seeking requires a matching AFC and a paused music instance. SH4 selects the
+checkpoint at or before the requested tick and submits its state with REBUILD;
+ARM7 resolves sample addresses. No between-checkpoint replay occurs.
+`afx_instance_seek_checkpoint` also returns the selected tick for player clocks.
+The checkpoint table
 stays on SH4; only prepared state uses temporary AICA staging. This is not a
 sample-phase/DSP-buffer snapshot.
 

@@ -292,11 +292,11 @@ static int play_region(tuner_state_t *state, uint32_t start_ms, uint32_t duratio
     if (!result) result = wait_state(state->instance, AFX_PAUSED);
     int restored = afx_instance_gain(state->instance, state->music_gain);
     if (!result) result = restored;
-    if (!result) result = afx_instance_seek(state->instance, tick);
+    if (!result) result = afx_instance_seek_checkpoint(state->instance, tick, &tick);
     if (!result) result = wait_running(state->instance);
     if (result) { stop_instance(state); return result; }
     playback_begin(state);
-    state->playback_started -= start_ms;
+    state->playback_started -= playback_milliseconds(state, tick);
     state->region_end = afx_status_timer_ticks() + duration_ms;
     state->region_active = 1;
     return AFX_OK;

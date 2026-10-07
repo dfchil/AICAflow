@@ -6,12 +6,13 @@ smoke: build/test_protocol build/test_bank build/test_dsp build/afx_validate
 	./build/test_dsp
 
 check: smoke
+	python3 tests/test_arm7.py
 	cd .. && python3 tools/test/test_dynamic_sfx.py
 	cd .. && python3 tools/test/test_afx_tuner_properties.py
 	cd .. && PYTHONPATH=tools/tuner python3 tools/test/test_afx_tuner_client.py
 	cd .. && PYTHONPATH=tools/tuner python3 tools/test/test_afx_tuner_example.py
 
-build/test_protocol: tests/test_protocol.c common/firmware.c format/src/codec.c format/include/aicaflow/codec.h include/aicaflow/protocol.h
+build/test_protocol: tests/test_protocol.c arm7/sample_address.h common/firmware.c format/src/codec.c format/include/aicaflow/codec.h include/aicaflow/protocol.h
 	mkdir -p build
 	$(CC) $(CFLAGS) -Iformat/include -Iinclude tests/test_protocol.c common/firmware.c format/src/codec.c -o $@
 

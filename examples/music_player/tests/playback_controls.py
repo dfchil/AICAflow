@@ -30,8 +30,8 @@ static int afx_instance_tempo(int i, uint16_t tempo) {
 }
 static int afx_instance_pause(int i) { assert(i==instance); ++pauses; return error; }
 static int wait_state(unsigned state) { assert(state<=AFX_RUNNING); return error; }
-static int afx_instance_seek(int i, uint32_t tick) {
-    assert(i==instance); ++seeks; seek_tick=tick; return error;
+static int afx_instance_seek_checkpoint(int i, uint32_t tick, uint32_t *selected) {
+    assert(i==instance); ++seeks; seek_tick=tick; *selected=tick/1000u*1000u; return error;
 }
 """ + clock + helpers + r"""
 int main(void) {
@@ -43,9 +43,9 @@ int main(void) {
     /* A song change composes the persistent speed with the profile tempo. */
     assert(song_tempo(0,200)==512 && song_tempo(1,200)==768);
     assert(song_tempo(0,0)==16 && song_tempo(0,10000)==4096);
-    playing=0;
+    playing=0; now=10999;
     assert(!set_speed(200) && sent_tempo==512 && tempo_q8_8==512);
-    assert(pauses==1 && seeks==1 && seek_tick==10000);
+    assert(pauses==1 && seeks==1 && seek_tick==10999);
     assert(playback_ms()==5000 && duration_ms==30000);
     /* The same authored position is retained while paused; no seek/resume. */
     paused=true; paused_ms=5000;
