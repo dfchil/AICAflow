@@ -12,6 +12,7 @@
 #include <enDjinn/enj_state.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -567,7 +568,17 @@ int main(void) {
         struct pollfd pollfd = { .fd = server, .events = POLLIN };
         if (poll(&pollfd, 1, 20) == 1 && (pollfd.revents & POLLIN)) {
             int client = accept(server, NULL, NULL);
-            if (client >= 0) { serve_client(client, &state); close(client); }
+            if (client >= 0) {
+                /* KOS retains TCP buffers through TIME_WAIT. Replies are small;
+                 * shrink the still-empty send buffer, not an already active
+                 * receive ring. ponytail: per-request connections still cost
+                 * TIME_WAIT memory; reuse connections if sustained traffic grows. */
+                int send_bytes = 4096;
+                if (!setsockopt(client, SOL_SOCKET, SO_SNDBUF, &send_bytes, sizeof(send_bytes)))
+                    serve_client(client, &state);
+                else trace("TUNER send-buffer setup failed (%d)", errno);
+                close(client);
+            }
         }
         (void)afx_update();
         playback_update(&state);

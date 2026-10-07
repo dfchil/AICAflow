@@ -20,6 +20,8 @@ static const void *dma_source;
 static uintptr_t dma_address;
 static size_t dma_size;
 static unsigned dma_transfers;
+static unsigned dma_fail_at;
+static size_t dma_max_size;
 static spu_dma_callback_t dma_callback;
 static void *dma_callback_data;
 static pthread_mutex_t stall_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -51,8 +53,10 @@ int spu_dma_transfer(const void *source, uintptr_t address, size_t size, int blo
     assert(!dma_source && source && !(address & 31u) && !((uintptr_t)source & 31u) &&
            !(size & 31u));
     assert(!block && callback);
-    dma_source = source; dma_address = address; dma_size = size;
     ++dma_transfers;
+    if (dma_transfers == dma_fail_at) return -1;
+    if (size > dma_max_size) dma_max_size = size;
+    dma_source = source; dma_address = address; dma_size = size;
     dma_callback = callback; dma_callback_data = data;
     return 0;
 }

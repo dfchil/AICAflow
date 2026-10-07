@@ -15,6 +15,12 @@ kos-tool -t "$DCTOOL_HOST" -f \
   -x tools/tuner/server/bin/afx_tuner_server.elf
 ```
 
+Keep this host process running, and use a second terminal for tuner commands.
+Do not pass `-n`: with the tested KOS/dc-load combination, disabling the host
+console changes the loader magic that KOS checks on exit. The tuner can stop
+at `TUNER EXITED` without returning to the loader. That message confirms
+AICAflow shutdown, not successful loader return.
+
 The client requires Python 3 and no external packages:
 
 ```sh
@@ -85,6 +91,14 @@ gain returns to 255. Re-upload the bank and control flow afterwards. `exit`
 instead terminates the tuner process; it is not the command to use between
 auditions.
 
+Verify a complete exit with:
+
+```sh
+python3 tools/tuner/client.py --host "$DCTOOL_HOST" exit
+# Wait for the original kos-tool process to print "Program returned 0" and exit.
+kos-tool -t "$DCTOOL_HOST" --ready
+```
+
 The reset covers the complete AICA RAM arena, including any optional DSP delay
 ring. Its fixed and dynamic regions are documented in [Memory layout](memory.md).
 
@@ -95,3 +109,7 @@ header: magic `AFT1`, protocol version, opcode, nonzero sequence and payload
 size. The response repeats the opcode with bit 15 set and begins with a signed
 AICAflow result. `ping` returns the highest supported opcode: 27 (`reset`).
 Staged files are limited to 4 MiB; uploads use acknowledged 32 KiB chunks.
+Each accepted connection uses a 4 KiB TCP send buffer to reduce SH4 memory
+held during KOS's TIME_WAIT period. The receive buffer retains its KOS default.
+Memory-backed sample-bank uploads use one reusable DMA buffer of at most
+64 KiB in addition to the tuner's staged file, not a second bank-sized copy.

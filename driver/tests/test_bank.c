@@ -11,6 +11,35 @@
 #include "test_transport.c"
 #include "../sh4/src/host_internal.h"
 
+static void test_bounded_bank_upload(void) {
+    const uint32_t bytes = 2u * 65536u + 17u;
+    uint8_t *input = malloc(bytes + 1u);
+    assert(input);
+    for (uint32_t i = 0; i < bytes; ++i) input[i + 1u] = (uint8_t)(i * 37u);
+    afx_mem_stats_t before, after;
+    assert(afx_mem_stats(&before) == AFX_OK);
+    afx_asset_t asset = 0;
+    unsigned transfers = dma_transfers;
+    dma_max_size = 0;
+    assert(afx_sample_bank_upload(input + 1, bytes, &asset) == AFX_OK);
+    assert(dma_transfers - transfers == 3 && dma_max_size == 65536);
+    uint32_t address = afx_asset_addr(asset);
+    assert(!memcmp(ram + address, input + 1, bytes));
+    for (uint32_t i = bytes; i < align_up(bytes, 32); ++i) assert(!ram[address + i]);
+    assert(afx_asset_free(asset) == AFX_OK);
+    /* Failure after one completed chunk releases the partial AICA allocation. */
+    dma_fail_at = dma_transfers + 2;
+    assert(afx_sample_bank_upload(input + 1, bytes, &asset) == -AFX_BUSY && !asset);
+    assert(!dma_source && !g_upload_dma_asset);
+    dma_fail_at = 0;
+    assert(afx_mem_stats(&after) == AFX_OK);
+    assert(after.free_bytes == before.free_bytes &&
+           after.active_allocations == before.active_allocations);
+    assert(afx_sample_bank_upload(input + 1, bytes, &asset) == AFX_OK);
+    assert(afx_asset_free(asset) == AFX_OK);
+    free(input);
+}
+
 static void test_queue_capacity(void) {
     assert(AFX_CMD_QUEUE_CAPACITY == 32 && sizeof(afx_cmd_queue_t) == 2112);
     uint8_t observed_before[AFX_MAX_FLOW_SLOTS * sizeof(afx_observed_t)];
@@ -323,6 +352,7 @@ int main(int argc, char **argv) {
     afx_asset_t flow;
     afx_write32(dsp_registers + 0x3408, 0x6000); /* DSP left running by a previous driver. */
     firmware(fw); assert(afx_init(fw, sizeof(fw)) == AFX_OK);
+    test_bounded_bank_upload();
     test_queue_capacity();
     afx_dsp_program_t dsp;
     afx_mem_stats_t memory;
