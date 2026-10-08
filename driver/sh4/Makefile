@@ -1,12 +1,15 @@
 KOS_WRAPPER ?= kos-cc
 AR = sh-elf-ar
 CFLAGS ?= -O2 -g -Wall -Wextra -Werror -std=gnu11
+AFX_VALIDATE_ASSETS ?= 0
 INCLUDES := -Iinclude -I../include -I../format/include
 HOST_OBJS := build/allocator.o build/dma.o build/flow.o build/instance.o build/ipc.o build/dsp_scene.o
 OBJS := $(HOST_OBJS) build/dsp.o build/dsp_prefabs.o build/bank.o build/codec.o build/firmware.o
 LIB := libaicaflow_host.a
 
 all: $(LIB)
+
+build/flow.o: CFLAGS += -DAFX_VALIDATE_ASSETS=$(AFX_VALIDATE_ASSETS)
 
 $(LIB): $(OBJS)
 	$(RM) $@

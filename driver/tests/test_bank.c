@@ -215,6 +215,7 @@ static void flow_file(uint8_t data[160], uint32_t low, uint32_t high) {
     afx_write32(data + 40, low); afx_write32(data + 44, high);
     afx_write32(data + 48, 80); afx_write32(data + 52, 1);
     afx_write32(data + 64, 1); afx_write32(data + 68, 1000); afx_write32(data + 72, 1);
+    afx_write32(data + 76, AFX_WORK_PROFILE(1, 19));
     afx_write32(data + 80, 0); afx_write32(data + 84, 0); afx_write32(data + 88, 64);
     afx_write16(data + 96 + 6, 31); /* A valid 32-frame PCM16 loop range. */
     data[96 + AFX_SETUP_BYTES] = AFX_OP_NOTE_PL;
@@ -309,11 +310,13 @@ static void test_relative_flow(const afx_bank_t *bank) {
     afx_write32(file + 28, 19);
     afx_write32(file + 76, AFX_WORK_PROFILE(2, 20)); /* Authored NOTE + one-word PATCH. */
     file[140] = AFX_OP_PATCH;
+#if AFX_VALIDATE_ASSETS
     for (uint32_t mask = 1; mask <= 3; ++mask) {
         afx_write32(file + 142, mask);
         assert(afx_bank_flow_upload(bank, file, 160, &flow) == -AFX_BAD_COMMAND);
         assert(flow == AFX_ASSET_INVALID);
     }
+#endif
     afx_write32(file + 142, 1u << AFX_FIELD_PITCH);
     afx_write16(file + 146, 1);
     file[148] = AFX_OP_WAIT8; file[149] = 10; file[150] = AFX_OP_END;
@@ -452,6 +455,37 @@ int main(int argc, char **argv) {
     assert(afx_file_validate(flow_data, sizeof(flow_data), NULL) == AFX_BAD_FORMAT);
     afx_write32(flow_data + 4, AFX_FILE_VERSION);
     assert(afx_bank_load_memory(&bank, bank_data, sizeof(bank_data)) == AFX_OK);
+    /* Trusted builds require an authored profile, but do not recount events. */
+    afx_write32(flow_data + 76, 0);
+#if AFX_VALIDATE_ASSETS
+    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == AFX_OK);
+    assert(afx_asset_free(flow) == AFX_OK);
+#else
+    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == -AFX_BAD_FORMAT);
+#endif
+    afx_write32(flow_data + 76, AFX_WORK_PROFILE(1, 1));
+#if AFX_VALIDATE_ASSETS
+    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == -AFX_BAD_FORMAT);
+#else
+    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == AFX_OK);
+    assert(g_assets[AFX_HANDLE_INDEX(flow)].peak_register_writes == 1);
+    assert(afx_asset_free(flow) == AFX_OK);
+#endif
+    afx_write32(flow_data + 76, AFX_WORK_PROFILE(1, 19));
+    flow_data[96 + AFX_SETUP_BYTES] = 0xff;
+#if AFX_VALIDATE_ASSETS
+    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == -AFX_BAD_COMMAND);
+#else
+    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == AFX_OK);
+    assert(afx_asset_free(flow) == AFX_OK);
+#endif
+    flow_data[96 + AFX_SETUP_BYTES] = AFX_OP_NOTE_PL;
+    afx_write32(flow_data + 76, AFX_WORK_PROFILE(AFX_EXECUTION_BUDGET_COMMANDS + 1, 19));
+    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) != AFX_OK);
+    afx_write32(flow_data + 76, AFX_WORK_PROFILE(1, 19));
+    afx_write32(flow_data + 20, UINT32_MAX);
+    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == -AFX_BAD_BOUNDS);
+    afx_write32(flow_data + 20, 64);
     test_relative_flow(&bank);
     assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == AFX_OK);
     afx_asset_t second;
