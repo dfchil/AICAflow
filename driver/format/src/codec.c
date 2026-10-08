@@ -84,7 +84,7 @@ static afx_relocation_t relocation_at(const uint8_t *file, const afx_file_header
 }
 
 static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
-                                       const afx_file_header_t *h) {
+                                       const afx_file_header_t *h, afx_validation_profile_t *profile) {
     const uint8_t *image;
     if (h->total_size != size || h->image_offset < AFX_FILE_HEADER_BYTES ||
         (h->image_offset & 31u) || !h->image_size ||
@@ -120,11 +120,24 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
     }
     uint32_t cursor = h->stream_offset, end = cursor + h->stream_size;
     int terminal = 0;
+    uint32_t commands = 0, writes = 0;
+    afx_validation_profile_t work = {0};
     while (cursor < end) {
         afx_event_t event;
         afx_result_t result = afx_decode_event(image + cursor, end - cursor, &event);
         if (result) return result;
         cursor += event.bytes;
+        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) {
+            if (commands > work.peak_commands) work.peak_commands = commands;
+            if (writes > work.peak_register_writes) work.peak_register_writes = writes;
+            commands = writes = 0;
+        } else if (event.opcode == AFX_OP_NOTE) {
+            ++commands; writes += 19;
+        } else if (event.opcode == AFX_OP_PATCH) {
+            ++commands; writes += afx_field_value_bytes(event.mask) / 2u;
+        } else if (event.opcode == AFX_OP_KEYOFF) {
+            ++commands; ++writes;
+        }
         if (event.opcode == AFX_OP_NOTE && event.setup >= h->setup_count) return AFX_BAD_COMMAND;
         if (event.opcode >= AFX_OP_NOTE && event.opcode <= AFX_OP_KEYOFF &&
             event.channel >= h->required_channels) return AFX_BAD_COMMAND;
@@ -134,22 +147,27 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
             terminal = 1;
         }
     }
-    return terminal ? AFX_OK : AFX_BAD_COMMAND;
+    if (!terminal) return AFX_BAD_COMMAND;
+    if (commands > work.peak_commands) work.peak_commands = commands;
+    if (writes > work.peak_register_writes) work.peak_register_writes = writes;
+    if (profile) *profile = work;
+    return AFX_OK;
 }
 
-static afx_result_t file_validate(const void *data, uint32_t size, afx_file_header_t *out) {
+afx_result_t afx_file_validate_profile(const void *data, uint32_t size,
+                                       afx_file_header_t *out, afx_validation_profile_t *profile) {
     const uint8_t *file = data;
     afx_file_header_t h;
     if (!data || size < sizeof(h)) return AFX_BAD_BOUNDS;
     read_words(&h, file, sizeof(h));
     if (h.magic != AFX_FILE_MAGIC || h.abi != AFX_FILE_VERSION) return AFX_BAD_FORMAT;
-    afx_result_t result = bank_file_validate(file, size, &h);
+    afx_result_t result = bank_file_validate(file, size, &h, profile);
     if (!result && out) *out = h;
     return result;
 }
 
 afx_result_t afx_file_validate(const void *data, uint32_t size, afx_file_header_t *out) {
-    return file_validate(data, size, out);
+    return afx_file_validate_profile(data, size, out, NULL);
 }
 
 afx_result_t afx_flow_duration(const void *data, uint32_t size, uint64_t *out_ticks,

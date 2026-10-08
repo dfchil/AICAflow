@@ -85,8 +85,8 @@ static int stream_file_payload(FILE *file, const bank_header_t *header, afx_asse
     while (offset < header->data_size) {
         uint32_t bytes = header->data_size - offset;
         if (bytes > BANK_DMA_CHUNK) bytes = BANK_DMA_CHUNK;
-        memset(buffer, 0, BANK_BUFFER_BYTES);
         if (fread(buffer, 1, bytes, file) != bytes) { result = -AFX_BAD_FORMAT; goto done; }
+        memset(buffer + bytes, 0, align_up(bytes, AFX_UPLOAD_ALIGN) - bytes);
         do {
             result = afx_sample_bank_stream_dma_begin(asset, offset, buffer, bytes);
             if (result == -AFX_BUSY) thd_pass();

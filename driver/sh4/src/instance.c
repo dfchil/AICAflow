@@ -370,7 +370,7 @@ int afx_update(void) {
         afx_instance_slot_t *slot = &g_instances[index];
         if (!slot->live) continue;
         afx_instance_status_t observed;
-        if (!read_observed(index, &observed)) continue;
+        if (!read_observed(index, &slot->observed_epoch, &observed)) continue;
         afx_instance_t reference = AFX_MAKE_HANDLE(index, slot->generation);
         /* FREE carries no generation in its reference, so its sequence is the
          * guard against a delayed recycle observation freeing this slot after
