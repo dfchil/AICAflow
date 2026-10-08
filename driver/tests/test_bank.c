@@ -64,6 +64,32 @@ static void test_bounded_bank_upload(void) {
     free(input);
 }
 
+static void test_direct_bank_upload(void) {
+    const uint32_t bytes = 2u * 65536u + 17u;
+    uint8_t *input = upload_image_alloc(bytes);
+    assert(input);
+    memset(input, 0xa5, align_up(bytes, 32)); /* Padding must not leak into AICA. */
+    const uint32_t sizes[] = {17, 32, 65536, bytes};
+    for (unsigned i = 0; i < sizeof(sizes) / sizeof(*sizes); ++i) {
+        expected_dma_source = input;
+        direct_dma_transfers = 0;
+        afx_asset_t bank;
+        assert(afx_sample_bank_upload(input, sizes[i], &bank) == AFX_OK);
+        uint32_t address = afx_asset_addr(bank);
+        assert(!memcmp(ram + address, input, sizes[i]));
+        for (uint32_t j = sizes[i]; j < align_up(sizes[i], 32); ++j) assert(!ram[address + j]);
+        assert(direct_dma_transfers == (sizes[i] < 32 ? 0u : sizes[i] > 65536 ? 2u : 1u));
+        assert(afx_asset_free(bank) == AFX_OK);
+    }
+    dma_fail_at = dma_transfers + 2;
+    afx_asset_t bank = 0;
+    assert(afx_sample_bank_upload(input, bytes, &bank) == -AFX_BUSY && !bank);
+    assert(!dma_source && !g_upload_dma_asset);
+    dma_fail_at = 0;
+    expected_dma_source = NULL;
+    free(input);
+}
+
 static void test_queue_capacity(void) {
     assert(AFX_CMD_QUEUE_CAPACITY == 32 && sizeof(afx_cmd_queue_t) == 2112);
     uint8_t observed_before[AFX_MAX_FLOW_SLOTS * sizeof(afx_observed_t)];
@@ -303,15 +329,18 @@ static void test_dsp_allocations(void) {
     assert(afx_dsp_program_delay(&dsp, 100, 8192, false) == AFX_OK);
     auto_dsp_ack = 1;
     for (unsigned rbl = 0; rbl < 4; ++rbl) {
+        unsigned word_writes = asset_word_writes, block_writes = asset_block_writes;
         assert(afx_dsp_scene_program_ring(&dsp, sizeof(dsp), rbl) == AFX_OK);
+        assert(asset_word_writes == word_writes && asset_block_writes > block_writes);
         uint32_t bytes = AFX_DSP_MIN_BYTES << rbl;
         assert(g_dsp_ring && !(g_dsp_ring & (AFX_DSP_RING_ALIGN - 1)));
         assert(afx_mem_stats(&during) == AFX_OK);
         assert(during.asset_limit == before.asset_limit && during.used_bytes == before.used_bytes + bytes);
         afx_cmd_t command = queued(queue_head() - 1);
-        assert(command.opcode == AFX_CMD_DSP_ENABLE && command.flags == 1);
+        assert(command.opcode == AFX_CMD_DSP_ENABLE && command.flags == (1u | AFX_DSP_FLAG_HOST_INIT));
         assert(afx_read32(command.payload) == g_dsp_ring && afx_read32(command.payload + 4) == bytes);
-        assert(afx_read32(ram + g_dsp_ring) == 0x60006000u);
+        for (uint32_t offset = 0; offset < bytes; offset += 4)
+            assert(afx_read32(ram + g_dsp_ring + offset) == 0x60006000u);
         uint32_t word = 0;
         assert(afx_mem_free(g_dsp_ring) == -AFX_ASSET_REFERENCED);
         assert(afx_mem_upload(g_dsp_ring + 4, &word, sizeof(word)) == -AFX_ASSET_REFERENCED);
@@ -322,6 +351,19 @@ static void test_dsp_allocations(void) {
         assert(afx_mem_upload(AFX_ASSET_MAX - 4, &word, sizeof(word)) == AFX_OK);
         assert(afx_mem_free(asset) == AFX_OK);
     }
+    assert(afx_dsp_program_delay(&dsp, 100, 8192, true) == AFX_OK);
+    assert(afx_dsp_scene_program_ring(&dsp, sizeof(dsp), 0) == AFX_OK);
+    for (uint32_t offset = 0; offset < AFX_DSP_MIN_BYTES; offset += 4)
+        assert(afx_read32(ram + g_dsp_ring + offset) == 0);
+    /* Legacy firmware still accepts the original flags and float block fill. */
+    afx_write32(ram + AFX_STATUS_ADDR + offsetof(afx_status_t, capabilities),
+                AFX_CAP_BOOTSTRAP | AFX_CAP_LIFECYCLE);
+    assert(afx_dsp_program_delay(&dsp, 100, 8192, false) == AFX_OK);
+    assert(afx_dsp_scene_program_ring(&dsp, sizeof(dsp), 0) == AFX_OK);
+    assert(queued(queue_head() - 1).flags == 1);
+    assert(afx_read32(ram + g_dsp_ring) == 0x60006000u);
+    afx_write32(ram + AFX_STATUS_ADDR + offsetof(afx_status_t, capabilities),
+                AFX_CAP_BOOTSTRAP | AFX_CAP_LIFECYCLE | AFX_CAP_DSP_HOST_INIT);
     /* Replacing a ring with a memoryless scene returns the whole allocation. */
     assert(afx_dsp_program_gain(&dsp, 8192) == AFX_OK);
     assert(afx_dsp_scene_program(&dsp, sizeof(dsp)) == AFX_OK && !g_dsp_ring);
@@ -378,6 +420,7 @@ int main(int argc, char **argv) {
     firmware(fw); assert(afx_init(fw, sizeof(fw)) == AFX_OK);
     test_observation_cache();
     test_bounded_bank_upload();
+    test_direct_bank_upload();
     test_queue_capacity();
     afx_dsp_program_t dsp;
     afx_mem_stats_t memory;

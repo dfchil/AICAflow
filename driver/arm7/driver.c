@@ -693,7 +693,8 @@ static void dsp_control(uint32_t opcode, uint32_t reference, uint32_t sequence,
     while (rbl < 3 && request.ring_bytes > ((uint32_t)AFX_DSP_MIN_BYTES << rbl)) ++rbl;
     uint32_t reserved = 0;
     for (uint32_t i = 0; i < 10; ++i) reserved |= request.reserved[i];
-    if (reference != AFX_DSP_SCENE_REFERENCE || flags != 1 || reserved ||
+    if (reference != AFX_DSP_SCENE_REFERENCE ||
+        (flags != 1 && !(opcode == AFX_CMD_DSP_ENABLE && flags == (1u | AFX_DSP_FLAG_HOST_INIT))) || reserved ||
         (opcode == AFX_CMD_DSP_DISABLE && (request.ring_address || request.ring_bytes)) ||
         (!request.ring_bytes && request.ring_address) ||
         (request.ring_bytes &&
@@ -710,7 +711,7 @@ static void dsp_control(uint32_t opcode, uint32_t reference, uint32_t sequence,
         if (request.ring_bytes) {
             dsp_delay_base = request.ring_address;
             dsp_delay_bytes = request.ring_bytes;
-            dsp_clear_delay();
+            if (!(flags & AFX_DSP_FLAG_HOST_INIT)) dsp_clear_delay();
             dsp_write(0x2804u, (rbl << 13) | (dsp_delay_base >> 11));
         }
         dsp_owner = AFX_DSP_SCENE_REFERENCE; /* Prepared silently for program upload. */
@@ -801,7 +802,7 @@ void arm_main(void) {
     STATUS->abi = AFX_ABI_VERSION;
     STATUS->layout_id = AFX_LAYOUT_ID;
     dsp_disable();
-    STATUS->capabilities = AFX_CAP_BOOTSTRAP | AFX_CAP_LIFECYCLE | AFX_CAP_PLAYBACK | AFX_CAP_DSP;
+    STATUS->capabilities = AFX_CAP_BOOTSTRAP | AFX_CAP_LIFECYCLE | AFX_CAP_PLAYBACK | AFX_CAP_DSP | AFX_CAP_DSP_HOST_INIT;
     STATUS->asset_base = (uint32_t)__asset_base;
     STATUS->asset_limit = AFX_ASSET_MAX;
     STATUS->private_end = (uint32_t)__private_end;

@@ -6,14 +6,14 @@ static uint16_t dsp_word(const uint8_t *program, uint32_t offset) {
 static uint32_t ring_bytes(uint8_t rbl) {
     return rbl == AFX_DSP_RING_NONE ? 0 : AFX_DSP_MIN_BYTES << rbl;
 }
-static int scene_command(uint32_t opcode, uint32_t bytes) {
+static int scene_command(uint32_t opcode, uint32_t bytes, bool host_init) {
     afx_dsp_payload_t payload = {0};
     if (opcode == AFX_CMD_DSP_ENABLE) {
         payload.ring_address = g_dsp_ring;
         payload.ring_bytes = bytes;
     }
     uint32_t sequence = new_sequence();
-    int result = enqueue(opcode, AFX_DSP_SCENE_REFERENCE, sequence, 1, &payload, sizeof(payload));
+    int result = enqueue(opcode, AFX_DSP_SCENE_REFERENCE, sequence, 1u | (host_init ? AFX_DSP_FLAG_HOST_INIT : 0u), &payload, sizeof(payload));
     if (result) return result;
     /* A timed-out enable may still execute: pin its allocation until DISABLE
      * is acknowledged, rather than returning live DSP memory to the allocator. */
@@ -61,7 +61,9 @@ static int dsp_scene_program(const void *data, uint32_t bytes, uint8_t rbl) {
         g_dsp_ring = afx_mem_alloc(bytes_reserved, AFX_DSP_RING_ALIGN);
         if (!g_dsp_ring) return -AFX_NO_AICA_RAM;
     }
-    int result = scene_command(AFX_CMD_DSP_ENABLE, bytes_reserved);
+    bool host_init = bytes_reserved &&
+        (read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, capabilities)) & AFX_CAP_DSP_HOST_INIT);
+    int result = scene_command(AFX_CMD_DSP_ENABLE, bytes_reserved, host_init);
     if (result) {
         if (!g_dsp_scene && g_dsp_ring && free_allocation(g_dsp_ring)) g_dsp_ring = 0;
         return result;
@@ -71,9 +73,16 @@ static int dsp_scene_program(const void *data, uint32_t bytes, uint8_t rbl) {
     /* Remove all memory/output writes before replacing their operands. */
     for (uint32_t i = 0; i < 128; ++i) g2_write_32(0xa0703408u + i * 16u, 2);
     thd_sleep(2);
-    if (memory_format == 0)
-        for (uint32_t i = 0; i < bytes_reserved; i += 4)
-            g2_write_32(g_spu_base + g_dsp_ring + i, 0x60006000u);
+    if (bytes_reserved && (host_init || memory_format == 0)) {
+        /* DSP is NOP and the pipeline has drained. Fill RAM in bounded blocks;
+         * the legacy firmware has already supplied linear zero contents. */
+        _Alignas(32) uint32_t fill[1024];
+        uint32_t value = memory_format == 0 ? 0x60006000u : 0;
+        for (uint32_t i = 0; i < 1024; ++i) fill[i] = value;
+        for (uint32_t offset = 0; offset < bytes_reserved; offset += sizeof(fill))
+            upload_words(g_dsp_ring + offset, fill, sizeof(fill));
+        g2_fifo_wait();
+    }
     for (uint32_t i = 0; i < 128; ++i)
         g2_write_32(0xa0703000u + i * 4u, dsp_word(program, 1024u + i * 2u));
     for (uint32_t i = 0; i < 64; ++i)
@@ -107,7 +116,7 @@ int afx_dsp_scene_disable(void) {
     HOST_GUARD(-AFX_BUSY);
     if (!g_dsp_scene && !g_dsp_ring) return -AFX_BUSY;
     if (g_dsp_scene) {
-        int result = scene_command(AFX_CMD_DSP_DISABLE, 0);
+        int result = scene_command(AFX_CMD_DSP_DISABLE, 0, false);
         if (result) return result;
     }
     g_dsp_scene = false;

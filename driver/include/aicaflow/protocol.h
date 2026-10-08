@@ -64,6 +64,8 @@
 typedef uint32_t afx_handle_t;
 #define AFX_HANDLE_INVALID 0u
 #define AFX_DSP_SCENE_REFERENCE UINT32_MAX
+/* ENABLE may delegate initial ring contents to SH4 after acknowledgement. */
+#define AFX_DSP_FLAG_HOST_INIT 2u
 /* Index+1 in low half, nonzero generation in high half; retire on wrap.
  * Handle type is host-side, not encoded. Flow references use the same encoding. */
 #define AFX_MAKE_HANDLE(index, generation) (((uint32_t)(generation) << 16) | ((index) + 1u))
@@ -82,7 +84,7 @@ enum {
 #define AFX_EXECUTOR_MAX_COMMANDS_PER_PASS 8u
 enum { AFX_LANE_GAIN, AFX_LANE_MUTE, AFX_LANE_PAN, AFX_LANE_DSP_SEND,
        AFX_LANE_MODIFIER_COUNT };
-enum { AFX_CAP_BOOTSTRAP = 1, AFX_CAP_LIFECYCLE = 2, AFX_CAP_PLAYBACK = 4, AFX_CAP_DSP = 8 };
+enum { AFX_CAP_BOOTSTRAP = 1, AFX_CAP_LIFECYCLE = 2, AFX_CAP_PLAYBACK = 4, AFX_CAP_DSP = 8, AFX_CAP_DSP_HOST_INIT = 16 };
 
 typedef struct {
     uint32_t magic; /* AFX_FIRMWARE_MAGIC identifies a driver image. */
