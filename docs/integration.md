@@ -47,6 +47,25 @@ state, execution budget and the observed ARM7 result. Preserve successfully
 created handles until their normal cleanup has completed, including on partial
 startup failure. `afx_shutdown()` requires flows, instances and banks released.
 
+## AFX validation
+
+The SH4 library defaults to trusted assets (`AFX_VALIDATE_ASSETS=0`): it checks
+file layout, offsets, relocations, lanes, bank binding and resource limits, but
+does not decode the event stream or recompute its work profile. Assets must be
+validated offline and contain a nonzero authored work profile. Missing profiles
+are rejected with `AFX_BAD_FORMAT`; they are not treated as zero work.
+
+For untrusted assets or development, enable full stream validation and work-profile
+verification. Rebuild the library when changing modes, then relink applications:
+
+```sh
+make -C driver/sh4 clean
+make -C driver/sh4 AFX_VALIDATE_ASSETS=1
+```
+
+Use `AFX_VALIDATE_ASSETS=0` to return to trusted mode. Full validation also supports
+older assets without an authored profile by calculating it during loading.
+
 ## Omitting KOS sound and its embedded firmware
 
 For an AICAflow-only application, bypass KOS sound startup and shutdown by

@@ -1,8 +1,9 @@
 CC := clang
 CFLAGS := -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
-smoke: build/test_protocol build/test_bank build/test_dsp build/afx_validate
+smoke: build/test_protocol build/test_bank build/test_bank_trusted build/test_dsp build/afx_validate
 	./build/test_protocol
 	./build/test_bank
+	./build/test_bank_trusted
 	./build/test_dsp
 
 check: smoke
@@ -16,9 +17,11 @@ build/test_protocol: tests/test_protocol.c arm7/sample_address.h common/firmware
 	mkdir -p build
 	$(CC) $(CFLAGS) -Iformat/include -Iinclude tests/test_protocol.c common/firmware.c format/src/codec.c -o $@
 
-build/test_bank: tests/test_bank.c tests/test_transport.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/firmware.c format/src/codec.c sh4/src/host_internal.h sh4/include/aicaflow/host.h sh4/include/aicaflow/bank.h sh4/include/aicaflow/dsp.h format/include/aicaflow/codec.h include/aicaflow/protocol.h tests/stubs/dc/spu.h tests/stubs/dc/g2bus.h tests/stubs/kos/timer.h tests/stubs/kos/cache.h
+build/test_bank: VALIDATE_ASSETS = 1
+build/test_bank_trusted: VALIDATE_ASSETS = 0
+build/test_bank build/test_bank_trusted: tests/test_bank.c tests/test_transport.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/firmware.c format/src/codec.c sh4/src/host_internal.h sh4/include/aicaflow/host.h sh4/include/aicaflow/bank.h sh4/include/aicaflow/dsp.h format/include/aicaflow/codec.h include/aicaflow/protocol.h tests/stubs/dc/spu.h tests/stubs/dc/g2bus.h tests/stubs/kos/timer.h tests/stubs/kos/cache.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -pthread -Itests/stubs -Ish4/include -Iformat/include -Iinclude tests/test_bank.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/firmware.c format/src/codec.c -lm -o $@
+	$(CC) $(CFLAGS) -DAFX_VALIDATE_ASSETS=$(VALIDATE_ASSETS) -D_GNU_SOURCE -pthread -Itests/stubs -Ish4/include -Iformat/include -Iinclude tests/test_bank.c sh4/src/allocator.c sh4/src/dma.c sh4/src/flow.c sh4/src/instance.c sh4/src/ipc.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/src/dsp_scene.c sh4/src/bank.c common/firmware.c format/src/codec.c -lm -o $@
 
 build/test_dsp: tests/test_dsp.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/include/aicaflow/dsp.h include/aicaflow/protocol.h
 	mkdir -p build
@@ -47,4 +50,4 @@ upload-bench:
 
 .PHONY: smoke check layout timer-check upload-bench
 
-build/test_protocol build/test_bank build/test_dsp build/afx_validate: $(wildcard format/include/aicaflow/*.h) include/aicaflow/firmware.h
+build/test_protocol build/test_bank build/test_bank_trusted build/test_dsp build/afx_validate: $(wildcard format/include/aicaflow/*.h) include/aicaflow/firmware.h

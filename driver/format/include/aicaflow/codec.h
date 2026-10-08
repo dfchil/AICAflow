@@ -113,6 +113,9 @@ static inline afx_result_t afx_apply_setup_fields(uint16_t state[AFX_FIELD_COUNT
 }
 /* Runtime validation accepts only the fixed, bank-bound AFX file layout. */
 afx_result_t afx_file_validate(const void *data, uint32_t size, afx_file_header_t *out);
+/* Check layout, relocation and lane bounds without decoding the event stream.
+ * Only suitable for trusted, offline-validated assets. */
+afx_result_t afx_file_validate_layout(const void *data, uint32_t size, afx_file_header_t *out);
 /* Validate and compute peak playback work in the same stream traversal. */
 typedef struct { uint32_t peak_commands, peak_register_writes; } afx_validation_profile_t;
 afx_result_t afx_file_validate_profile(const void *data, uint32_t size,

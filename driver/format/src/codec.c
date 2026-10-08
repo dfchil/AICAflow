@@ -84,7 +84,7 @@ static afx_relocation_t relocation_at(const uint8_t *file, const afx_file_header
 }
 
 static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
-                                       const afx_file_header_t *h, afx_validation_profile_t *profile) {
+                                       const afx_file_header_t *h) {
     const uint8_t *image;
     if (h->total_size != size || h->image_offset < AFX_FILE_HEADER_BYTES ||
         (h->image_offset & 31u) || !h->image_size ||
@@ -118,6 +118,11 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
         for (uint32_t i = 0; i < h->required_channels; ++i)
             if (lanes[i] >= AFX_MAX_FLOW_CHANNELS) return AFX_BAD_FORMAT;
     }
+    return AFX_OK;
+}
+
+static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_t *h,
+                                     afx_validation_profile_t *profile) {
     uint32_t cursor = h->stream_offset, end = cursor + h->stream_size;
     int terminal = 0;
     uint32_t commands = 0, writes = 0;
@@ -154,14 +159,22 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
     return AFX_OK;
 }
 
-afx_result_t afx_file_validate_profile(const void *data, uint32_t size,
-                                       afx_file_header_t *out, afx_validation_profile_t *profile) {
+afx_result_t afx_file_validate_layout(const void *data, uint32_t size, afx_file_header_t *out) {
     const uint8_t *file = data;
     afx_file_header_t h;
     if (!data || size < sizeof(h)) return AFX_BAD_BOUNDS;
     read_words(&h, file, sizeof(h));
     if (h.magic != AFX_FILE_MAGIC || h.abi != AFX_FILE_VERSION) return AFX_BAD_FORMAT;
-    afx_result_t result = bank_file_validate(file, size, &h, profile);
+    afx_result_t result = bank_file_validate(file, size, &h);
+    if (!result && out) *out = h;
+    return result;
+}
+
+afx_result_t afx_file_validate_profile(const void *data, uint32_t size,
+                                       afx_file_header_t *out, afx_validation_profile_t *profile) {
+    afx_file_header_t h;
+    afx_result_t result = afx_file_validate_layout(data, size, &h);
+    if (!result) result = stream_validate((const uint8_t *)data + h.image_offset, &h, profile);
     if (!result && out) *out = h;
     return result;
 }

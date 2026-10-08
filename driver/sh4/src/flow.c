@@ -1,6 +1,10 @@
 #include "host_internal.h"
 #include <aicaflow/bank.h>
 
+#ifndef AFX_VALIDATE_ASSETS
+#define AFX_VALIDATE_ASSETS 0
+#endif
+
 int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size,
                          afx_asset_t *out) {
     const uint8_t *file = data;
@@ -18,8 +22,20 @@ int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size
     if (!data || size < AFX_FILE_HEADER_BYTES) return -AFX_BAD_BOUNDS;
     /* AFX version 7's fixed header names one AFB. Seek data is a separate optional
      * SH-4-only AFC file, so the resident image contains no samples or index. */
+#if AFX_VALIDATE_ASSETS
     valid = afx_file_validate_profile(data, size, &header, &profile);
+#else
+    valid = afx_file_validate_layout(data, size, &header);
+    if (!valid) {
+        if (!header.work_profile) return -AFX_BAD_FORMAT;
+        profile.peak_commands = AFX_WORK_PROFILE_COMMANDS(header.work_profile);
+        profile.peak_register_writes = AFX_WORK_PROFILE_WRITES(header.work_profile);
+    }
+#endif
     if (valid) return -(int)valid;
+    if (profile.peak_commands > AFX_EXECUTION_BUDGET_COMMANDS ||
+        profile.peak_register_writes > AFX_EXECUTION_BUDGET_WRITES)
+        return -AFX_NO_EXEC_BUDGET;
     bank_low = header.bank_id_low;
     bank_high = header.bank_id_high;
     relocations_at = header.relocations_offset;
@@ -44,9 +60,11 @@ int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size
         if ((control & 0x400u) || (((uint32_t)(control & 0x7fu) << 16) |
             afx_read16(image + pair + 2u)) != offset) goto failed;
     }
+#if AFX_VALIDATE_ASSETS
     if (header.work_profile &&
         (AFX_WORK_PROFILE_COMMANDS(header.work_profile) != profile.peak_commands ||
          AFX_WORK_PROFILE_WRITES(header.work_profile) != profile.peak_register_writes)) goto failed;
+#endif
     asset = reserve_asset(header.image_size, AFX_UPLOAD_ALIGN, false);
     if (!asset) { result = -AFX_NO_AICA_RAM; goto failed; }
     uint32_t index;

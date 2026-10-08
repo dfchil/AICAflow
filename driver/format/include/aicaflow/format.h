@@ -84,7 +84,7 @@ typedef struct {
     uint32_t required_channels; /* Local voice count required by the flow, 1..64. */
     uint32_t tick_rate_num; /* Numerator of authored ticks per second. */
     uint32_t tick_rate_den; /* Denominator of authored ticks per second. */
-    uint32_t work_profile; /* Packed peak commands/writes; zero leaves profiling to the loader. */
+    uint32_t work_profile; /* Packed peak commands/writes; zero requires full loader validation. */
 } afx_file_header_t;
 typedef struct {
     uint32_t image_offset; /* Sample byte offset relative to an image in the portable sample descriptor. */
