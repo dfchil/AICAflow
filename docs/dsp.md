@@ -33,7 +33,11 @@ A program without `MRD`/`MWT` instructions needs no ring; RBL 0, 1, 2 and 3
 allocate 16, 32, 64 and 128 KiB respectively. Install a memory-using scene
 before loading assets to avoid fragmentation. Replacement stops the old scene
 before allocating its replacement; allocation failure leaves DSP off.
-An acknowledged disable clears and frees the ring. A timeout keeps it allocated
+Firmware advertising `AFX_CAP_DSP_HOST_INIT` leaves a new ring for SH4 to
+initialize in blocks after the DSP has been made inert and its pipeline drained.
+Packed-float rings receive `0x6000` per word; linear rings receive zero. Older
+firmware retains its initial zero fill, with SH4 replacing packed-float contents
+in blocks. An acknowledged disable still clears and frees the ring. A timeout keeps it allocated
 until a later disable is acknowledged or the driver is shut down.
 
 The exact placement of the ring relative to the asset arena, IPC state and

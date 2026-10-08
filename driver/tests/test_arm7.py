@@ -24,13 +24,14 @@ static volatile uint32_t registers[64][32];
 static volatile afx_runtime_slot_t contexts[AFX_MAX_FLOW_SLOTS];
 static afx_restore_channel_t restore_states[2];
 static uint32_t dsp_delay_base, dsp_delay_bytes, dsp_owner, last_result;
-static uint32_t ring_register, dsp_writes;
+static uint32_t ring_register, dsp_writes, ring_clears;
 #define __asset_base ((uint8_t *)(uintptr_t)0x800)
 static void dsp_write(uint32_t offset, uint16_t value) {
     ++dsp_writes;
     if (offset == 0x2804) ring_register = value;
 }
 static void dsp_clear_delay(void) {
+    if (dsp_delay_bytes) ++ring_clears;
     assert(!dsp_delay_bytes || (dsp_delay_base >= 0x800 &&
            dsp_delay_bytes <= AFX_ASSET_MAX - dsp_delay_base));
 }
@@ -82,6 +83,19 @@ int main(void) {
         dsp_control(AFX_CMD_DSP_DISABLE, AFX_DSP_SCENE_REFERENCE, 4, 1, (const uint8_t *)&ring);
         assert(status.dsp_result == AFX_OK); /* Retry after a lost acknowledgement. */
     }
+    afx_dsp_payload_t host_ring = {.ring_address = 0x1800, .ring_bytes = AFX_DSP_MIN_BYTES};
+    uint32_t clears = ring_clears;
+    dsp_control(AFX_CMD_DSP_ENABLE, AFX_DSP_SCENE_REFERENCE, 5,
+                1u | AFX_DSP_FLAG_HOST_INIT, (const uint8_t *)&host_ring);
+    assert(status.dsp_result == AFX_OK && ring_clears == clears);
+    assert(dsp_delay_base == 0x1800 && dsp_delay_bytes == AFX_DSP_MIN_BYTES);
+    afx_dsp_payload_t stop_ring = {0};
+    dsp_control(AFX_CMD_DSP_DISABLE, AFX_DSP_SCENE_REFERENCE, 6, 1, (const uint8_t *)&stop_ring);
+    assert(status.dsp_result == AFX_OK && ring_clears == clears + 1);
+    clears = dsp_writes;
+    dsp_control(AFX_CMD_DSP_DISABLE, AFX_DSP_SCENE_REFERENCE, 7,
+                1u | AFX_DSP_FLAG_HOST_INIT, (const uint8_t *)&stop_ring);
+    assert(status.dsp_result == AFX_BAD_COMMAND && dsp_writes == clears);
     const afx_dsp_payload_t invalid[] = {
         {.ring_address = 0x800}, {.ring_bytes = AFX_DSP_MIN_BYTES},
         {.ring_address = 0x800, .ring_bytes = 12345},

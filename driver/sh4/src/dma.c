@@ -58,18 +58,29 @@ void upload_words(uint32_t address, const void *data, uint32_t size) {
 }
 static int upload_sample_data(const void *data, uint32_t bytes, afx_asset_t *out) {
     if (g_upload_dma_asset) return -AFX_BUSY;
-    /* Reuse one bounded bounce buffer; never duplicate an entire sample bank. */
+    /* Aligned input goes straight to DMA; only an incomplete final cache line
+     * needs staging. Unaligned inputs retain the bounded bounce path. */
     uint32_t capacity = bytes < 65536u ? bytes : 65536u;
-    void *staging = upload_image_alloc(capacity);
-    if (!staging) return -AFX_NO_HOST_RAM;
+    bool direct = !((uintptr_t)data & (AFX_UPLOAD_ALIGN - 1u));
+    uint32_t staging_bytes = direct ? (bytes & (AFX_UPLOAD_ALIGN - 1u) ? AFX_UPLOAD_ALIGN : 0) : capacity;
+    void *staging = staging_bytes ? upload_image_alloc(staging_bytes) : NULL;
+    if (staging_bytes && !staging) return -AFX_NO_HOST_RAM;
     afx_asset_t asset = AFX_ASSET_INVALID;
     int result = afx_sample_bank_stream_begin(bytes, &asset);
     for (uint32_t offset = 0; !result && offset < bytes;) {
         uint32_t count = bytes - offset;
         if (count > capacity) count = capacity;
-        memcpy(staging, (const uint8_t *)data + offset, count);
-        memset((uint8_t *)staging + count, 0, align_up(count, AFX_UPLOAD_ALIGN) - count);
-        result = afx_sample_bank_stream_dma_begin(asset, offset, staging, count);
+        const void *source = (const uint8_t *)data + offset;
+        if (direct) {
+            uint32_t whole = count & ~(AFX_UPLOAD_ALIGN - 1u);
+            if (whole) count = whole;
+        }
+        if (!direct || count < AFX_UPLOAD_ALIGN) {
+            memcpy(staging, source, count);
+            memset((uint8_t *)staging + count, 0, align_up(count, AFX_UPLOAD_ALIGN) - count);
+            source = staging;
+        }
+        result = afx_sample_bank_stream_dma_begin(asset, offset, source, count);
         bool complete = false;
         while (!result && !complete) {
             result = afx_sample_bank_stream_dma_poll(asset, &complete);

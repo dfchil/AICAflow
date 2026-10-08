@@ -79,6 +79,9 @@ int afx_mem_diagnose(uint32_t size, uint32_t align, afx_mem_diagnostic_t *out_di
 
 /* Upload one contiguous sample-bank region. AFB loading owns the only public
  * sample allocation path; AFX relocations bind directly to its byte offsets. */
+/* Synchronous: aligned full cache lines use the caller buffer directly for DMA.
+ * Keep its contents stable until return; partial tails and unaligned input
+ * use bounded staging, without reading beyond the supplied byte count. */
 int afx_sample_bank_upload(const void *data, uint32_t bytes, afx_asset_t *out_bank);
 /* Stream one backing allocation from caller-owned, aligned buffers. Begin one
  * DMA, fill another buffer while it runs, then poll and submit the next chunk. */

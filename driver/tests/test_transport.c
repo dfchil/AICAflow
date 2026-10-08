@@ -20,6 +20,9 @@ static const void *dma_source;
 static uintptr_t dma_address;
 static size_t dma_size;
 static unsigned dma_transfers;
+static const uint8_t *expected_dma_source;
+static unsigned direct_dma_transfers;
+static unsigned asset_word_writes, asset_block_writes;
 static unsigned dma_fail_at;
 static size_t dma_max_size;
 static spu_dma_callback_t dma_callback;
@@ -40,6 +43,7 @@ void spu_memload(uintptr_t address, const void *source, size_t size) {
                          size <= AFX_ASSET_MAX - address) ||
                         (address >= AFX_CHANNEL_MAP_ARENA_ADDR && address <= AFX_PRIVATE_BASE &&
                          size <= AFX_PRIVATE_BASE - address));
+    if (running && address >= asset_base && address < AFX_ASSET_MAX) ++asset_block_writes;
     memcpy(ram + address, source, size);
 }
 void spu_memset(uintptr_t address, uint32_t value, size_t size) {
@@ -54,6 +58,7 @@ int spu_dma_transfer(const void *source, uintptr_t address, size_t size, int blo
            !(size & 31u));
     assert(!block && callback);
     ++dma_transfers;
+    if (source == expected_dma_source) { ++direct_dma_transfers; expected_dma_source += size; }
     if (dma_transfers == dma_fail_at) return -1;
     if (size > dma_max_size) dma_max_size = size;
     dma_source = source; dma_address = address; dma_size = size;
@@ -99,6 +104,8 @@ void g2_write_32(uintptr_t address, uint32_t value) {
     }
     assert(address >= 0xa0800000 && address - 0xa0800000 <= sizeof(ram) - 4);
     assert(!(address & 3));
+    if (running && address - 0xa0800000 >= asset_base && address - 0xa0800000 < AFX_ASSET_MAX)
+        ++asset_word_writes;
     afx_write32(ram + (address - 0xa0800000), value);
 }
 uint64_t timer_ms_gettime64(void) { clock_ms += 100; return clock_ms; }
@@ -111,7 +118,7 @@ void spu_enable(void) {
     afx_write32(s + offsetof(afx_status_t, magic), AFX_STATUS_MAGIC);
     afx_write32(s + offsetof(afx_status_t, abi), AFX_ABI_VERSION);
     afx_write32(s + offsetof(afx_status_t, layout_id), AFX_LAYOUT_ID);
-    afx_write32(s + offsetof(afx_status_t, capabilities), AFX_CAP_BOOTSTRAP | AFX_CAP_LIFECYCLE);
+    afx_write32(s + offsetof(afx_status_t, capabilities), AFX_CAP_BOOTSTRAP | AFX_CAP_LIFECYCLE | AFX_CAP_DSP_HOST_INIT);
     afx_write32(s + offsetof(afx_status_t, asset_base), asset_base);
     afx_write32(s + offsetof(afx_status_t, asset_limit), AFX_ASSET_MAX);
     afx_write32(s + offsetof(afx_status_t, private_end), afx_read32(m + 24));
