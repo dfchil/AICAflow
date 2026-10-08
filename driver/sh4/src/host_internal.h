@@ -66,6 +66,7 @@ typedef struct {
     uint32_t map_addr; /* Absolute AICA byte address of the uploaded channel map. */
     uint32_t staging_addr; /* Temporary AICA restore-state allocation; zero when absent. */
     uint32_t start_tick; /* Initial scheduled start time in hardware timer ticks. */
+    uint32_t observed_epoch; /* Last stable publication read; reset with the slot. */
     uint8_t required_channels; /* Number of local channels owned by this instance. */
     uint8_t map_arena; /* Index of the channel-map arena containing this map. */
     uint8_t map_offset; /* Byte offset within that channel-map arena. */
@@ -120,6 +121,6 @@ void release_instance_preserving_generation(uint32_t index);
 uint32_t new_sequence(void);
 int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
             uint32_t flags, const void *payload, uint32_t payload_size);
-bool read_observed(uint32_t index, afx_instance_status_t *out);
+bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *out);
 
 #endif

@@ -113,6 +113,10 @@ static inline afx_result_t afx_apply_setup_fields(uint16_t state[AFX_FIELD_COUNT
 }
 /* Runtime validation accepts only the fixed, bank-bound AFX file layout. */
 afx_result_t afx_file_validate(const void *data, uint32_t size, afx_file_header_t *out);
+/* Validate and compute peak playback work in the same stream traversal. */
+typedef struct { uint32_t peak_commands, peak_register_writes; } afx_validation_profile_t;
+afx_result_t afx_file_validate_profile(const void *data, uint32_t size,
+                                       afx_file_header_t *out, afx_validation_profile_t *profile);
 /* Stable non-zero identity of an AFX control image. Authors use this after
  * assembling the image; the runtime only compares the stored value. */
 uint32_t afx_control_id(const void *image, uint32_t size);

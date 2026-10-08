@@ -312,9 +312,9 @@ static int bank_load_step(void) {
     }
     uint32_t bytes=bank_loader.bytes-bank_loader.offset;
     if (bytes>BANK_DMA_BYTES) bytes=BANK_DMA_BYTES;
-    memset(bank_loader.buffer,0,BANK_DMA_BYTES+AFX_UPLOAD_ALIGN);
     if (asset_read(bank_loader.buffer,bytes,bank_loader.file)!=bytes || ferror(bank_loader.file))
         return -AFX_BAD_FORMAT;
+    memset(bank_loader.buffer+bytes,0,((bytes+AFX_UPLOAD_ALIGN-1u)&~(AFX_UPLOAD_ALIGN-1u))-bytes);
     result=afx_sample_bank_stream_dma_begin(bank_loader.asset,bank_loader.offset,bank_loader.buffer,bytes);
     if (result) return result;
     bank_loader.queued=bytes;

@@ -11,6 +11,30 @@
 #include "test_transport.c"
 #include "../sh4/src/host_internal.h"
 
+static void test_observation_cache(void) {
+    uint32_t epoch = 0;
+    afx_instance_status_t status;
+    unsigned reads = observed_reads;
+    assert(!read_observed(63, &epoch, &status));
+    assert(observed_reads - reads == 1);
+    observed(63, 64, AFX_RUNNING, 1, AFX_OK);
+    reads = observed_reads;
+    assert(read_observed(63, &epoch, &status) && status.state == AFX_RUNNING);
+    assert(observed_reads - reads == 9);
+    reads = observed_reads;
+    assert(!read_observed(63, &epoch, &status));
+    assert(observed_reads - reads == 1);
+    uint8_t *record = ram + AFX_OBSERVED_ADDR + 63 * sizeof(afx_observed_t);
+    afx_write32(record, 3); /* In-progress publication must not enter the cache. */
+    assert(!read_observed(63, &epoch, &status) && epoch == 2);
+    observed(63, 64, AFX_DONE, 2, AFX_OK);
+    assert(read_observed(63, &epoch, &status) && status.state == AFX_DONE);
+    afx_write32(record, UINT32_MAX - 1u);
+    assert(read_observed(63, &epoch, &status));
+    observed(63, 0, AFX_FREE, 3, AFX_OK); /* Epoch rollover to zero. */
+    assert(read_observed(63, &epoch, &status) && epoch == 0);
+}
+
 static void test_bounded_bank_upload(void) {
     const uint32_t bytes = 2u * 65536u + 17u;
     uint8_t *input = malloc(bytes + 1u);
@@ -352,6 +376,7 @@ int main(int argc, char **argv) {
     afx_asset_t flow;
     afx_write32(dsp_registers + 0x3408, 0x6000); /* DSP left running by a previous driver. */
     firmware(fw); assert(afx_init(fw, sizeof(fw)) == AFX_OK);
+    test_observation_cache();
     test_bounded_bank_upload();
     test_queue_capacity();
     afx_dsp_program_t dsp;
@@ -377,6 +402,9 @@ int main(int argc, char **argv) {
     test_dsp_allocations();
     flow_file(flow_data, 0x12345678u, 0x9abcdef0u);
     assert(afx_file_validate(flow_data, sizeof(flow_data), NULL) == AFX_OK);
+    afx_validation_profile_t profile;
+    assert(afx_file_validate_profile(flow_data, sizeof(flow_data), NULL, &profile) == AFX_OK);
+    assert(profile.peak_commands == 1 && profile.peak_register_writes == 19);
     afx_write32(flow_data + 4, AFX_FILE_VERSION - 1u);
     assert(afx_file_validate(flow_data, sizeof(flow_data), NULL) == AFX_BAD_FORMAT);
     afx_write32(flow_data + 4, AFX_FILE_VERSION);

@@ -53,11 +53,11 @@ int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
     }
     return result;
 }
-bool read_observed(uint32_t index, afx_instance_status_t *out) {
-    if (index >= AFX_MAX_FLOW_SLOTS || !out) return false;
+bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *out) {
+    if (index >= AFX_MAX_FLOW_SLOTS || !last_epoch || !out) return false;
     uint32_t base = AFX_OBSERVED_ADDR + index * sizeof(afx_observed_t);
     uint32_t first = read_spu_word(base);
-    if (first & 1u) return false;
+    if ((first & 1u) || first == *last_epoch) return false;
     afx_instance_status_t copy = {
         .reference = read_spu_word(base + 4), .state = read_spu_word(base + 8),
         .sequence = read_spu_word(base + 12), .result = read_spu_word(base + 16),
@@ -66,6 +66,7 @@ bool read_observed(uint32_t index, afx_instance_status_t *out) {
     };
     if (first != read_spu_word(base) || (first & 1u)) return false;
     *out = copy;
+    *last_epoch = first;
     return true;
 }
 static void stop_driver(void) {

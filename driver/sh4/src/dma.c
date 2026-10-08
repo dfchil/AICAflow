@@ -67,8 +67,8 @@ static int upload_sample_data(const void *data, uint32_t bytes, afx_asset_t *out
     for (uint32_t offset = 0; !result && offset < bytes;) {
         uint32_t count = bytes - offset;
         if (count > capacity) count = capacity;
-        memset(staging, 0, align_up(count, AFX_UPLOAD_ALIGN));
         memcpy(staging, (const uint8_t *)data + offset, count);
+        memset((uint8_t *)staging + count, 0, align_up(count, AFX_UPLOAD_ALIGN) - count);
         result = afx_sample_bank_stream_dma_begin(asset, offset, staging, count);
         bool complete = false;
         while (!result && !complete) {
