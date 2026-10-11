@@ -47,10 +47,11 @@ void spu_memload(uintptr_t address, const void *source, size_t size) {
     memcpy(ram + address, source, size);
 }
 void spu_memset(uintptr_t address, uint32_t value, size_t size) {
-    assert(!running && value == 0 && address == 0 && size == sizeof(ram));
+    assert(!running && value == 0 && address == AFX_CONTROL_BASE &&
+           size == sizeof(ram) - AFX_CONTROL_BASE);
     for (uint32_t step = 0; step < 128; ++step)
         assert(!(afx_read32(dsp_registers + 0x3408 + step * 16) & 0x6000));
-    memset(ram, 0, size);
+    memset(ram + address, 0, size);
 }
 int spu_dma_transfer(const void *source, uintptr_t address, size_t size, int block,
                      spu_dma_callback_t callback, void *data) {

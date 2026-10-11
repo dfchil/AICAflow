@@ -54,9 +54,6 @@ typedef struct {
     uint32_t peak_register_writes; /* Peak register writes between WAIT boundaries. */
 } afx_work_profile_t;
 
-/* One caller-selected upload step is capped so gameplay can interleave normal
- * host work. The caller drives it; no hidden worker or retry queue exists. */
-#define AFX_UPLOAD_STEP_BYTES 4096u
 /* Queues one 32-byte-aligned SH-4 -> AICA DMA transfer. Call again on later
  * frames to collect completion and queue the next block. Every byte, including
  * final zero padding, uses DMA; 64 KiB keeps an interactive frame between blocks. */
@@ -65,8 +62,8 @@ typedef struct {
  * serialize bookkeeping and publication with a recursive try-lock. Every
  * operation that can fail returns 0 on success and a negative afx_result_t on
  * failure. Handle/address getters use 0 only for an invalid query result.
- * Upload and seek hold the lock for their complete call; use upload_step to
- * bound transfer size. Status timer/heartbeat reads are independent G2 reads.
+ * Upload and seek hold the lock for their complete call. Status
+ * timer/heartbeat reads are independent G2 reads.
  * Integer result APIs return 0 or negative afx_result_t; firmware must match. */
 int afx_init(const void *arm7_firmware, uint32_t firmware_size);
 void afx_shutdown(void);
@@ -99,6 +96,7 @@ int afx_asset_work(afx_asset_t asset, afx_work_profile_t *out_profile);
 
 /* Stage 3 lifecycle API. Commands are nonblocking: a zero result means queued;
  * call afx_update and afx_instance_status for ARM-owned durable completion.
+ * STOP and PAUSE may follow any earlier command without waiting for it.
  * PATCH/gain/tempo/lane commands may follow ACTIVATE immediately; queue order
  * applies them before the first authored deadline. */
 int afx_instance_activate(afx_asset_t flow_asset, afx_instance_t *out_instance);
