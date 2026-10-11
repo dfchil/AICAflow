@@ -56,10 +56,9 @@ static void map_release(const afx_instance_slot_t *slot) {
     if (!slot->required_channels) return;
     uint32_t reserved = align_up(slot->required_channels, AFX_CHANNEL_MAP_ALLOC_ALIGN);
     uint64_t mask = reserved == 64 ? UINT64_MAX : (UINT64_C(1) << reserved) - 1u;
+    /* No live context refers to a released map, and activation uploads a
+     * complete map before ARM7 reads it, so the old entries can stay. */
     g_map_used[slot->map_arena] &= ~(mask << slot->map_offset);
-    uint8_t invalid[AFX_CHANNEL_MAP_ENTRIES];
-    memset(invalid, 0xff, sizeof(invalid));
-    upload_words(slot->map_addr, invalid, reserved);
 }
 bool resolve_instance(afx_instance_t instance, uint32_t *index) {
     if (!instance || !index) return false;
@@ -70,13 +69,6 @@ bool resolve_instance(afx_instance_t instance, uint32_t *index) {
     *index = raw - 1u;
     return true;
 }
-void release_instance_work(afx_instance_slot_t *slot) {
-    if (!slot->work_reserved) return;
-    const afx_asset_slot_t *flow = &g_assets[slot->asset_index];
-    g_reserved_peak_commands -= flow->peak_commands;
-    g_reserved_peak_writes -= flow->peak_register_writes;
-    slot->work_reserved = false;
-}
 void release_instance_preserving_generation(uint32_t index) {
     afx_instance_slot_t *slot = &g_instances[index];
     uint16_t generation = slot->generation;
@@ -86,7 +78,6 @@ void release_instance_preserving_generation(uint32_t index) {
     map_release(slot);
     if (slot->asset_index < g_asset_capacity && g_assets[slot->asset_index].references)
         --g_assets[slot->asset_index].references;
-    release_instance_work(slot);
     if (generation == UINT16_MAX) retired = true;
     else ++generation;
     memset(slot, 0, sizeof(*slot));
@@ -109,10 +100,9 @@ int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
         bank_bytes = g_assets[bank_index].size;
         if ((bank_base & 31u) || bank_base >= AFX_AICA_RAM_SIZE) return -AFX_BAD_SAMPLE;
     }
+    /* Work that coincides across instances is not refused: the ARM7 executor
+     * runs every due event, key-on last, and reports how late it was. */
     uint8_t count = (uint8_t)flow->required_channels;
-    if (flow->peak_commands > AFX_EXECUTION_BUDGET_COMMANDS - g_reserved_peak_commands ||
-        flow->peak_register_writes > AFX_EXECUTION_BUDGET_WRITES - g_reserved_peak_writes)
-        return -AFX_NO_EXEC_BUDGET;
     uint32_t index = 0;
     while (index < AFX_MAX_FLOW_SLOTS && (g_instances[index].live || g_instances[index].retired)) ++index;
     if (index == AFX_MAX_FLOW_SLOTS) return -AFX_NO_FLOW_SLOTS;
@@ -160,9 +150,6 @@ int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
     slot->status = (afx_instance_status_t){ .reference = reference, .state = AFX_FREE,
                                              .sequence = sequence, .result = AFX_OK };
     ++flow->references;
-    g_reserved_peak_commands += flow->peak_commands;
-    g_reserved_peak_writes += flow->peak_register_writes;
-    slot->work_reserved = true;
     *out = reference;
     return AFX_OK;
 }
@@ -170,7 +157,9 @@ static int lifecycle(afx_instance_t instance, uint32_t opcode) {
     uint32_t index;
     if (!resolve_instance(instance, &index)) return -AFX_STALE_GENERATION;
     afx_instance_slot_t *slot = &g_instances[index];
-    if (slot->pending) return -AFX_BUSY;
+    /* The queue is ordered and ARM7 checks the state itself, so STOP and PAUSE
+     * need not wait for an earlier command's acknowledgement. */
+    if (slot->recycling) return -AFX_BUSY;
     uint32_t sequence = new_sequence();
     int queued = enqueue(opcode, instance, sequence, 0, NULL, 0);
     if (!queued) {

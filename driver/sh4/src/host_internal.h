@@ -60,7 +60,6 @@ typedef struct {
     bool retired; /* Slot is permanently retired to prevent generation wrap. */
     bool pending; /* Waiting for a lifecycle/rebuild command observation. */
     bool recycling; /* Waiting for RECYCLE acknowledgement before releasing the slot. */
-    bool work_reserved; /* Instance currently contributes to reserved playback work budgets. */
     uint16_t generation; /* Generation encoded in the instance handle. */
     uint32_t asset_index; /* Index of the retained flow in g_assets. */
     uint32_t map_addr; /* Absolute AICA byte address of the uploaded channel map. */
@@ -81,7 +80,7 @@ extern afx_asset_slot_t *g_assets;
 extern uint32_t g_asset_capacity;
 extern afx_instance_slot_t g_instances[AFX_MAX_FLOW_SLOTS];
 extern uint64_t g_available_channels, g_map_used[AFX_CHANNEL_MAP_ARENAS];
-extern uint32_t g_reserved_peak_commands, g_reserved_peak_writes, g_next_sequence;
+extern uint32_t g_next_sequence, g_queue_head;
 extern bool g_dsp_scene, g_ready, g_lifecycle;
 extern uint32_t g_dsp_ring; /* Owned DSP allocation; retained until stop is acknowledged. */
 extern uint16_t g_dsp_return_left, g_dsp_return_right;
@@ -115,7 +114,6 @@ void upload_words(uint32_t address, const void *data, uint32_t size);
 
 void maps_reset(void);
 bool resolve_instance(afx_instance_t instance, uint32_t *index);
-void release_instance_work(afx_instance_slot_t *slot);
 void release_instance_preserving_generation(uint32_t index);
 
 uint32_t new_sequence(void);

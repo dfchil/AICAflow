@@ -9,11 +9,11 @@ uint32_t g_asset_capacity;
 afx_instance_slot_t g_instances[AFX_MAX_FLOW_SLOTS];
 uint64_t g_available_channels = UINT64_MAX;
 uint64_t g_map_used[AFX_CHANNEL_MAP_ARENAS];
-uint32_t g_reserved_peak_commands, g_reserved_peak_writes;
 bool g_dsp_scene;
 uint32_t g_dsp_ring;
 uint16_t g_dsp_return_left, g_dsp_return_right;
 uint32_t g_next_sequence = 1;
+uint32_t g_queue_head; /* Only the SH-4 advances head, so it need not be read back. */
 bool g_ready, g_lifecycle;
 volatile bool g_upload_dma_done;
 afx_asset_t g_upload_dma_asset;
@@ -33,7 +33,7 @@ int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
      * the same payload-then-head discipline as KOS's sound command queue. */
     g2_lock_scoped();
     int result = AFX_OK;
-    uint32_t head = g2_read_32_raw(g_spu_base + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, head));
+    uint32_t head = g_queue_head;
     uint32_t tail = g2_read_32_raw(g_spu_base + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail));
     if (head - tail > AFX_CMD_QUEUE_CAPACITY) result = -AFX_BAD_FIRMWARE;
     else if (head - tail == AFX_CMD_QUEUE_CAPACITY) result = -AFX_IPC_FULL;
@@ -50,6 +50,7 @@ int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
         }
         g2_fifo_wait();
         g2_write_32_raw(g_spu_base + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, head), head + 1u);
+        g_queue_head = head + 1u;
     }
     return result;
 }
@@ -85,7 +86,11 @@ int afx_init(const void *firmware, uint32_t size) {
     if (valid) return -(int)valid; /* No reset on rejected image. */
     g_ready = g_lifecycle = false;
     stop_driver();
-    spu_memset(0, 0, AFX_AICA_RAM_SIZE);
+    /* Assets are uploaded before use and a DSP ring is filled when its scene
+     * is programmed. Only the control region needs a known state: a stale
+     * status block must not look like a booted driver. */
+    spu_memset(AFX_CONTROL_BASE, 0, AFX_AICA_RAM_SIZE - AFX_CONTROL_BASE);
+    g_queue_head = 0;
     upload_words(0, firmware, size);
     spu_enable();
     uint64_t started = timer_ms_gettime64();

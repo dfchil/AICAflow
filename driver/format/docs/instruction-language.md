@@ -21,8 +21,10 @@ The SH-4 assigns an instance's local channels to physical AICA channels before
 activation. Thus the same flow can run concurrently without putting physical
 channel numbers in the file.
 
-The host validates the complete stream before upload. An event burst must fit
-the recorded work profile, when present, and the runtime execution budget.
+With `AFX_VALIDATE_ASSETS=1` the host validates the complete stream before
+upload, and an event burst must match the recorded work profile. Authoring
+tools keep one flow's burst within `AFX_EXECUTION_BUDGET_*`; the runtime does
+not refuse work. The executor runs every due event and reports its lateness.
 Malformed, zero-length waits, unknown opcodes, bad channels, invalid masks and
 a missing or early terminal instruction are rejected.
 

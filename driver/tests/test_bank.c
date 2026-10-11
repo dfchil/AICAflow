@@ -99,6 +99,7 @@ static void test_queue_capacity(void) {
     for (unsigned pass = 0; pass < 2; ++pass) {
         uint32_t start = starts[pass];
         afx_write32(ram + AFX_QUEUE_ADDR, start);
+        g_queue_head = start;
         afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), start);
         for (unsigned i = 0; i < 32; ++i)
             assert(enqueue(AFX_CMD_INSTANCE_GAIN, 1, i + 1, 0, NULL, 0) == AFX_OK);
@@ -115,10 +116,12 @@ static void test_queue_capacity(void) {
             assert(command.sequence == i + 1 && command.opcode == AFX_CMD_INSTANCE_GAIN);
         }
         assert(enqueue(AFX_CMD_STOP, 1, 99, 0, NULL, 0) == -AFX_IPC_FULL);
-        afx_write32(ram + AFX_QUEUE_ADDR, start + 41u);
+        /* The SH-4 owns head; a tail beyond it can only be firmware corruption. */
+        afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), start + 41u);
         assert(enqueue(AFX_CMD_STOP, 1, 99, 0, NULL, 0) == -AFX_BAD_FIRMWARE);
     }
     afx_write32(ram + AFX_QUEUE_ADDR, 0);
+    g_queue_head = 0;
     afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), 0);
     assert(!memcmp(observed_before, ram + AFX_OBSERVED_ADDR, sizeof(observed_before)));
 }
@@ -159,23 +162,19 @@ static void test_channel_maps(afx_asset_t flow) {
                 assert(ram[next + i] == (i < count ? count + i : 0xff));
         }
         memcpy(snapshot, ram + AFX_CHANNEL_MAP_ARENA_ADDR, sizeof(snapshot));
-        memset(snapshot + (base - AFX_CHANNEL_MAP_ARENA_ADDR), 0xff, reserved);
+        /* Release frees the reservation without a G2 write to the old map. */
         release_instance_preserving_generation(AFX_HANDLE_INDEX(first));
         assert(!memcmp(snapshot, ram + AFX_CHANNEL_MAP_ARENA_ADDR, sizeof(snapshot)));
         assert(afx_instance_activate(flow, &first) == AFX_OK);
         assert(g_instances[AFX_HANDLE_INDEX(first)].map_addr == base);
         release_instance_preserving_generation(AFX_HANDLE_INDEX(first));
         if (count <= 32) release_instance_preserving_generation(AFX_HANDLE_INDEX(second));
-        for (unsigned i = 0; i < sizeof(snapshot); ++i)
-            assert(ram[AFX_CHANNEL_MAP_ARENA_ADDR + i] == 0xff);
+        for (unsigned arena = 0; arena < AFX_CHANNEL_MAP_ARENAS; ++arena) assert(!g_map_used[arena]);
         assert(g_available_channels == UINT64_MAX);
         /* The simulated ARM consumes these commands between test cases. */
         afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
     }
     asset->required_channels = 1;
-    /* Isolate map capacity from the independent execution-budget limit. */
-    uint32_t peak_commands = asset->peak_commands, peak_writes = asset->peak_register_writes;
-    asset->peak_commands = asset->peak_register_writes = 0;
     afx_instance_t instances[64];
     for (unsigned i = 0; i < 64; ++i) {
         assert(afx_instance_activate(flow, &instances[i]) == AFX_OK);
@@ -184,10 +183,46 @@ static void test_channel_maps(afx_asset_t flow) {
     }
     for (unsigned i = 0; i < 64; ++i)
         release_instance_preserving_generation(AFX_HANDLE_INDEX(instances[i]));
-    for (unsigned i = 0; i < 320; ++i)
-        assert(ram[AFX_CHANNEL_MAP_ARENA_ADDR + i] == 0xff);
-    asset->peak_commands = peak_commands;
+    for (unsigned arena = 0; arena < AFX_CHANNEL_MAP_ARENAS; ++arena) assert(!g_map_used[arena]);
+}
+
+static void test_coinciding_work(afx_asset_t flow) {
+    /* The runtime refuses no work: authoring limits one flow's burst, and the
+     * executor reports lateness when bursts from several instances coincide. */
+    afx_asset_slot_t *asset = &g_assets[AFX_HANDLE_INDEX(flow)];
+    uint32_t peak_writes = asset->peak_register_writes;
+    asset->peak_register_writes = AFX_EXECUTION_BUDGET_WRITES;
+    afx_instance_t first, second;
+    assert(afx_instance_activate(flow, &first) == AFX_OK);
+    assert(afx_instance_activate(flow, &second) == AFX_OK);
+    release_instance_preserving_generation(AFX_HANDLE_INDEX(first));
+    release_instance_preserving_generation(AFX_HANDLE_INDEX(second));
     asset->peak_register_writes = peak_writes;
+    assert(g_available_channels == UINT64_MAX);
+    afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
+}
+
+static void test_stop_follows_activate(afx_asset_t flow) {
+    /* STOP queues behind an unacknowledged ACTIVATE instead of being refused. */
+    afx_instance_t instance;
+    assert(afx_instance_activate(flow, &instance) == AFX_OK);
+    uint32_t index = AFX_HANDLE_INDEX(instance);
+    uint32_t activation = g_instances[index].status.sequence;
+    assert(afx_instance_stop(instance) == AFX_OK);
+    uint32_t stop = g_instances[index].status.sequence;
+    assert(stop != activation && queued(queue_head() - 1).opcode == AFX_CMD_STOP);
+    /* The older acknowledgement is skipped; the STOP result settles the slot. */
+    observed(index, instance, AFX_RUNNING, activation, AFX_OK);
+    assert(afx_update() == AFX_OK && g_instances[index].pending);
+    observed(index, instance, AFX_DONE, stop, AFX_OK);
+    assert(afx_update() == AFX_OK && !g_instances[index].pending);
+    assert(g_instances[index].status.state == AFX_DONE);
+    /* A slot being recycled accepts no further lifecycle command. */
+    assert(afx_instance_recycle(instance) == AFX_OK);
+    assert(afx_instance_stop(instance) == -AFX_BUSY);
+    release_instance_preserving_generation(index);
+    assert(g_available_channels == UINT64_MAX);
+    afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
 }
 
 static void firmware(uint8_t image[64]) {
@@ -480,9 +515,6 @@ int main(int argc, char **argv) {
     assert(afx_asset_free(flow) == AFX_OK);
 #endif
     flow_data[96 + AFX_SETUP_BYTES] = AFX_OP_NOTE_PL;
-    afx_write32(flow_data + 76, AFX_WORK_PROFILE(AFX_EXECUTION_BUDGET_COMMANDS + 1, 19));
-    assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) != AFX_OK);
-    afx_write32(flow_data + 76, AFX_WORK_PROFILE(1, 19));
     afx_write32(flow_data + 20, UINT32_MAX);
     assert(afx_bank_flow_upload(&bank, flow_data, sizeof(flow_data), &flow) == -AFX_BAD_BOUNDS);
     afx_write32(flow_data + 20, 64);
@@ -501,6 +533,8 @@ int main(int argc, char **argv) {
     assert(!g_assets[AFX_HANDLE_INDEX(raw)].bank && !g_assets[AFX_HANDLE_INDEX(raw)].flow);
     assert(afx_asset_free(raw) == AFX_OK && g_assets[bank_index].references == 1);
     test_channel_maps(flow);
+    test_coinciding_work(flow);
+    test_stop_follows_activate(flow);
     memset(seek_data, 0, sizeof(seek_data));
     afx_write32(seek_data, AFX_SEEK_MAGIC); afx_write32(seek_data + 4, AFX_SEEK_VERSION);
     afx_write32(seek_data + 8, 1); afx_write32(seek_data + 12, 0x12345678u);

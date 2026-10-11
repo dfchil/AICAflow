@@ -93,7 +93,6 @@ bool allocator_reset(uint32_t dynamic_base) {
         g_instances[i].retired = retired;
     }
     g_available_channels = UINT64_MAX;
-    g_reserved_peak_commands = g_reserved_peak_writes = 0;
     g_dsp_scene = false;
     g_dsp_ring = 0;
     g_dsp_return_left = g_dsp_return_right = 0;

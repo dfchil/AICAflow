@@ -33,9 +33,6 @@ int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size
     }
 #endif
     if (valid) return -(int)valid;
-    if (profile.peak_commands > AFX_EXECUTION_BUDGET_COMMANDS ||
-        profile.peak_register_writes > AFX_EXECUTION_BUDGET_WRITES)
-        return -AFX_NO_EXEC_BUDGET;
     bank_low = header.bank_id_low;
     bank_high = header.bank_id_high;
     relocations_at = header.relocations_offset;
@@ -84,14 +81,9 @@ int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size
         ++g_assets[bank_index].references;
     }
     /* Upload unchanged bytes from the caller; retain no SH-4 image. */
-    while (g_assets[index].upload_cursor < header.image_size) {
-        uint32_t cursor = g_assets[index].upload_cursor;
-        uint32_t bytes = header.image_size - cursor;
-        if (bytes > AFX_UPLOAD_STEP_BYTES) bytes = AFX_UPLOAD_STEP_BYTES;
-        result = afx_mem_upload(g_assets[index].addr + cursor, image + cursor, bytes);
-        if (result) goto failed;
-        g_assets[index].upload_cursor += bytes;
-    }
+    result = afx_mem_upload(g_assets[index].addr, image, header.image_size);
+    if (result) goto failed;
+    g_assets[index].upload_cursor = header.image_size;
     g_assets[index].uploading = false;
     g_assets[index].live = g_assets[index].flow = true;
     *out = asset;
