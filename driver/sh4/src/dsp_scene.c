@@ -89,9 +89,6 @@ static int dsp_scene_program(const void *data, uint32_t bytes, uint8_t rbl) {
         g2_write_32(0xa0703200u + i * 4u, dsp_word(program, 1280u + i * 2u));
     for (uint32_t i = 0; i < 512; ++i)
         g2_write_32(0xa0703400u + i * 4u, dsp_word(program, i * 2u));
-    for (uint32_t i = 0; i < 512; ++i)
-        if ((g2_read_32(0xa0703400u + i * 4u) & 0xffffu) != dsp_word(program, i * 2u))
-            return -AFX_BAD_COMMAND;
     thd_sleep(2);
     g_dsp_return_left = dsp_word(program, 1408);
     g_dsp_return_right = dsp_word(program, 1410);

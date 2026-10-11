@@ -43,14 +43,14 @@ application steps:
 Integer APIs generally return zero on success and a negative `afx_result_t`
 on failure. Handle/address getters use zero for invalid results. Do not spin
 through allocation/queue failures: check memory, pending lifecycle
-state, execution budget and the observed ARM7 result. Preserve successfully
+state and the observed ARM7 result. Preserve successfully
 created handles until their normal cleanup has completed, including on partial
 startup failure. `afx_shutdown()` requires flows, instances and banks released.
 
 ## AFX validation
 
 The SH4 library defaults to trusted assets (`AFX_VALIDATE_ASSETS=0`): it checks
-file layout, offsets, relocations, lanes, bank binding and resource limits, but
+file layout, offsets, relocations, lanes and bank binding, but
 does not decode the event stream or recompute its work profile. Assets must be
 validated offline and contain a nonzero authored work profile. Missing profiles
 are rejected with `AFX_BAD_FORMAT`; they are not treated as zero work.
