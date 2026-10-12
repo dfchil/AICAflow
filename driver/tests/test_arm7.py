@@ -38,6 +38,9 @@ static void dsp_clear_delay(void) {
 }
 static afx_status_t status;
 #define STATUS (&status)
+static afx_observed_t observed_records[AFX_MAX_FLOW_SLOTS];
+#define OBSERVED observed_records
+static uint32_t last_state, last_sequence;
 static int physical_channel(const volatile afx_runtime_slot_t *context,
                             uint32_t local, uint32_t *out) {
     if (local >= context->channels) return 0;
@@ -46,17 +49,18 @@ static int physical_channel(const volatile afx_runtime_slot_t *context,
 }
 static void publish(uint32_t index, uint32_t reference, uint32_t state, uint32_t sequence,
                     uint32_t result, uint32_t position, uint32_t deadline, uint32_t detail) {
-    (void)index; (void)reference; (void)state; (void)sequence;
+    (void)index; (void)reference;
     (void)position; (void)deadline; (void)detail;
-    last_result = result;
+    last_result = result; last_state = state; last_sequence = sequence;
 }
 '''
 globals_ = source[source.index("static const uint8_t gain_attenuation"):
                   source.index("static uint32_t dsp_owner")]
-names = ("range", "asset_range", "dsp_returns", "dsp_disable", "dsp_nop", "scene_result", "dsp_control", "reference_index",
+names = ("range", "asset_range", "clear_words", "dsp_returns", "dsp_disable", "dsp_nop", "scene_result", "dsp_control", "reference_index",
          "multiply_gain", "apply_gain", "projected_mix", "projected_direct",
          "projected_dsp_send", "write_projection", "release_voice", "keyoff",
-         "stream_position", "install_voice", "write_restore", "set_instance_gain", "set_lanes", "rebuild")
+         "stream_position", "install_voice", "write_restore", "set_instance_gain", "set_lanes", "rebuild",
+         "lifecycle")
 body = "\n".join(function(name) for name in names)
 # Keep production validation/installation intact; only translate staging pointers.
 assert body.count("(request.states_address +") == 2
@@ -130,6 +134,24 @@ int main(void) {
             voice_flags[0] = 0;
         }
     }
+    /* Gain scales the attenuation byte only: filter Q and the bypass flags in
+     * the low byte reach the register as authored. */
+    voice_flags[0] = 0; voice_lane_gain[0] = 255;
+    voice_base_mix[0] = 0x2064;
+    assert(projected_mix(0, 255) == 0x2064);
+    assert((projected_mix(0, 128) & 0xffu) == 0x64 && (projected_mix(0, 128) >> 8) > 0x20);
+    assert(projected_mix(0, 0) == 0xff64);
+    /* A flow that ended on its own just before a queued STOP or PAUSE arrives
+     * reports how it ended, under the new sequence, not a stale handle. */
+    for (unsigned i = 0; i < 2; ++i) {
+        uint32_t opcode = i ? AFX_CMD_PAUSE : AFX_CMD_STOP;
+        contexts[1] = (afx_runtime_slot_t){0};
+        observed_records[1] = (afx_observed_t){.reference = 0x10002, .state = AFX_DONE, .result = AFX_OK};
+        lifecycle(opcode, 0x10002, 40 + i);
+        assert(last_state == AFX_DONE && last_result == AFX_OK && last_sequence == 40 + i);
+        lifecycle(opcode, 0x20002, 50 + i); /* a handle that never ran here */
+        assert(last_state == AFX_ERROR && last_result == AFX_STALE_GENERATION);
+    }
     volatile afx_runtime_slot_t *ctx = &contexts[0];
     *ctx = (afx_runtime_slot_t){.reference = 1, .state = AFX_PAUSED,
         .channels = 2, .image_base = 0x1000, .end = 0x1100, .pc = 0x1020,
@@ -199,4 +221,4 @@ with tempfile.TemporaryDirectory() as directory:
                     "-I" + str(root / "driver/arm7"),
                     str(path / "check.c"), "-o", str(path / "check")], check=True)
     subprocess.run([str(path / "check")], check=True)
-print("ARM7 pan, voice flags and checkpoint restore: PASS")
+print("ARM7 gain, pan, lifecycle races, voice flags and checkpoint restore: PASS")

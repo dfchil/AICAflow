@@ -187,7 +187,9 @@ static uint8_t multiply_gain(uint8_t first, uint8_t second) {
 static uint16_t apply_gain(uint16_t total_level, uint8_t gain) {
     uint32_t attenuation = (total_level >> 8) + gain_attenuation[gain];
     if (attenuation > 255) attenuation = 255;
-    return (uint16_t)((attenuation << 8) | (total_level & 0x0fu));
+    /* Only the attenuation byte is scaled: filter Q and the bypass flags in
+     * the low byte are the author's. */
+    return (uint16_t)((attenuation << 8) | (total_level & 0xffu));
 }
 static uint16_t projected_mix(uint32_t physical, uint8_t instance_gain) {
     uint8_t lane_gain = (voice_flags[physical] & VOICE_RELEASED) ? 255 : voice_lane_gain[physical];
@@ -486,8 +488,9 @@ static void lifecycle(uint32_t opcode, uint32_t reference, uint32_t sequence) {
     }
     if (context->reference != reference) {
         volatile afx_observed_t *record = &OBSERVED[index];
-        /* Natural completion can win the race with a queued STOP. */
-        if (opcode == AFX_CMD_STOP && !context->reference && record->reference == reference &&
+        /* Natural completion can win the race with a queued STOP or PAUSE. */
+        if ((opcode == AFX_CMD_STOP || opcode == AFX_CMD_PAUSE) && !context->reference &&
+            record->reference == reference &&
             (record->state == AFX_DONE || record->state == AFX_ERROR)) {
             publish(index, reference, record->state, sequence, record->result,
                     record->position, record->next_deadline, record->detail);
