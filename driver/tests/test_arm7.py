@@ -1,5 +1,6 @@
 """Run the ARM7 voice/restore logic with host-backed registers and staging RAM."""
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 
@@ -191,7 +192,7 @@ int main(void) {
 with tempfile.TemporaryDirectory() as directory:
     path = Path(directory)
     (path / "check.c").write_text(prefix + globals_ + body + checks)
-    subprocess.run(["clang", "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror",
+    subprocess.run([os.environ.get("CC", "clang"), "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror",
                     "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
                     "-I" + str(root / "driver/format/include"),
                     "-I" + str(root / "driver/include"),

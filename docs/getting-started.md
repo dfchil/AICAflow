@@ -4,7 +4,7 @@
 
 AICAflow runs prepared AFB/AFX assets on Dreamcast AICA hardware.  The package
 includes a verified ARM7 firmware image, so normal example builds need only a
-KallistiOS SH4 environment and host utilities (Clang with C11 support, zlib,
+KallistiOS SH4 environment and host utilities (Clang or GCC with C11 support, zlib,
 `curl`, `unzip` and a SHA-256 command). The example C sources use C23 `#embed`,
 so use a KOS compiler that supports it. macOS and Linux are the supported host
 workflows. The example toolchain is a pinned AICAforge submodule:

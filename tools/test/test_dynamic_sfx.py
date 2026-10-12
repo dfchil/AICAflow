@@ -1,5 +1,6 @@
 """Exercise the demo's real pan conversion and packed register patches."""
 from pathlib import Path
+import os
 import subprocess
 from tempfile import TemporaryDirectory
 
@@ -60,7 +61,7 @@ with TemporaryDirectory() as directory:
     test = Path(directory) / "dynamic.c"
     binary = Path(directory) / "dynamic"
     test.write_text(harness + pan + patch + checks)
-    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+    subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra", "-Werror",
                     "-I", str(root / "driver/format/include"), str(test),
                     "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
