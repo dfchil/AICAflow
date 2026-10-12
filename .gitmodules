@@ -1,6 +1,6 @@
 [submodule "enDjinn"]
 	path = dependencies/enDjinn
-	url = git@github.com:dfchil/enDjinn.git
+	url = https://github.com/dfchil/enDjinn.git
 [submodule "dependencies/AICAforge"]
 	path = dependencies/AICAforge
 	url = https://github.com/dfchil/AICAforge.git
