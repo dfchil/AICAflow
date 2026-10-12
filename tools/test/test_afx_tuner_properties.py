@@ -1,5 +1,6 @@
 """Check the tuner's real duration reader against the portable AFX codec."""
 from pathlib import Path
+import os
 import subprocess
 from tempfile import TemporaryDirectory
 
@@ -43,7 +44,7 @@ with TemporaryDirectory() as directory:
     test = Path(directory) / "properties.c"
     binary = Path(directory) / "properties"
     test.write_text(harness + reader + checks)
-    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+    subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-Wall", "-Wextra", "-Werror",
                     "-I", str(root / "driver/format/include"), str(test),
                     str(root / "driver/format/src/codec.c"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
