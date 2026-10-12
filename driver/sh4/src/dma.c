@@ -136,8 +136,11 @@ int afx_sample_bank_stream_dma_begin(afx_asset_t asset, uint32_t byte_offset,
         return -AFX_BAD_BOUNDS;
     afx_asset_slot_t *bank = &g_assets[index];
     padded = align_up(bytes, AFX_UPLOAD_ALIGN);
+    /* G2 DMA needs a 32-byte-aligned destination, so only the last chunk of a
+     * bank may have a length that is not a multiple of 32. */
     if (!padded || byte_offset != bank->upload_cursor || bytes > bank->size - byte_offset ||
-        padded > bank->allocation_size - byte_offset) return -AFX_BAD_BOUNDS;
+        padded > bank->allocation_size - byte_offset ||
+        ((bytes & (AFX_UPLOAD_ALIGN - 1u)) && byte_offset + bytes != bank->size)) return -AFX_BAD_BOUNDS;
     if (g_upload_dma_asset) return -AFX_BUSY;
     dcache_wback_range((uintptr_t)data, padded);
     g_upload_dma_asset = asset;

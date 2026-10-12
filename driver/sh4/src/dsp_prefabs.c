@@ -65,7 +65,9 @@ int afx_dsp_program_delay(afx_dsp_program_t *program, uint16_t samples,
  * feed the right line and then return to the left. Outputs are wet-only. */
 int afx_dsp_program_pingpong(afx_dsp_program_t *program, uint16_t samples,
                              int16_t feedback) {
-    if (!samples || feedback < 0 || feedback > 24576 || (feedback & 7)) return -AFX_BAD_COMMAND;
+    /* Each line owns half of the ring: a longer delay would read the other's. */
+    if (!samples || samples >= 32768u || feedback < 0 || feedback > 24576 || (feedback & 7))
+        return -AFX_BAD_COMMAND;
     int result = afx_dsp_program_init(program);
     /* Steps 1–5 read left/right delays into MEMS0/1; 6–9 return each side. */
     if (!result) result = put(program, 1, (afx_dsp_step_t){.mrd = 1, .zero = 1});

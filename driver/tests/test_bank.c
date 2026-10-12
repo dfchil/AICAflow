@@ -62,6 +62,21 @@ static void test_bounded_bank_upload(void) {
     assert(afx_sample_bank_upload(input + 1, bytes, &asset) == AFX_OK);
     assert(afx_asset_free(asset) == AFX_OK);
     free(input);
+    /* A stream chunk that is not a multiple of 32 bytes would leave the next
+     * one unaligned, so only the bank's last chunk may be. */
+    static _Alignas(32) uint8_t chunk[96];
+    bool complete = false;
+    assert(afx_sample_bank_stream_begin(81, &asset) == AFX_OK);
+    assert(afx_sample_bank_stream_dma_begin(asset, 0, chunk, 40) == -AFX_BAD_BOUNDS);
+    assert(afx_sample_bank_stream_dma_begin(asset, 0, chunk, 64) == AFX_OK);
+    assert(afx_sample_bank_stream_dma_poll(asset, &complete) == AFX_OK && !complete);
+    thd_pass(); /* the simulated DMA finishes */
+    assert(afx_sample_bank_stream_dma_poll(asset, &complete) == AFX_OK && complete);
+    assert(afx_sample_bank_stream_dma_begin(asset, 64, chunk, 17) == AFX_OK);
+    thd_pass();
+    assert(afx_sample_bank_stream_dma_poll(asset, &complete) == AFX_OK && complete);
+    assert(afx_sample_bank_stream_finish(asset) == AFX_OK);
+    assert(afx_asset_free(asset) == AFX_OK);
 }
 
 static void test_direct_bank_upload(void) {

@@ -70,7 +70,8 @@ bool allocator_reset(uint32_t dynamic_base) {
         g_assets[i].sample_bank = false;
         g_assets[i].checkpoints = NULL;
         g_assets[i].checkpoints_size = 0;
-        if (g_assets[i].live) {
+        /* A handle to an asset still being uploaded must go stale as well. */
+        if (g_assets[i].live || g_assets[i].uploading) {
             if (g_assets[i].generation == UINT16_MAX) g_assets[i].retired = true;
             else ++g_assets[i].generation;
         }

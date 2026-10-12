@@ -44,6 +44,12 @@ int main(void) {
     step.masa = 64;
     assert(afx_dsp_program_step(&program, 1, &step) == -AFX_BAD_COMMAND);
     assert(afx_dsp_program_preset(&program, "pingpong") == AFX_OK);
+    {
+        /* Each ping-pong line owns half of the ring. */
+        afx_dsp_program_t bounded;
+        assert(afx_dsp_program_pingpong(&bounded, 32767, 8192) == AFX_OK);
+        assert(afx_dsp_program_pingpong(&bounded, 32768, 8192) == -AFX_BAD_COMMAND);
+    }
     const uint16_t *addresses = program.words + AFX_DSP_MPRO_WORDS + AFX_DSP_COEFFICIENTS;
     assert(addresses[0] == 7938 && addresses[1] == 0);
     assert(addresses[2] == 32768 + 7938 && addresses[3] == 32768);

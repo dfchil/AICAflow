@@ -27,7 +27,12 @@ typedef struct {
 
 /* The input is an AFB file. Its header is always little-endian, even on a
  * host where the C struct representation differs. The complete payload is
- * allocated once in AICA RAM; no sample views or lookup table are created. */
+ * allocated once in AICA RAM; no sample views or lookup table are created.
+ *
+ * Bank loading is not thread-safe. Load banks from one thread at a time, and
+ * make no other AICAflow call from another thread while afx_bank_load_file
+ * runs: it treats a busy driver lock as a failed load, and a load abandoned
+ * that way can leave the upload DMA claimed until afx_shutdown. */
 int afx_bank_load_memory(afx_bank_t *bank, const void *data, uint32_t size);
 int afx_bank_load_file(afx_bank_t *bank, const char *path);
 int afx_bank_release(afx_bank_t *bank);
