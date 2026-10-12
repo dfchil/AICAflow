@@ -1,4 +1,7 @@
+# Clang is the default; CC from the environment or command line selects another compiler.
+ifeq ($(origin CC),default)
 CC := clang
+endif
 CFLAGS := -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 smoke: build/test_protocol build/test_bank build/test_bank_trusted build/test_dsp build/afx_validate
 	./build/test_protocol

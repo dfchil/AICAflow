@@ -1,5 +1,10 @@
+# Clang is the default; CC and CXX from the environment or command line select another compiler.
+ifeq ($(origin CC),default)
 CC := clang
+endif
+ifeq ($(origin CXX),default)
 CXX := clang++
+endif
 CFLAGS := -Wall -Wextra -Werror -pedantic -Iinclude
 
 check: build/test_format_c build/test_format_cpp

@@ -4,8 +4,9 @@
 
 `make check` (also `make runtime-check`) runs format, driver, DSP, tuner and
 frozen-asset compatibility tests, including the firmware manifest hash.
-It needs Clang with AddressSanitizer/UndefinedBehaviorSanitizer and Python 3's
-standard library. It needs no AICAforge checkout, Python packages, KOS or ROMs.
+It needs a C11 compiler with AddressSanitizer/UndefinedBehaviorSanitizer and
+Python 3's standard library. Clang is the default; `make CC=gcc CXX=g++ check`
+uses GCC. It needs no AICAforge checkout, Python packages, KOS or ROMs.
 
 To exercise AICAforge output with AICAflow's validator and loader:
 
