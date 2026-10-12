@@ -157,9 +157,10 @@ static int lifecycle(afx_instance_t instance, uint32_t opcode) {
     uint32_t index;
     if (!resolve_instance(instance, &index)) return -AFX_STALE_GENERATION;
     afx_instance_slot_t *slot = &g_instances[index];
-    /* The queue is ordered and ARM7 checks the state itself, so STOP and PAUSE
-     * need not wait for an earlier command's acknowledgement. */
-    if (slot->recycling) return -AFX_BUSY;
+    /* One lifecycle command at a time: a caller that repeats STOP until the
+     * instance is gone must not queue a new command, with a new sequence to
+     * wait for, on every attempt. */
+    if (slot->pending) return -AFX_BUSY;
     uint32_t sequence = new_sequence();
     int queued = enqueue(opcode, instance, sequence, 0, NULL, 0);
     if (!queued) {

@@ -217,24 +217,17 @@ static void test_coinciding_work(afx_asset_t flow) {
     afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
 }
 
-static void test_stop_follows_activate(afx_asset_t flow) {
-    /* STOP queues behind an unacknowledged ACTIVATE instead of being refused. */
+static void test_one_lifecycle_command(afx_asset_t flow) {
+    /* A second STOP while the first is unacknowledged queues nothing. */
     afx_instance_t instance;
     assert(afx_instance_activate(flow, &instance) == AFX_OK);
     uint32_t index = AFX_HANDLE_INDEX(instance);
-    uint32_t activation = g_instances[index].status.sequence;
-    assert(afx_instance_stop(instance) == AFX_OK);
-    uint32_t stop = g_instances[index].status.sequence;
-    assert(stop != activation && queued(queue_head() - 1).opcode == AFX_CMD_STOP);
-    /* The older acknowledgement is skipped; the STOP result settles the slot. */
+    uint32_t activation = g_instances[index].status.sequence, head = queue_head();
+    assert(afx_instance_stop(instance) == -AFX_BUSY && queue_head() == head);
     observed(index, instance, AFX_RUNNING, activation, AFX_OK);
-    assert(afx_update() == AFX_OK && g_instances[index].pending);
-    observed(index, instance, AFX_DONE, stop, AFX_OK);
     assert(afx_update() == AFX_OK && !g_instances[index].pending);
-    assert(g_instances[index].status.state == AFX_DONE);
-    /* A slot being recycled accepts no further lifecycle command. */
-    assert(afx_instance_recycle(instance) == AFX_OK);
-    assert(afx_instance_stop(instance) == -AFX_BUSY);
+    assert(afx_instance_stop(instance) == AFX_OK && queue_head() == head + 1u);
+    assert(afx_instance_stop(instance) == -AFX_BUSY && queue_head() == head + 1u);
     release_instance_preserving_generation(index);
     assert(g_available_channels == UINT64_MAX);
     afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
@@ -549,7 +542,7 @@ int main(int argc, char **argv) {
     assert(afx_asset_free(raw) == AFX_OK && g_assets[bank_index].references == 1);
     test_channel_maps(flow);
     test_coinciding_work(flow);
-    test_stop_follows_activate(flow);
+    test_one_lifecycle_command(flow);
     memset(seek_data, 0, sizeof(seek_data));
     afx_write32(seek_data, AFX_SEEK_MAGIC); afx_write32(seek_data + 4, AFX_SEEK_VERSION);
     afx_write32(seek_data + 8, 1); afx_write32(seek_data + 12, 0x12345678u);

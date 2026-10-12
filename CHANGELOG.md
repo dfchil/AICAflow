@@ -19,8 +19,6 @@ the commit history.
   `afx_bank_flow_upload()` do not return `AFX_NO_EXEC_BUDGET`; the ARM7 runs
   every due event and reports lateness. `AFX_EXECUTION_BUDGET_*` remain the
   limits authoring tools apply per flow.
-- `afx_instance_stop()` and `afx_instance_pause()` can follow an earlier
-  command without waiting for its acknowledgement.
 - `afx_init()` clears only the control region of sound RAM, not all 2 MB.
 - A flow image uploads in one call, and the command queue head is kept on the
   SH4 instead of being read back.

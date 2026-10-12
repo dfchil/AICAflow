@@ -98,7 +98,7 @@ int afx_asset_work(afx_asset_t asset, afx_work_profile_t *out_profile);
 
 /* Stage 3 lifecycle API. Commands are nonblocking: a zero result means queued;
  * call afx_update and afx_instance_status for ARM-owned durable completion.
- * STOP and PAUSE may follow any earlier command without waiting for it.
+ * A lifecycle command returns AFX_BUSY while an earlier one is unacknowledged.
  * PATCH/gain/tempo/lane commands may follow ACTIVATE immediately; queue order
  * applies them before the first authored deadline. */
 int afx_instance_activate(afx_asset_t flow_asset, afx_instance_t *out_instance);
