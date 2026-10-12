@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased
+
+Changes since 0.2.0-rc1. The entries up to 2026-10-09 were reconstructed from
+the commit history.
+
+### Changed
+
+- Firmware ABI 7 with a new layout ID: bank-relative playback, compact
+  per-instance state and DSP delay rings allocated from the asset arena. The
+  host library and `firmware/aicaflow.drv` must be updated together.
+- The SH4 keeps no copy of an uploaded AFX image.
+- The SH4 library defaults to trusted assets (`AFX_VALIDATE_ASSETS=0`): it
+  checks layout, relocations and bank binding but does not decode the stream.
+  Assets must carry an authored work profile. Build with
+  `AFX_VALIDATE_ASSETS=1` for full validation.
+- The runtime no longer refuses work. `afx_instance_activate()` and
+  `afx_bank_flow_upload()` do not return `AFX_NO_EXEC_BUDGET`; the ARM7 runs
+  every due event and reports lateness. `AFX_EXECUTION_BUDGET_*` remain the
+  limits authoring tools apply per flow.
+- `afx_instance_stop()` and `afx_instance_pause()` can follow an earlier
+  command without waiting for its acknowledgement.
+- `afx_init()` clears only the control region of sound RAM, not all 2 MB.
+- A flow image uploads in one call, and the command queue head is kept on the
+  SH4 instead of being read back.
+- When firmware advertises `AFX_CAP_DSP_HOST_INIT`, the SH4 fills a DSP ring
+  in blocks. Aligned sample data is uploaded by DMA directly.
+- Fewer status reads per `afx_update()`.
+- Host checks build with GCC as well as Clang (`make CC=gcc CXX=g++ check`).
+- `make check` validates the checked-in firmware image against the headers.
+- The enDjinn submodule uses an HTTPS URL, so `make dependencies` needs no
+  SSH key.
+- The pinned AICAforge moves work beyond one tick's limit into the next tick
+  instead of failing the flow.
+
+### Fixed
+
+- A stream upload chunk that is not a multiple of 32 bytes is rejected unless
+  it is the bank's last. It used to be accepted and then fail as `AFX_BUSY`.
+- `afx_dsp_program_pingpong()` rejects a delay of 32768 samples or more, which
+  read the other line's half of the ring.
+- A handle to an asset still being uploaded goes stale across
+  `afx_shutdown()` and `afx_init()`.
+- Changing `AFX_VALIDATE_ASSETS` rebuilds the library without `make clean`.
+- The example player frees a bank whose upload it cancels while DMA is in
+  flight, instead of leaking it and blocking later loads.
+- Bank upload and the tuner's TCP transfers use bounded memory.
+- Checkpoint generation is deterministic.
+
+### Removed
+
+- `AFX_UPLOAD_STEP_BYTES`, and the declaration of `afx_status()`, which was
+  never defined.
+
+### Known limitations
+
+- Bank loading is not thread-safe; see [Integration](docs/integration.md).
+
 ## 0.2.0-rc1 — 2026-10-05
 
 - Bank-bound AFB/AFX playback with shared sample banks and setup templates.
