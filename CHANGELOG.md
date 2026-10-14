@@ -31,9 +31,15 @@ the commit history.
   SSH key.
 - The pinned AICAforge moves work beyond one tick's limit into the next tick
   instead of failing the flow.
+- The pinned AICAforge has its review fixes and `afx_n64 --sfx-adpcm`.
 
 ### Fixed
 
+- Firmware: a gain change kept only four bits of the mix word's low byte, so
+  it cleared the low-pass bypass and voice-off flags and cut the filter Q.
+  Only the attenuation byte is scaled now.
+- Firmware: a PAUSE that arrived just after a flow ended by itself overwrote
+  its DONE record with an error. It is answered like STOP now.
 - A stream upload chunk that is not a multiple of 32 bytes is rejected unless
   it is the bank's last. It used to be accepted and then fail as `AFX_BUSY`.
 - `afx_dsp_program_pingpong()` rejects a delay of 32768 samples or more, which
