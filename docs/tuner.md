@@ -75,9 +75,9 @@ The tuner owns exactly one current bank and one current control flow:
 | `stop` | Stops/recycles playback; keeps AFB and AFX for `play`, patching and inspection. |
 | a staged upload | Uses a temporary SH4 buffer. It is freed after its commit, when a later upload begins, or on `reset`/`exit`. |
 
-Freed AICA memory is reusable but not zeroed. Use `reset` to clear it.
+Freed AICA memory is reusable but not zeroed, and `reset` does not zero it either.
 
-To clear assets, uploads and playback state:
+To drop all assets, uploads and playback state:
 
 ```sh
 python3 tools/tuner/client.py --host "$DCTOOL_HOST" reset
