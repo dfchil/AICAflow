@@ -106,7 +106,24 @@ static void test_sample_addresses(void) {
     assert(resolve_sample_address(&context, &control, &low) == AFX_BAD_SAMPLE);
 }
 
-int main(void) {
+/* The firmware image a host would upload must describe the layout these
+ * headers were built with. */
+static void test_firmware_image(const char *path) {
+    static uint8_t image[AFX_AICA_RAM_SIZE];
+    afx_firmware_info_t info;
+    FILE *file = fopen(path, "rb");
+    assert(file);
+    size_t size = fread(image, 1, sizeof(image), file);
+    assert(size && feof(file) && !fclose(file));
+    assert(afx_firmware_validate(image, (uint32_t)size, &info) == AFX_OK);
+    assert(info.abi == AFX_ABI_VERSION && info.layout_id == AFX_LAYOUT_ID);
+    assert(info.load_bytes == size && info.asset_base >= size && !(info.asset_base & 31u));
+    assert(info.asset_limit == AFX_ASSET_MAX && info.stack_base == AFX_STACK_BASE);
+    assert(info.private_end <= info.stack_base);
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2) test_firmware_image(argv[1]);
     test_sample_addresses();
     test_bank_bound_container();
     test_bytecode();

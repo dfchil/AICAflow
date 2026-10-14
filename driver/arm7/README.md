@@ -24,6 +24,7 @@ make -C driver layout
 ```
 
 The layout check validates the built firmware manifest against the headers.
+`make check` runs the same validation on the checked-in image.
 Hardware checks must also exercise timed playback, PATCH, PARK/STOP and
 clean instance teardown; see [Testing](../../docs/testing.md).
 

@@ -75,16 +75,17 @@ The tuner owns exactly one current bank and one current control flow:
 | `stop` | Stops/recycles playback; keeps AFB and AFX for `play`, patching and inspection. |
 | a staged upload | Uses a temporary SH4 buffer. It is freed after its commit, when a later upload begins, or on `reset`/`exit`. |
 
-Freed AICA memory is reusable but not zeroed. Use `reset` to clear it.
+Freed AICA memory is reusable but not zeroed, and `reset` does not zero it either.
 
-To clear assets, uploads and playback state:
+To drop all assets, uploads and playback state:
 
 ```sh
 python3 tools/tuner/client.py --host "$DCTOOL_HOST" reset
 ```
 
 This is a hard reset: the tuner disables AICAflow, calls `afx_init` again, and
-therefore zeroes all 2 MiB of AICA RAM before re-uploading the ARM7 firmware.
+re-uploads the ARM7 firmware. `afx_init` zeroes the driver's control region,
+not the asset arena; old asset bytes stay until something is uploaded over them.
 It also drops the current AFB, AFX, AFC seek data, instance, DSP program,
 runtime patches, lane mutes and staged SH4 upload. The tuner's default instance
 gain returns to 255. Re-upload the bank and control flow afterwards. `exit`

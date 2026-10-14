@@ -252,7 +252,8 @@ static int shared_bank_load(void) {
 #ifdef PLAYER_SONG_BANK_FILE
 static void bank_load_cancel(void) {
     if (bank_loader.file) fclose(bank_loader.file);
-    if (bank_loader.asset && !bank_loader.dma_pending) (void)afx_asset_free(bank_loader.asset);
+    /* Freeing the asset waits for a DMA still reading the buffer. */
+    if (bank_loader.asset) (void)afx_asset_free(bank_loader.asset);
     free(bank_loader.buffer);
     bank_loader=(bank_loader_t){0};
     loading_label=NULL;

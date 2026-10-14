@@ -54,9 +54,8 @@ typedef struct {
     uint32_t peak_register_writes; /* Peak register writes between WAIT boundaries. */
 } afx_work_profile_t;
 
-/* Queues one 32-byte-aligned SH-4 -> AICA DMA transfer. Call again on later
- * frames to collect completion and queue the next block. Every byte, including
- * final zero padding, uses DMA; 64 KiB keeps an interactive frame between blocks. */
+/* The block size afx_bank_load_file uses for each SH-4 -> AICA DMA transfer.
+ * Every byte, including final zero padding, uses DMA. */
 #define AFX_UPLOAD_DMA_STEP_BYTES 65536u
 /* Init/shutdown require all other host calls to be quiescent. Other host APIs
  * serialize bookkeeping and publication with a recursive try-lock. Every
@@ -81,7 +80,10 @@ int afx_mem_diagnose(uint32_t size, uint32_t align, afx_mem_diagnostic_t *out_di
  * use bounded staging, without reading beyond the supplied byte count. */
 int afx_sample_bank_upload(const void *data, uint32_t bytes, afx_asset_t *out_bank);
 /* Stream one backing allocation from caller-owned, aligned buffers. Begin one
- * DMA, fill another buffer while it runs, then poll and submit the next chunk. */
+ * DMA, fill another buffer while it runs, then poll and submit the next chunk.
+ * Every chunk but the last must be a multiple of 32 bytes. Only one stream
+ * upload can be in flight, and these calls are not thread-safe: load banks
+ * from one thread at a time. */
 int afx_sample_bank_stream_begin(uint32_t bytes, afx_asset_t *out_bank);
 int afx_sample_bank_stream_dma_begin(afx_asset_t bank, uint32_t byte_offset,
                                      const void *data, uint32_t bytes);
@@ -96,7 +98,7 @@ int afx_asset_work(afx_asset_t asset, afx_work_profile_t *out_profile);
 
 /* Stage 3 lifecycle API. Commands are nonblocking: a zero result means queued;
  * call afx_update and afx_instance_status for ARM-owned durable completion.
- * STOP and PAUSE may follow any earlier command without waiting for it.
+ * A lifecycle command returns AFX_BUSY while an earlier one is unacknowledged.
  * PATCH/gain/tempo/lane commands may follow ACTIVATE immediately; queue order
  * applies them before the first authored deadline. */
 int afx_instance_activate(afx_asset_t flow_asset, afx_instance_t *out_instance);
@@ -156,7 +158,6 @@ int afx_instance_status(afx_instance_t instance, afx_instance_status_t *out_stat
 /* Refreshes ARM-owned instance observations; returns 0 even when none changed. */
 int afx_update(void);
 
-volatile afx_status_t *afx_status(void);
 uint32_t afx_status_heartbeat(void);
 uint32_t afx_status_timer_ticks(void);
 /* Largest executor lateness, in AICA timer ticks, since this firmware boot. */
