@@ -84,7 +84,8 @@ python3 tools/tuner/client.py --host "$DCTOOL_HOST" reset
 ```
 
 This is a hard reset: the tuner disables AICAflow, calls `afx_init` again, and
-therefore zeroes all 2 MiB of AICA RAM before re-uploading the ARM7 firmware.
+re-uploads the ARM7 firmware. `afx_init` zeroes the driver's control region,
+not the asset arena; old asset bytes stay until something is uploaded over them.
 It also drops the current AFB, AFX, AFC seek data, instance, DSP program,
 runtime patches, lane mutes and staged SH4 upload. The tuner's default instance
 gain returns to 255. Re-upload the bank and control flow afterwards. `exit`
