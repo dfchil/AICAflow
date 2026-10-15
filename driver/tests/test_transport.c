@@ -45,11 +45,23 @@ static asic_evt_handler irq_handler;
 static int irq_unmasked;
 static unsigned irq_deliveries;
 static void (*irq_hook_on_clear)(void), (*irq_hook_on_unmask)(void);
+static int irq_line(void) {
+    return (mcipd & afx_read32(dsp_registers + AFX_AICA_MCIEB) & AFX_AICA_MCI_SCPU) != 0;
+}
 static void irq_check(void) {
-    uint32_t mcieb = afx_read32(dsp_registers + AFX_AICA_MCIEB);
-    if (irq_handler && irq_unmasked && (mcipd & mcieb & AFX_AICA_MCI_SCPU)) {
+    if (irq_handler && irq_unmasked && irq_line()) {
         ++irq_deliveries;
         irq_handler(ASIC_EVT_SPU_IRQ, NULL);
+        /* Raised and unmasked after its handler would interrupt again at once. */
+        assert(!irq_unmasked);
+    }
+}
+/* KOS calls every handler whose status bit is set when any ASIC interrupt
+ * arrives, masked or not; the SPU line stays set until MCIRE clears it. */
+static __attribute__((unused)) void irq_other_asic_event(void) {
+    if (irq_handler && irq_line()) {
+        irq_handler(ASIC_EVT_SPU_IRQ, NULL);
+        assert(!irq_unmasked);
     }
 }
 static void irq_raise(void) { mcipd |= AFX_AICA_MCI_SCPU; irq_check(); }

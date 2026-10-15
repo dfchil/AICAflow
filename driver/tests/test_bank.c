@@ -40,6 +40,10 @@ static void test_observation_cache(void) {
 static afx_instance_t irq_instance;
 static void publish_done(void) { observed(5, irq_instance, AFX_DONE, 3, AFX_OK); }
 static void publish_paused(void) { observed(5, irq_instance, AFX_PAUSED, 4, AFX_OK); }
+static void publish_running_and_dispatch(void) {
+    observed(5, irq_instance, AFX_RUNNING, 5, AFX_OK);
+    irq_other_asic_event(); /* Another ASIC interrupt while afx_update reads. */
+}
 static void test_host_irq(void) {
     afx_instance_slot_t *slot = &g_instances[5];
     afx_instance_status_t status;
@@ -80,6 +84,20 @@ static void test_host_irq(void) {
     assert(status.result == AFX_ERROR);
     assert(afx_update() == AFX_OK && afx_instance_status(irq_instance, &status) == AFX_OK);
     assert(status.state == AFX_PAUSED && status.sequence == 4);
+    reads = observed_reads;
+    assert(afx_update() == AFX_OK && observed_reads == reads);
+    /* KOS calls the handler again for other ASIC interrupts while news waits. */
+    observed(5, irq_instance, AFX_PAUSED, 4, AFX_ERROR);
+    irq_other_asic_event();
+    irq_other_asic_event();
+    assert(afx_update() == AFX_OK && afx_instance_status(irq_instance, &status) == AFX_OK);
+    assert(status.result == AFX_ERROR);
+    /* And while it reads, after the clear: the unmask must not leave it unmasked. */
+    observed(5, irq_instance, AFX_PAUSED, 4, AFX_OK);
+    irq_hook_on_clear = publish_running_and_dispatch;
+    assert(afx_update() == AFX_OK && afx_instance_status(irq_instance, &status) == AFX_OK);
+    assert(status.state == AFX_RUNNING && status.sequence == 5);
+    assert(afx_update() == AFX_OK);
     reads = observed_reads;
     assert(afx_update() == AFX_OK && observed_reads == reads);
     memset(slot, 0, sizeof(*slot));

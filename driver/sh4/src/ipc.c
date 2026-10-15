@@ -32,6 +32,9 @@ uint32_t const g_spu_base = AFX_SPU_RAM_BASE_SH4;
 static volatile bool g_host_news;
 static void host_irq(uint32_t code, void *data) {
     (void)code; (void)data;
+    /* KOS dispatches by the ASIC's status, not its mask, so while the line is
+     * raised every other ASIC interrupt calls this again. Mask each time all
+     * the same: afx_update may have unmasked since the flag was set. */
     asic_evt_disable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
     g_host_news = true;
 }
