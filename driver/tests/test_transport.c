@@ -14,7 +14,7 @@ static uint8_t dsp_registers[0x4000];
 static int running, boot_ok = 1;
 static unsigned resets;
 static uint32_t asset_base;
-static unsigned asset_reads, observed_reads;
+static unsigned asset_reads, observed_reads, tail_reads;
 static uint64_t clock_ms;
 static const void *dma_source;
 static uintptr_t dma_address;
@@ -87,6 +87,7 @@ uint32_t g2_read_32(uintptr_t address) {
         address - 0xa0800000 < AFX_CHANNEL_MAP_ARENA_ADDR) ++observed_reads;
     if (address - 0xa0800000 >= asset_base && address - 0xa0800000 < AFX_ASSET_MAX)
         ++asset_reads;
+    if (address - 0xa0800000 == AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail)) ++tail_reads;
     return afx_read32(ram + (address - 0xa0800000));
 }
 void g2_write_32(uintptr_t address, uint32_t value) {

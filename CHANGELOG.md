@@ -22,6 +22,9 @@ the commit history.
 - `afx_init()` clears only the control region of sound RAM, not all 2 MB.
 - A flow image uploads in one call, and the command queue head is kept on the
   SH4 instead of being read back.
+- Queuing a command reads the queue tail back over G2 only when the last tail
+  read shows no room, so at most once per 32 commands instead of once per
+  command. The firmware and ABI are unchanged.
 - When firmware advertises `AFX_CAP_DSP_HOST_INIT`, the SH4 fills a DSP ring
   in blocks. Aligned sample data is uploaded by DMA directly.
 - Fewer status reads per `afx_update()`.

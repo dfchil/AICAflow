@@ -233,6 +233,34 @@ static void test_one_lifecycle_command(afx_asset_t flow) {
     afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
 }
 
+static void test_enqueue_tail_cache(afx_asset_t flow) {
+    /* With the queue drained, a full queue's worth of commands reads the
+     * ARM7's tail back at most once; a full queue is still reported, and room
+     * the ARM7 makes is seen on the next command. */
+    afx_instance_t instance;
+    assert(afx_instance_activate(flow, &instance) == AFX_OK);
+    uint32_t index = AFX_HANDLE_INDEX(instance);
+    observed(index, instance, AFX_RUNNING, g_instances[index].status.sequence, AFX_OK);
+    assert(afx_update() == AFX_OK && !g_instances[index].pending);
+    uint8_t *tail = ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail);
+    afx_write32(tail, queue_head());
+    unsigned before = tail_reads;
+    unsigned sent = 0;
+    while (afx_instance_gain(instance, (uint8_t)sent) == AFX_OK) ++sent;
+    assert(sent == AFX_CMD_QUEUE_CAPACITY);
+    assert(afx_instance_gain(instance, 1) == -AFX_IPC_FULL);
+    /* One read when the cached view first looked full, one per refused command. */
+    assert(tail_reads - before <= 3u);
+    afx_write32(tail, queue_head() - 1u); /* the ARM7 consumed all but one */
+    before = tail_reads;
+    sent = 0;
+    while (afx_instance_gain(instance, 2) == AFX_OK) ++sent;
+    assert(sent == AFX_CMD_QUEUE_CAPACITY - 1u && tail_reads - before <= 2u);
+    afx_write32(tail, queue_head());
+    release_instance_preserving_generation(index);
+    assert(g_available_channels == UINT64_MAX);
+}
+
 static void firmware(uint8_t image[64]) {
     uint32_t manifest[] = {AFX_FIRMWARE_MAGIC, AFX_ABI_VERSION, AFX_LAYOUT_ID, 64, 64,
                            AFX_ASSET_MAX, AFX_PRIVATE_BASE + 64 * sizeof(afx_runtime_slot_t),
@@ -543,6 +571,7 @@ int main(int argc, char **argv) {
     test_channel_maps(flow);
     test_coinciding_work(flow);
     test_one_lifecycle_command(flow);
+    test_enqueue_tail_cache(flow);
     memset(seek_data, 0, sizeof(seek_data));
     afx_write32(seek_data, AFX_SEEK_MAGIC); afx_write32(seek_data + 4, AFX_SEEK_VERSION);
     afx_write32(seek_data + 8, 1); afx_write32(seek_data + 12, 0x12345678u);
