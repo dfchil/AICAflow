@@ -14,6 +14,7 @@ uint32_t g_dsp_ring;
 uint16_t g_dsp_return_left, g_dsp_return_right;
 uint32_t g_next_sequence = 1;
 uint32_t g_queue_head; /* Only the SH-4 advances head, so it need not be read back. */
+uint32_t g_queue_tail_seen; /* The last tail read back; see enqueue(). */
 bool g_ready, g_lifecycle;
 volatile bool g_upload_dma_done;
 afx_asset_t g_upload_dma_asset;
@@ -34,7 +35,12 @@ int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
     g2_lock_scoped();
     int result = AFX_OK;
     uint32_t head = g_queue_head;
-    uint32_t tail = g2_read_32_raw(g_spu_base + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail));
+    /* Only the ARM7 advances tail, so the last value read is a lower bound on
+     * it: room seen then is still there. Tail is read back over G2 only when
+     * that view has no room, once per AFX_CMD_QUEUE_CAPACITY commands at most. */
+    if (head - g_queue_tail_seen >= AFX_CMD_QUEUE_CAPACITY)
+        g_queue_tail_seen = g2_read_32_raw(g_spu_base + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail));
+    uint32_t tail = g_queue_tail_seen;
     if (head - tail > AFX_CMD_QUEUE_CAPACITY) result = -AFX_BAD_FIRMWARE;
     else if (head - tail == AFX_CMD_QUEUE_CAPACITY) result = -AFX_IPC_FULL;
     else {
@@ -90,7 +96,7 @@ int afx_init(const void *firmware, uint32_t size) {
      * is programmed. Only the control region needs a known state: a stale
      * status block must not look like a booted driver. */
     spu_memset(AFX_CONTROL_BASE, 0, AFX_AICA_RAM_SIZE - AFX_CONTROL_BASE);
-    g_queue_head = 0;
+    g_queue_head = g_queue_tail_seen = 0;
     upload_words(0, firmware, size);
     spu_enable();
     uint64_t started = timer_ms_gettime64();

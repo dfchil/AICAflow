@@ -80,7 +80,7 @@ extern afx_asset_slot_t *g_assets;
 extern uint32_t g_asset_capacity;
 extern afx_instance_slot_t g_instances[AFX_MAX_FLOW_SLOTS];
 extern uint64_t g_available_channels, g_map_used[AFX_CHANNEL_MAP_ARENAS];
-extern uint32_t g_next_sequence, g_queue_head;
+extern uint32_t g_next_sequence, g_queue_head, g_queue_tail_seen;
 extern bool g_dsp_scene, g_ready, g_lifecycle;
 extern uint32_t g_dsp_ring; /* Owned DSP allocation; retained until stop is acknowledged. */
 extern uint16_t g_dsp_return_left, g_dsp_return_right;
