@@ -111,6 +111,15 @@ static int make_bank_flow(const afx_bank_t *bank, const uint16_t fields[AFX_FIEL
         afx_write16(file + 96 + field * 2u, fields[field]);
     memcpy(file + 96 + AFX_SETUP_BYTES, stream, stream_bytes);
     afx_write32(file + 32, afx_control_id(file + 96, image_bytes));
+    /* A library built without AFX_VALIDATE_ASSETS trusts the header's work
+     * profile and refuses a file without one, so measure it here. */
+    {
+        afx_file_header_t header;
+        afx_validation_profile_t profile;
+        if (afx_file_validate_profile(file, 96 + image_bytes, &header, &profile)) return -AFX_BAD_FORMAT;
+        afx_write32(file + offsetof(afx_file_header_t, work_profile),
+                    AFX_WORK_PROFILE(profile.peak_commands, profile.peak_register_writes));
+    }
     return afx_bank_flow_upload(bank, file, 96 + image_bytes, out_flow);
 }
 
