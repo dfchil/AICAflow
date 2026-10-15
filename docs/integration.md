@@ -34,7 +34,9 @@ application steps:
    activating; an active referenced flow cannot replace its seek index.
 5. Activate with `afx_instance_activate()`. Apply player gain/tempo and other
    live controls using the returned instance handle.
-6. Call `afx_update()` and inspect `afx_instance_status()` regularly. A zero
+6. Call `afx_update()` and inspect `afx_instance_status()` regularly; every
+   frame is fine, since `afx_update()` reads AICA RAM only after the firmware's
+   status interrupt reports a change. A zero
    return from a lifecycle call means queued, not "ARM7 finished". Check both
    the API result and the later observed state/result.
 7. On completion or explicit STOP, wait for DONE/ERROR, queue recycle and wait

@@ -353,36 +353,55 @@ int afx_instance_recycle(afx_instance_t instance) {
         return -AFX_BUSY;
     return lifecycle(instance, AFX_CMD_RECYCLE);
 }
+/* Takes a slot's new observation, if it published one; false otherwise. */
+static bool update_slot(uint32_t index) {
+    afx_instance_slot_t *slot = &g_instances[index];
+    afx_instance_status_t observed;
+    if (!read_observed(index, &slot->observed_epoch, &observed)) return false;
+    afx_instance_t reference = AFX_MAKE_HANDLE(index, slot->generation);
+    /* FREE carries no generation in its reference, so its sequence is the
+     * guard against a delayed recycle observation freeing this slot after
+     * it has been reused by a later generation. */
+    if (slot->recycling && observed.reference == 0 && observed.state == AFX_FREE &&
+        observed.sequence == slot->status.sequence) {
+        release_instance_preserving_generation(index);
+        return true;
+    }
+    if (observed.reference != reference || !observed.sequence ||
+        observed.sequence < slot->status.sequence) return true;
+    uint32_t expected = slot->status.sequence;
+    if (memcmp(&observed, &slot->status, sizeof(observed)))
+        slot->status = observed;
+    if (slot->pending && observed.sequence >= expected)
+        {
+            if (slot->staging_addr) {
+                (void)free_allocation(slot->staging_addr);
+                slot->staging_addr = 0;
+            }
+            slot->pending = false;
+        }
+    return true;
+}
 int afx_update(void) {
     HOST_GUARD(-AFX_BUSY);
     if (!g_ready || !g_lifecycle) return -AFX_UNSUPPORTED;
-    for (uint32_t index = 0; index < AFX_MAX_FLOW_SLOTS; ++index) {
-        afx_instance_slot_t *slot = &g_instances[index];
-        if (!slot->live) continue;
-        afx_instance_status_t observed;
-        if (!read_observed(index, &slot->observed_epoch, &observed)) continue;
-        afx_instance_t reference = AFX_MAKE_HANDLE(index, slot->generation);
-        /* FREE carries no generation in its reference, so its sequence is the
-         * guard against a delayed recycle observation freeing this slot after
-         * it has been reused by a later generation. */
-        if (slot->recycling && observed.reference == 0 && observed.state == AFX_FREE &&
-            observed.sequence == slot->status.sequence) {
-            release_instance_preserving_generation(index);
-            continue;
-        }
-        if (observed.reference != reference || !observed.sequence ||
-            observed.sequence < slot->status.sequence) continue;
-        uint32_t expected = slot->status.sequence;
-        if (memcmp(&observed, &slot->status, sizeof(observed)))
-            slot->status = observed;
-        if (slot->pending && observed.sequence >= expected)
-            {
-                if (slot->staging_addr) {
-                    (void)free_allocation(slot->staging_addr);
-                    slot->staging_addr = 0;
-                }
-                slot->pending = false;
-            }
+    /* Nothing is read until the firmware's interrupt reports news. */
+    if (!host_news_take()) return AFX_OK;
+    for (uint32_t index = 0; index < AFX_MAX_FLOW_SLOTS; ++index)
+        if (g_instances[index].live) (void)update_slot(index);
+    host_news_rearm();
+    return AFX_OK;
+}
+int afx_instance_refresh(afx_instance_t instance) {
+    HOST_GUARD(-AFX_BUSY);
+    uint32_t index;
+    if (!g_ready || !g_lifecycle) return -AFX_UNSUPPORTED;
+    if (!resolve_instance(instance, &index)) return -AFX_STALE_GENERATION;
+    /* An odd epoch never matches a stable one, so the record is read even if
+     * it was read before; a publication in progress is retried. */
+    for (uint32_t attempt = 0; attempt < 4; ++attempt) {
+        g_instances[index].observed_epoch = 1u;
+        if (update_slot(index)) break;
     }
     return AFX_OK;
 }

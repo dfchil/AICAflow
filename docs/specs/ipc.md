@@ -85,6 +85,27 @@ being updated and even when stable; SH-4 reads a matching stable epoch. It
 contains the reference, state, command sequence, result, stream position, next
 deadline and maximum lateness detail.
 
+### Status interrupt
+
+A record whose reference, state, sequence or result changed is news. After
+writing it, the ARM7 sets the software interrupt bit (bit 5) of MCIPD
+(`AFX_AICA_MCIPD`), which raises the AICA's main-CPU interrupt, KOS event
+`ASIC_EVT_SPU_IRQ`. A RUNNING record republished with only a new position,
+deadline or detail raises nothing. The firmware also raises it once after boot.
+
+The SH-4 enables bit 5 in MCIEB at `afx_init()` and fails with `AFX_TIMEOUT`
+if the boot interrupt does not arrive. Its handler only masks the ASIC event
+and notes the news; it makes no G2 access. `afx_update()` makes no AICA access
+until news has arrived. Then it clears the bit through MCIRE, reads MCIPD back
+so the clear has landed, reads the records of all live instances, and unmasks
+the event. A record published before the clear is visible to those reads; one
+published after it raises the interrupt again, which arrives on unmask.
+
+`afx_instance_status()` therefore has current state, sequence and result as
+of the last `afx_update()`, but a RUNNING instance's position, deadline and
+detail only as of the last news. `afx_instance_refresh()` reads one record now.
+The program must not hook `ASIC_EVT_SPU_IRQ` or MCIEB bit 5 itself.
+
 The states are FREE, RUNNING, PAUSED, PARKED, DONE and ERROR. An IPC command
 can be accepted into the queue yet later produce an error, for example because
 the instance became stale or a rebuild payload fails validation. DSP completion

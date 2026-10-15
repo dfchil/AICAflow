@@ -127,6 +127,8 @@ static void publish(uint32_t index, uint32_t reference, uint32_t state, uint32_t
                     uint32_t result, uint32_t position, uint32_t deadline, uint32_t detail) {
     volatile afx_observed_t *record = &OBSERVED[index];
     uint32_t epoch = record->epoch;
+    uint32_t news = record->reference != reference || record->state != state ||
+                    record->sequence != sequence || record->result != result;
     epoch = (epoch + 1u) | 1u;
     record->epoch = epoch;
     record->reference = reference;
@@ -137,6 +139,10 @@ static void publish(uint32_t index, uint32_t reference, uint32_t state, uint32_t
     record->next_deadline = deadline;
     record->detail = detail;
     record->epoch = epoch + 1u;
+    /* News reaches the host by interrupt (see AFX_AICA_MCIPD), raised after the
+     * record, which the ARM7 writes in program order. While the host has not
+     * yet cleared an earlier one, this write changes nothing. */
+    if (news) *(volatile uint32_t *)(AFX_AICA_REG_BASE + AFX_AICA_MCIPD) = AFX_AICA_MCI_SCPU;
 }
 static int physical_channel(const volatile afx_runtime_slot_t *context,
                             uint32_t local, uint32_t *out);
@@ -837,6 +843,8 @@ void arm_main(void) {
     *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x2890) = AFX_TIMER_RELOAD;
     *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x289c) = 0x40; /* Timer A only */
     STATUS->magic = AFX_STATUS_MAGIC; /* publish only after all shared state is ready */
+    /* Once, so afx_init can see the interrupt arrive before relying on it. */
+    *(volatile uint32_t *)(AFX_AICA_REG_BASE + AFX_AICA_MCIPD) = AFX_AICA_MCI_SCPU;
     arm_fiq_enable();
     for (;;) {
         drain_commands();

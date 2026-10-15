@@ -35,6 +35,55 @@ static void test_observation_cache(void) {
     assert(read_observed(63, &epoch, &status) && epoch == 0);
 }
 
+/* afx_update reads nothing until the interrupt reports news, and a record
+ * published while it reads is never lost. */
+static afx_instance_t irq_instance;
+static void publish_done(void) { observed(5, irq_instance, AFX_DONE, 3, AFX_OK); }
+static void publish_paused(void) { observed(5, irq_instance, AFX_PAUSED, 4, AFX_OK); }
+static void test_host_irq(void) {
+    afx_instance_slot_t *slot = &g_instances[5];
+    afx_instance_status_t status;
+    assert(afx_update() == AFX_OK); /* Takes the boot interrupt. */
+    memset(slot, 0, sizeof(*slot));
+    slot->live = true;
+    slot->generation = 1;
+    irq_instance = AFX_MAKE_HANDLE(5, 1);
+    unsigned reads = observed_reads, deliveries = irq_deliveries;
+    for (int i = 0; i < 3; ++i) assert(afx_update() == AFX_OK);
+    assert(observed_reads == reads && irq_deliveries == deliveries);
+    observed(5, irq_instance, AFX_RUNNING, 1, AFX_OK);
+    assert(irq_deliveries == deliveries + 1);
+    assert(afx_update() == AFX_OK && afx_instance_status(irq_instance, &status) == AFX_OK);
+    assert(status.state == AFX_RUNNING && status.sequence == 1);
+    reads = observed_reads;
+    assert(afx_update() == AFX_OK && observed_reads == reads);
+    /* A position-only republish raises nothing; refresh reads it on request. */
+    deliveries = irq_deliveries;
+    observed_position(5, 0x40);
+    assert(irq_deliveries == deliveries && afx_update() == AFX_OK && observed_reads == reads);
+    assert(afx_instance_status(irq_instance, &status) == AFX_OK && status.position == 0);
+    assert(afx_instance_refresh(irq_instance) == AFX_OK);
+    assert(afx_instance_status(irq_instance, &status) == AFX_OK && status.position == 0x40);
+    /* Published right after the clear: read in the same update. */
+    observed(5, irq_instance, AFX_RUNNING, 2, AFX_OK);
+    irq_hook_on_clear = publish_done;
+    assert(afx_update() == AFX_OK && afx_instance_status(irq_instance, &status) == AFX_OK);
+    assert(status.state == AFX_DONE && status.sequence == 3);
+    /* Its own interrupt arrives on unmask; the next update reads and finds nothing new. */
+    assert(afx_update() == AFX_OK);
+    reads = observed_reads;
+    assert(afx_update() == AFX_OK && observed_reads == reads);
+    /* Published after the reads, before the unmask: the next update has it. */
+    observed(5, irq_instance, AFX_DONE, 3, AFX_ERROR);
+    irq_hook_on_unmask = publish_paused;
+    assert(afx_update() == AFX_OK && afx_instance_status(irq_instance, &status) == AFX_OK);
+    assert(status.result == AFX_ERROR);
+    assert(afx_update() == AFX_OK && afx_instance_status(irq_instance, &status) == AFX_OK);
+    assert(status.state == AFX_PAUSED && status.sequence == 4);
+    reads = observed_reads;
+    assert(afx_update() == AFX_OK && observed_reads == reads);
+    memset(slot, 0, sizeof(*slot));
+}
 static void test_bounded_bank_upload(void) {
     const uint32_t bytes = 2u * 65536u + 17u;
     uint8_t *input = malloc(bytes + 1u);
@@ -493,6 +542,7 @@ int main(int argc, char **argv) {
     afx_write32(dsp_registers + 0x3408, 0x6000); /* DSP left running by a previous driver. */
     firmware(fw); assert(afx_init(fw, sizeof(fw)) == AFX_OK);
     test_observation_cache();
+    test_host_irq();
     test_bounded_bank_upload();
     test_direct_bank_upload();
     test_queue_capacity();
@@ -604,5 +654,10 @@ int main(int argc, char **argv) {
         free(b); free(f); free(s);
     }
     afx_shutdown();
+    assert(!irq_handler);
+    /* A firmware whose boot report never arrives does not start. */
+    irq_boot_raise = 0;
+    assert(afx_init(fw, sizeof(fw)) == -AFX_TIMEOUT && !running);
+    assert(!irq_handler && !(afx_read32(dsp_registers + AFX_AICA_MCIEB) & AFX_AICA_MCI_SCPU));
     return 0;
 }

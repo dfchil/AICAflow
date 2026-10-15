@@ -4,6 +4,7 @@
 #include <aicaflow/host.h>
 #include <aicaflow/codec.h>
 
+#include <dc/asic.h>
 #include <dc/g2bus.h>
 #include <dc/spu.h>
 #include <kos/cache.h>
@@ -120,5 +121,10 @@ uint32_t new_sequence(void);
 int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
             uint32_t flags, const void *payload, uint32_t payload_size);
 bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *out);
+
+/* Whether the firmware reported news since the last call, consuming it;
+ * host_news_rearm() after the reads lets the next report in. */
+bool host_news_take(void);
+void host_news_rearm(void);
 
 #endif

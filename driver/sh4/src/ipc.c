@@ -23,6 +23,51 @@ bool g_upload_dma_stream;
 mutex_t g_host_mutex = RECURSIVE_MUTEX_INITIALIZER;
 uint32_t const g_spu_base = AFX_SPU_RAM_BASE_SH4;
 
+/* The AICA's main-CPU interrupt (see AFX_AICA_MCIPD). The line stays raised until
+ * MCIRE clears it, so the handler only masks the ASIC event and notes the news;
+ * afx_update clears the AICA side, reads, and unmasks. Nothing on G2 happens in
+ * interrupt context. KOS hooks ASIC_EVT_SPU_IRQ nowhere itself; a program that
+ * does must not use this. */
+#define AICA_REG_SH4(offset) (0xa0700000u + (offset))
+static volatile bool g_host_news;
+static void host_irq(uint32_t code, void *data) {
+    (void)code; (void)data;
+    asic_evt_disable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
+    g_host_news = true;
+}
+static void host_irq_stop(void) {
+    asic_evt_disable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
+    asic_evt_remove_handler(ASIC_EVT_SPU_IRQ);
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIEB), 0);
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIRE), AFX_AICA_MCI_SCPU);
+    g_host_news = false;
+}
+/* The firmware raises the interrupt once after booting: unmask, and wait for
+ * it. The first afx_update then reads every live slot. */
+static bool host_irq_start(void) {
+    g_host_news = false;
+    asic_evt_set_handler(ASIC_EVT_SPU_IRQ, host_irq, NULL);
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIEB), AFX_AICA_MCI_SCPU);
+    asic_evt_enable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
+    uint64_t started = timer_ms_gettime64();
+    while (!g_host_news && timer_ms_gettime64() - started < 100) thd_pass();
+    if (!g_host_news) host_irq_stop();
+    return g_host_news;
+}
+bool host_news_take(void) {
+    if (!g_host_news) return false;
+    g_host_news = false;
+    /* Clear before reading, and read the register back so the clear has landed:
+     * a record published before it is then visible to the reads that follow,
+     * and one published after it raises the interrupt again. */
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIRE), AFX_AICA_MCI_SCPU);
+    (void)g2_read_32(AICA_REG_SH4(AFX_AICA_MCIPD));
+    return true;
+}
+void host_news_rearm(void) {
+    asic_evt_enable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
+}
+
 uint32_t new_sequence(void) {
     if (!g_next_sequence) ++g_next_sequence;
     return g_next_sequence++;
@@ -77,6 +122,7 @@ bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *
     return true;
 }
 static void stop_driver(void) {
+    host_irq_stop();
     spu_disable();
     /* ARM reset does not stop DSP. Remove memory accesses and drain the DSP
      * pipeline before its former ring can become firmware or asset memory. */
@@ -111,7 +157,9 @@ int afx_init(const void *firmware, uint32_t size) {
             read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, stack_base)) == info.stack_base &&
             read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, error)) == AFX_OK &&
             (capabilities & AFX_CAP_BOOTSTRAP)) {
-            if (!allocator_reset(info.asset_base)) { spu_disable(); return -AFX_NO_HOST_RAM; }
+            /* Status reaches the host only through the interrupt. */
+            if (!host_irq_start()) { spu_disable(); return -AFX_TIMEOUT; }
+            if (!allocator_reset(info.asset_base)) { stop_driver(); return -AFX_NO_HOST_RAM; }
             maps_reset();
             g_ready = true;
             g_lifecycle = (capabilities & AFX_CAP_LIFECYCLE) != 0;

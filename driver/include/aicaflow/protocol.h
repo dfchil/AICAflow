@@ -8,7 +8,7 @@
 /* ABI 7: bank-relative playback, compact state and allocated DSP rings.
  * Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
-#define AFX_ABI_VERSION 7
+#define AFX_ABI_VERSION 8
 #define AFX_FIRMWARE_MAGIC 0x32524641
 #define AFX_STATUS_MAGIC 0x32534641
 #define AFX_LAYOUT_ID 0x20261009
@@ -85,6 +85,15 @@ enum {
 enum { AFX_LANE_GAIN, AFX_LANE_MUTE, AFX_LANE_PAN, AFX_LANE_DSP_SEND,
        AFX_LANE_MODIFIER_COUNT };
 enum { AFX_CAP_BOOTSTRAP = 1, AFX_CAP_LIFECYCLE = 2, AFX_CAP_PLAYBACK = 4, AFX_CAP_DSP = 8, AFX_CAP_DSP_HOST_INIT = 16 };
+/* The firmware raises the main-CPU software interrupt (MCIPD bit 5) when it
+ * publishes news: an observation whose reference, state, sequence or result
+ * changed. A RUNNING record that only moved its position, deadline or
+ * detail is not news. It also raises it once after boot, and the host does not
+ * start without seeing it. */
+#define AFX_AICA_MCIEB 0x28b4u /* Main-CPU interrupt enable. */
+#define AFX_AICA_MCIPD 0x28b8u /* Main-CPU interrupt pending; the ARM7 sets bit 5. */
+#define AFX_AICA_MCIRE 0x28bcu /* Main-CPU interrupt reset. */
+#define AFX_AICA_MCI_SCPU 0x20u /* The software interrupt bit in all three. */
 
 typedef struct {
     uint32_t magic; /* AFX_FIRMWARE_MAGIC identifies a driver image. */

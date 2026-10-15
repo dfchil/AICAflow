@@ -64,6 +64,9 @@ typedef struct {
  * Upload and seek hold the lock for their complete call. Status
  * timer/heartbeat reads are independent G2 reads.
  * Integer result APIs return 0 or negative afx_result_t; firmware must match. */
+/* afx_init takes the AICA's interrupt (KOS event ASIC_EVT_SPU_IRQ) for
+ * status reports and keeps it until afx_shutdown. It returns -AFX_TIMEOUT if
+ * the firmware's boot report does not arrive through it. */
 int afx_init(const void *arm7_firmware, uint32_t firmware_size);
 void afx_shutdown(void);
 
@@ -154,9 +157,18 @@ int afx_dsp_scene_program_ring(const void *program, uint32_t bytes, uint8_t rbl)
 int afx_dsp_scene_returns(bool enabled);
 int afx_dsp_scene_disable(void);
 int afx_instance_recycle(afx_instance_t instance);
+/* The instance's status as afx_update last took it; no AICA access. state,
+ * sequence and result are current as of that call; position, next_deadline
+ * and detail of a RUNNING instance are as of the last time any instance
+ * changed state. Use afx_instance_refresh for current ones. */
 int afx_instance_status(afx_instance_t instance, afx_instance_status_t *out_status);
-/* Refreshes ARM-owned instance observations; returns 0 even when none changed. */
+/* Refreshes ARM-owned instance observations; returns 0 even when none changed.
+ * It reads AICA RAM only after the firmware's interrupt reported a change of
+ * state, sequence or result, so calling it every frame is cheap. */
 int afx_update(void);
+/* Reads one instance's observation from AICA RAM now, as afx_update would,
+ * including the position of a RUNNING instance. */
+int afx_instance_refresh(afx_instance_t instance);
 
 uint32_t afx_status_heartbeat(void);
 uint32_t afx_status_timer_ticks(void);
