@@ -22,7 +22,7 @@ flowchart TB
     private["0x1fd850–0x1feb9f\nARM7 private runtime state"]
     stacks["0x1feba0–0x1ff79f\nARM7 SVC/FIQ/IRQ/ABT/UND stacks"]
     clock["0x1ff7a0–0x1ff7bf\nshared timer/clock words"]
-    queue["0x1ff7c0–0x1fffff\nSH-4 → ARM7 queue: 32 commands + header"]
+    queue["0x1ff7c0–0x1fffff\nSH-4 → ARM7 queue: 32 commands + header\nwith the ARM7 → SH-4 event ring"]
   end
   firmware --> assets --> status --> observed --> maps --> private --> stacks --> clock --> queue
 ```

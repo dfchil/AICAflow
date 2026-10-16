@@ -381,8 +381,9 @@ static int load_firmware(void) {
 static int wait_state(uint32_t wanted) {
     for (unsigned i=0; i<2000; ++i) {
         afx_instance_status_t s;
-        if (afx_update()<0) return -AFX_TIMEOUT;
-        if (!afx_instance_status(instance, &s)) {
+        int st=afx_instance_status(instance, &s);
+        if (st==-AFX_STALE_GENERATION) return -AFX_BAD_COMMAND; /* ended and recycled */
+        if (!st) {
             if (s.result) return -(int)s.result;
             if (s.state==wanted) return 0;
             if (s.state==AFX_ERROR || s.state==AFX_DONE) return -AFX_BAD_COMMAND;
@@ -395,22 +396,15 @@ static int stop(void) {
     visual_cancel();
     if (instance) {
         afx_instance_status_t s;
-        if (afx_update()<0 || afx_instance_status(instance, &s)) return -AFX_TIMEOUT;
-        if (s.state!=AFX_DONE && s.state!=AFX_ERROR) {
+        int st=afx_instance_status(instance, &s);
+        if (st && st!=-AFX_STALE_GENERATION) return -AFX_TIMEOUT;
+        if (!st && s.state!=AFX_DONE && s.state!=AFX_ERROR) {
             int r=afx_instance_stop(instance);
             if (r) return r;
-            for (unsigned i=0; i<2000; ++i) {
-                afx_update();
-                if (!afx_instance_status(instance, &s) && (s.state==AFX_DONE || s.state==AFX_ERROR)) break;
-                thd_sleep(1);
-            }
-            if (s.state!=AFX_DONE && s.state!=AFX_ERROR) return -AFX_TIMEOUT;
         }
-        int r=afx_instance_recycle(instance);
-        if (r) return r;
+        /* AICAflow recycles it once it has ended; then its handle goes stale. */
         unsigned i;
         for (i=0; i<2000; ++i) {
-            afx_update();
             if (afx_instance_status(instance, &s)==-AFX_STALE_GENERATION) break;
             thd_sleep(1);
         }
@@ -704,7 +698,6 @@ int main(void) {
 static void update(void *unused) {
     (void)unused;
     if (enj_state_get()->flags.shut_down) return;
-    afx_update();
     enj_ctrlr_state_t **states=enj_ctrl_get_states(), *pad=NULL;
     for (size_t i=0;i<enj_ctrl_states_length() && !pad;++i) pad=states[i];
 #ifdef PLAYER_FRAME_TEST

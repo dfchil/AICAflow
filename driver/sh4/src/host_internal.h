@@ -61,6 +61,8 @@ typedef struct {
     bool retired; /* Slot is permanently retired to prevent generation wrap. */
     bool pending; /* Waiting for a lifecycle/rebuild command observation. */
     bool recycling; /* Waiting for RECYCLE acknowledgement before releasing the slot. */
+    bool recycle_wanted; /* Ended; RECYCLE still to be queued (the queue was full). */
+    bool recycle_refused; /* The firmware refused RECYCLE; do not ask again. */
     uint16_t generation; /* Generation encoded in the instance handle. */
     uint32_t asset_index; /* Index of the retained flow in g_assets. */
     uint32_t map_addr; /* Absolute AICA byte address of the uploaded channel map. */
@@ -72,6 +74,7 @@ typedef struct {
     uint8_t map_offset; /* Byte offset within that channel-map arena. */
     uint64_t channel_mask; /* Bit n marks physical AICA channel n owned by this instance. */
     afx_instance_status_t status; /* Latest accepted ARM7 observation, cached on SH-4. */
+    afx_instance_status_t ended; /* The status it ended with, while RECYCLE is acknowledged. */
 } afx_instance_slot_t;
 
 extern uint32_t g_dynamic_base, g_asset_limit;
@@ -92,10 +95,17 @@ extern bool g_upload_dma_stream;
 extern mutex_t g_host_mutex;
 extern uint32_t const g_spu_base;
 
+/* Set while the event thread holds the host lock, which it does only briefly:
+ * a call that finds the lock held waits for it then, and reports busy
+ * otherwise, as when an upload holds it. */
+extern volatile bool g_events_running;
+static inline bool host_lock(void) {
+    return !mutex_trylock(&g_host_mutex) || (g_events_running && !mutex_lock(&g_host_mutex));
+}
 static inline void host_unlock(mutex_t **guard) { if (*guard) mutex_unlock(*guard); }
 #define HOST_GUARD(failure) \
     mutex_t *host_guard __attribute__((cleanup(host_unlock))) = NULL; \
-    if (mutex_trylock(&g_host_mutex)) return failure; \
+    if (!host_lock()) return failure; \
     host_guard = &g_host_mutex
 
 uint32_t align_up(uint32_t value, uint32_t align);
@@ -122,9 +132,11 @@ int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
             uint32_t flags, const void *payload, uint32_t payload_size);
 bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *out);
 
-/* Whether the firmware reported news since the last call, consuming it;
- * host_news_rearm() after the reads lets the next report in. */
-bool host_news_take(void);
-void host_news_rearm(void);
+/* Takes one slot's new observation, if it published one, and acts on it:
+ * releases a recycled slot, and recycles one that ended. Called with the host
+ * lock held; ended instances are reported by events_report_ended(). */
+bool update_slot(uint32_t index);
+/* Calls the end callback for instances update_slot released; without the lock. */
+void events_report_ended(void);
 
 #endif

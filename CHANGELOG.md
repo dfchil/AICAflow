@@ -7,15 +7,18 @@ the commit history.
 
 ### Changed
 
-- Firmware ABI 8: status changes reach the SH4 by interrupt instead of
-  polling. When an instance's state, sequence or result changes, the ARM7
-  raises the AICA's main-CPU interrupt; `afx_update()` reads AICA RAM only
-  after one arrived, so it costs nothing while nothing changes and a finished
-  flow is seen on the next call. `afx_init()` takes `ASIC_EVT_SPU_IRQ` and
-  fails with `AFX_TIMEOUT` if the firmware's boot interrupt does not arrive.
-  A RUNNING instance's position in `afx_instance_status()` is as of the last
-  change; `afx_instance_refresh()` reads it now. The host library and
-  `firmware/aicaflow.drv` must be updated together.
+- Firmware ABI 8: the ARM7 reports back to the SH4 by interrupt, and the
+  program no longer polls. When an instance's state, sequence or result
+  changes, the firmware puts its slot in an event ring in the queue header and
+  raises the AICA's main-CPU interrupt. AICAflow's event thread (a KOS
+  threaded handler on `ASIC_EVT_SPU_IRQ`) reads only the slots reported,
+  updates `afx_instance_status()`, recycles an instance that ended and reports
+  it to the end callback (`afx_set_end_callback()`). `afx_update()` and
+  `afx_instance_recycle()` are gone. `afx_init()` fails with `AFX_TIMEOUT` if
+  the firmware's boot interrupt does not arrive. A RUNNING instance's position
+  in `afx_instance_status()` is as of its last change; `afx_instance_refresh()`
+  reads it now. The host library and `firmware/aicaflow.drv` must be updated
+  together.
 - Firmware ABI 7 with a new layout ID: bank-relative playback, compact
   per-instance state and DSP delay rings allocated from the asset arena. The
   host library and `firmware/aicaflow.drv` must be updated together.

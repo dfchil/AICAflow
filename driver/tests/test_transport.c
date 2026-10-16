@@ -65,13 +65,49 @@ static __attribute__((unused)) void irq_other_asic_event(void) {
     }
 }
 static void irq_raise(void) { mcipd |= AFX_AICA_MCI_SCPU; irq_check(); }
+/* KOS's threaded handler: the interrupt part masks and wakes a worker thread,
+ * which runs the handler, then unmasks. Wakeups before it runs coalesce. The
+ * worker runs when a test calls irq_run_worker(), between the library calls a
+ * real thread could interleave with. */
+static asic_evt_handler worker_handler;
+static void (*worker_ack)(uint16_t), (*worker_unmask)(uint16_t);
+static int worker_pending;
+static unsigned worker_runs;
+static void threaded_dispatch(uint32_t code, void *data) {
+    (void)data;
+    if (worker_ack) worker_ack((uint16_t)code);
+    worker_pending = 1;
+}
 asic_evt_handler_entry_t asic_evt_set_handler(uint16_t code, asic_evt_handler handler, void *data) {
     assert(code == ASIC_EVT_SPU_IRQ && !data);
     asic_evt_handler_entry_t old = { irq_handler, NULL };
     irq_handler = handler;
     return old;
 }
-void asic_evt_remove_handler(uint16_t code) { assert(code == ASIC_EVT_SPU_IRQ); irq_handler = NULL; }
+int asic_evt_request_threaded_handler(uint16_t code, asic_evt_handler handler, void *data,
+                                      void (*ack_and_mask)(uint16_t), void (*unmask)(uint16_t)) {
+    assert(code == ASIC_EVT_SPU_IRQ && handler && !data && !irq_handler);
+    worker_handler = handler;
+    worker_ack = ack_and_mask;
+    worker_unmask = unmask;
+    worker_pending = 0;
+    irq_handler = threaded_dispatch;
+    return 0;
+}
+void asic_evt_remove_handler(uint16_t code) {
+    assert(code == ASIC_EVT_SPU_IRQ);
+    irq_handler = NULL;
+    worker_handler = NULL;
+    worker_pending = 0;
+}
+static __attribute__((unused)) void irq_run_worker(void) {
+    while (worker_pending && worker_handler) {
+        worker_pending = 0;
+        ++worker_runs;
+        worker_handler(ASIC_EVT_SPU_IRQ, NULL);
+        if (worker_unmask) worker_unmask(ASIC_EVT_SPU_IRQ);
+    }
+}
 void asic_evt_disable(uint16_t code, uint8_t level) {
     assert(code == ASIC_EVT_SPU_IRQ && level == ASIC_IRQ_DEFAULT);
     irq_unmasked = 0;
@@ -192,6 +228,7 @@ static void observed(uint32_t index, uint32_t reference, uint32_t state,
     /* As the firmware does: news is a change beyond position and deadline. */
     int news = afx_read32(record + 4) != reference || afx_read32(record + 8) != state ||
                afx_read32(record + 12) != sequence || afx_read32(record + 16) != result;
+    uint8_t *queue = ram + AFX_QUEUE_ADDR;
     afx_write32(record, epoch | 1u);
     afx_write32(record + 4, reference);
     afx_write32(record + 8, state);
@@ -201,7 +238,17 @@ static void observed(uint32_t index, uint32_t reference, uint32_t state,
     afx_write32(record + 24, 0);
     afx_write32(record + 28, 0);
     afx_write32(record, (epoch | 1u) + 1u);
-    if (news) irq_raise();
+    if (news) {
+        uint32_t head = afx_read32(queue + offsetof(afx_cmd_queue_t, event_head));
+        if (head - afx_read32(queue + offsetof(afx_cmd_queue_t, event_tail)) < AFX_EVENT_CAPACITY) {
+            queue[offsetof(afx_cmd_queue_t, events) + (head & (AFX_EVENT_CAPACITY - 1u))] = (uint8_t)index;
+            afx_write32(queue + offsetof(afx_cmd_queue_t, event_head), head + 1u);
+        } else {
+            uint32_t overflows = afx_read32(queue + offsetof(afx_cmd_queue_t, event_overflows));
+            afx_write32(queue + offsetof(afx_cmd_queue_t, event_overflows), overflows + 1u);
+        }
+        irq_raise();
+    }
 }
 /* A RUNNING record republished with a new position only: not news. */
 static __attribute__((unused)) void observed_position(uint32_t index, uint32_t position) {

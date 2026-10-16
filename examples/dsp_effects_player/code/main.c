@@ -74,7 +74,10 @@ static void text(unsigned line, const char *value) {
 static int wait_for(afx_instance_t handle, uint32_t wanted) {
     for (unsigned waited = 0; waited < 2000; ++waited) {
         afx_instance_status_t status;
-        if (afx_update() < 0 || afx_instance_status(handle, &status)) return -AFX_TIMEOUT;
+        int result = afx_instance_status(handle, &status);
+        /* An instance that ended is recycled by AICAflow and its handle goes stale. */
+        if (result == -AFX_STALE_GENERATION) return wanted == AFX_DONE ? AFX_OK : -AFX_BAD_COMMAND;
+        if (result) return -AFX_TIMEOUT;
         if (status.state == wanted) return AFX_OK;
         if (status.state == AFX_DONE || status.state == AFX_ERROR) return -AFX_BAD_COMMAND;
         thd_sleep(1);
@@ -84,7 +87,6 @@ static int wait_for(afx_instance_t handle, uint32_t wanted) {
 
 static int wait_recycled(afx_instance_t handle) {
     for (unsigned waited = 0; waited < 2000; ++waited) {
-        if (afx_update() < 0) return -AFX_TIMEOUT;
         if (afx_instance_status(handle, &(afx_instance_status_t){0}) == -AFX_STALE_GENERATION) return AFX_OK;
         thd_sleep(1);
     }
@@ -129,12 +131,13 @@ static int unload(void) {
     int result = AFX_OK;
     if (running) {
         afx_instance_status_t status;
-        if (afx_instance_status(instance, &status)) result = -AFX_TIMEOUT;
-        else if (status.state != AFX_DONE && status.state != AFX_ERROR) {
+        int state = afx_instance_status(instance, &status);
+        if (state && state != -AFX_STALE_GENERATION) result = -AFX_TIMEOUT;
+        else if (!state && status.state != AFX_DONE && status.state != AFX_ERROR) {
             result = afx_instance_stop(instance);
             if (!result) result = wait_for(instance, AFX_DONE);
         }
-        if (!result) result = afx_instance_recycle(instance);
+        /* AICAflow recycles it once it has ended. */
         if (!result) result = wait_recycled(instance);
         if (!result) running = false;
     }
@@ -229,7 +232,7 @@ int main(void) {
 static void update(void *unused) {
     (void)unused;
     if (enj_state_get()->flags.shut_down) return;
-    int result = afx_update();
+    int result = AFX_OK;
     enj_ctrlr_state_t **states = enj_ctrl_get_states(), *pad = NULL;
     for (size_t index = 0; index < enj_ctrl_states_length() && !pad; ++index) pad = states[index];
     if (!result && pad) {

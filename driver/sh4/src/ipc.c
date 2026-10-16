@@ -23,54 +23,92 @@ bool g_upload_dma_stream;
 mutex_t g_host_mutex = RECURSIVE_MUTEX_INITIALIZER;
 uint32_t const g_spu_base = AFX_SPU_RAM_BASE_SH4;
 
-/* The AICA's main-CPU interrupt (see AFX_AICA_MCIPD). The line stays raised until
- * MCIRE clears it, so the handler only masks the ASIC event and notes the news;
- * afx_update clears the AICA side, reads, and unmasks. Nothing on G2 happens in
- * interrupt context. KOS hooks ASIC_EVT_SPU_IRQ nowhere itself; a program that
- * does must not use this. */
+/* The AICA's main-CPU interrupt (see AFX_AICA_MCIPD) runs a KOS threaded
+ * handler: in interrupt context only the ASIC event is masked; a KOS worker
+ * thread then clears the interrupt, drains the event ring, takes each reported
+ * slot's observation, recycles instances that ended and reports them, and
+ * unmasks. The program makes no call for any of it. KOS calls the masking
+ * part again for every other ASIC interrupt while the line is raised; that
+ * only masks again and wakes the worker, which coalesces. KOS hooks
+ * ASIC_EVT_SPU_IRQ nowhere itself; a program that does must not use AICAflow. */
 #define AICA_REG_SH4(offset) (0xa0700000u + (offset))
-static volatile bool g_host_news;
-static void host_irq(uint32_t code, void *data) {
+static volatile bool g_host_irq_seen;
+volatile bool g_events_running;
+static uint32_t g_event_tail, g_event_overflows;
+static void host_irq_mask(uint16_t code) {
+    asic_evt_disable(code, ASIC_IRQ_DEFAULT);
+    g_host_irq_seen = true;
+}
+static void host_irq_unmask(uint16_t code) {
+    asic_evt_enable(code, ASIC_IRQ_DEFAULT);
+}
+/* Slots with news since the last call, from the event ring; every slot after
+ * an overflow. */
+static uint64_t events_take(void) {
+    uint32_t head = read_spu_word(AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, event_head));
+    uint32_t overflows = read_spu_word(AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, event_overflows));
+    uint64_t changed = 0;
+    if (overflows != g_event_overflows || head - g_event_tail > AFX_EVENT_CAPACITY) {
+        g_event_overflows = overflows;
+        changed = UINT64_MAX;
+    } else if (head != g_event_tail) {
+        uint32_t words[AFX_EVENT_CAPACITY / 4];
+        for (uint32_t i = 0; i < AFX_EVENT_CAPACITY / 4; ++i)
+            words[i] = read_spu_word(AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, events) + i * 4u);
+        for (uint32_t at = g_event_tail; at != head; ++at) {
+            uint32_t slot = at & (AFX_EVENT_CAPACITY - 1u);
+            uint32_t index = (words[slot / 4u] >> ((slot & 3u) * 8u)) & 0xffu;
+            if (index < AFX_MAX_FLOW_SLOTS) changed |= UINT64_C(1) << index;
+        }
+    }
+    if (head != g_event_tail) {
+        g_event_tail = head;
+        g2_write_32(g_spu_base + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, event_tail), head);
+    }
+    return changed;
+}
+static void host_events(uint32_t code, void *data) {
     (void)code; (void)data;
-    /* KOS dispatches by the ASIC's status, not its mask, so while the line is
-     * raised every other ASIC interrupt calls this again. Mask each time all
-     * the same: afx_update may have unmasked since the flag was set. */
-    asic_evt_disable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
-    g_host_news = true;
+    /* Blocking: an upload may hold the lock for a while, and this thread can
+     * wait it out where the program's calls cannot. */
+    mutex_lock(&g_host_mutex);
+    g_events_running = true;
+    /* Clear before reading, and read the register back so the clear has landed:
+     * news published before it is then visible to the reads that follow, and
+     * news published after it raises the interrupt again. */
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIRE), AFX_AICA_MCI_SCPU);
+    (void)g2_read_32(AICA_REG_SH4(AFX_AICA_MCIPD));
+    if (g_ready && g_lifecycle) {
+        uint64_t changed = events_take();
+        for (uint32_t index = 0; index < AFX_MAX_FLOW_SLOTS; ++index)
+            if (g_instances[index].live &&
+                ((changed >> index) & 1u || g_instances[index].recycle_wanted)) (void)update_slot(index);
+    }
+    g_events_running = false;
+    mutex_unlock(&g_host_mutex);
+    events_report_ended();
 }
 static void host_irq_stop(void) {
     asic_evt_disable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
-    asic_evt_remove_handler(ASIC_EVT_SPU_IRQ);
+    asic_evt_remove_handler(ASIC_EVT_SPU_IRQ); /* Also ends the worker thread. */
     g2_write_32(AICA_REG_SH4(AFX_AICA_MCIEB), 0);
     g2_write_32(AICA_REG_SH4(AFX_AICA_MCIRE), AFX_AICA_MCI_SCPU);
-    g_host_news = false;
+    g_host_irq_seen = false;
 }
 /* The firmware raises the interrupt once after booting: unmask, and wait for
- * it. The first afx_update then reads every live slot. */
+ * it to arrive. */
 static bool host_irq_start(void) {
-    g_host_news = false;
-    asic_evt_set_handler(ASIC_EVT_SPU_IRQ, host_irq, NULL);
+    g_host_irq_seen = false;
+    g_event_tail = g_event_overflows = 0;
+    if (asic_evt_request_threaded_handler(ASIC_EVT_SPU_IRQ, host_events, NULL,
+                                          host_irq_mask, host_irq_unmask)) return false;
     g2_write_32(AICA_REG_SH4(AFX_AICA_MCIEB), AFX_AICA_MCI_SCPU);
     asic_evt_enable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
     uint64_t started = timer_ms_gettime64();
-    while (!g_host_news && timer_ms_gettime64() - started < 100) thd_pass();
-    if (!g_host_news) host_irq_stop();
-    return g_host_news;
+    while (!g_host_irq_seen && timer_ms_gettime64() - started < 100) thd_pass();
+    if (!g_host_irq_seen) host_irq_stop();
+    return g_host_irq_seen;
 }
-bool host_news_take(void) {
-    if (!g_host_news) return false;
-    g_host_news = false;
-    /* Clear before reading, and read the register back so the clear has landed:
-     * a record published before it is then visible to the reads that follow,
-     * and one published after it raises the interrupt again. */
-    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIRE), AFX_AICA_MCI_SCPU);
-    (void)g2_read_32(AICA_REG_SH4(AFX_AICA_MCIPD));
-    return true;
-}
-void host_news_rearm(void) {
-    asic_evt_enable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
-}
-
 uint32_t new_sequence(void) {
     if (!g_next_sequence) ++g_next_sequence;
     return g_next_sequence++;

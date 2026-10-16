@@ -5,7 +5,8 @@
 #include <aicaflow/limits.h>
 #include <aicaflow/result.h>
 
-/* ABI 7: bank-relative playback, compact state and allocated DSP rings.
+/* ABI 8: status reported back by interrupt through an event ring; ABI 7
+ * brought bank-relative playback, compact state and allocated DSP rings.
  * Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
 #define AFX_ABI_VERSION 8
@@ -85,11 +86,12 @@ enum {
 enum { AFX_LANE_GAIN, AFX_LANE_MUTE, AFX_LANE_PAN, AFX_LANE_DSP_SEND,
        AFX_LANE_MODIFIER_COUNT };
 enum { AFX_CAP_BOOTSTRAP = 1, AFX_CAP_LIFECYCLE = 2, AFX_CAP_PLAYBACK = 4, AFX_CAP_DSP = 8, AFX_CAP_DSP_HOST_INIT = 16 };
-/* The firmware raises the main-CPU software interrupt (MCIPD bit 5) when it
- * publishes news: an observation whose reference, state, sequence or result
- * changed. A RUNNING record that only moved its position, deadline or
- * detail is not news. It also raises it once after boot, and the host does not
- * start without seeing it. */
+/* The firmware reports news to the host: an observation whose reference,
+ * state, sequence or result changed. A RUNNING record that only moved its
+ * position, deadline or detail is not news. It appends the slot index to the
+ * event ring in the queue header, then raises the main-CPU software interrupt
+ * (MCIPD bit 5). It also raises the interrupt once after boot, and the host
+ * does not start without seeing it. */
 #define AFX_AICA_MCIEB 0x28b4u /* Main-CPU interrupt enable. */
 #define AFX_AICA_MCIPD 0x28b8u /* Main-CPU interrupt pending; the ARM7 sets bit 5. */
 #define AFX_AICA_MCIRE 0x28bcu /* Main-CPU interrupt reset. */
@@ -113,11 +115,19 @@ typedef struct {
     uint32_t flags; /* Opcode-specific options; zero when unused. */
     uint8_t payload[48]; /* Opcode-specific payload; unused bytes are zero. */
 } afx_cmd_t;
+/* Slot indices the ARM7 reports news for; a power of two. */
+#define AFX_EVENT_CAPACITY 16u
 typedef struct {
-    volatile uint32_t head; /* SH-4 producer counter; wraps modulo 2^32. */
-    uint32_t reserved_head[7]; /* Padding keeps head and tail in separate 32-byte regions. */
-    volatile uint32_t tail; /* ARM7 consumer counter; wraps modulo 2^32. */
-    uint32_t reserved_tail[7]; /* Padding aligns the command array to 32 bytes. */
+    /* SH-4-written region. */
+    volatile uint32_t head; /* Command producer counter; wraps modulo 2^32. */
+    volatile uint32_t event_tail; /* Event consumer counter; wraps modulo 2^32. */
+    uint32_t reserved_head[6]; /* Padding keeps the two writers in separate 32-byte regions. */
+    /* ARM7-written region. */
+    volatile uint32_t tail; /* Command consumer counter; wraps modulo 2^32. */
+    volatile uint32_t event_head; /* Event producer counter; wraps modulo 2^32. */
+    volatile uint32_t event_overflows; /* Events dropped because the ring was full; the host then rereads every record. */
+    uint32_t reserved_tail; /* Padding aligns the event ring. */
+    volatile uint8_t events[AFX_EVENT_CAPACITY]; /* Slot index per event, at counter modulo capacity. */
     afx_cmd_t commands[AFX_CMD_QUEUE_CAPACITY]; /* Fixed-size ring entries, indexed by counter modulo capacity. */
 } afx_cmd_queue_t;
 typedef struct {
@@ -245,6 +255,10 @@ AFX_ASSERT(offsetof(afx_cmd_queue_t, commands) == AFX_QUEUE_HEADER_BYTES, "IPC p
 AFX_ASSERT((AFX_CMD_QUEUE_CAPACITY & (AFX_CMD_QUEUE_CAPACITY - 1u)) == 0 &&
            AFX_CMD_QUEUE_CAPACITY > 0, "IPC ring capacity must be a power of two");
 AFX_ASSERT(sizeof(afx_cmd_queue_t) == 2112, "32-entry IPC queue");
+AFX_ASSERT(offsetof(afx_cmd_queue_t, event_tail) < 32 && offsetof(afx_cmd_queue_t, tail) == 32 &&
+           offsetof(afx_cmd_queue_t, events) + AFX_EVENT_CAPACITY == 64, "one 32-byte region per writer");
+AFX_ASSERT((AFX_EVENT_CAPACITY & (AFX_EVENT_CAPACITY - 1u)) == 0 && AFX_MAX_FLOW_SLOTS <= 256,
+           "byte-sized event ring");
 AFX_ASSERT((AFX_CONTROL_BASE & 31u) == 0, "asset ceiling alignment");
 AFX_ASSERT(sizeof(afx_status_t) == AFX_STATUS_BYTES, "status layout size");
 AFX_ASSERT(AFX_STATUS_ADDR + sizeof(afx_status_t) == AFX_OBSERVED_ADDR, "status/observed adjacency");

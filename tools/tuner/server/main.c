@@ -157,8 +157,15 @@ static void playback_begin(tuner_state_t *state) {
 static void playback_update(tuner_state_t *state) {
     afx_instance_status_t status;
     uint32_t now, elapsed;
-    if (!state->playback_active || !state->instance ||
-        afx_instance_status(state->instance, &status) != AFX_OK) return;
+    if (!state->playback_active || !state->instance) return;
+    int current = afx_instance_status(state->instance, &status);
+    if (current == -AFX_STALE_GENERATION) { /* Ended, and AICAflow recycled it. */
+        playback_progress(state, state->playback_ticks);
+        state->playback_active = 0;
+        state->instance = 0;
+        return;
+    }
+    if (current != AFX_OK) return;
     now = afx_status_timer_ticks();
     elapsed = now - state->playback_started;
     if (state->region_active && status.state == AFX_RUNNING &&
@@ -189,7 +196,6 @@ static int io_all(int fd, void *buffer, uint32_t bytes, int receive) {
     while (bytes) {
         struct pollfd pollfd = { .fd = fd, .events = receive ? POLLIN : POLLOUT };
         int ready = poll(&pollfd, 1, 1000);
-        (void)afx_update();
         /* KOS may report POLLHUP together with buffered POLLIN data. Consume
          * the requested event first; recv/send provides the definitive EOF. */
         if (ready != 1 || (pollfd.revents & (POLLERR | POLLNVAL)) ||
@@ -225,22 +231,17 @@ static int reply(int fd, uint16_t opcode, uint32_t sequence, int result,
 static int stop_instance(tuner_state_t *state) {
     if (!state->instance) return AFX_OK;
     afx_instance_status_t status;
-    if (afx_update() < 0 || afx_instance_status(state->instance, &status) != AFX_OK) return -AFX_TIMEOUT;
-    int result = (status.state == AFX_DONE || status.state == AFX_ERROR) ?
-        afx_instance_recycle(state->instance) : afx_instance_stop(state->instance);
-    if (result) return result;
-    int recycling = status.state == AFX_DONE || status.state == AFX_ERROR;
+    int current = afx_instance_status(state->instance, &status);
+    if (current && current != -AFX_STALE_GENERATION) return -AFX_TIMEOUT;
+    if (!current && status.state != AFX_DONE && status.state != AFX_ERROR) {
+        int result = afx_instance_stop(state->instance);
+        if (result) return result;
+    }
+    /* AICAflow recycles it once it has ended; then its handle goes stale. */
     for (unsigned ms = 0; ms < 1000; ++ms) {
-        if (afx_update() < 0) return -AFX_TIMEOUT;
-        int current = afx_instance_status(state->instance, &status);
-        if (recycling && current == -AFX_STALE_GENERATION) {
+        if (afx_instance_status(state->instance, &status) == -AFX_STALE_GENERATION) {
             state->instance = 0;
             return AFX_OK;
-        }
-        if (!recycling && current == AFX_OK && (status.state == AFX_DONE || status.state == AFX_ERROR)) {
-            result = afx_instance_recycle(state->instance);
-            if (result) return result;
-            recycling = 1;
         }
         thd_sleep(1);
     }
@@ -249,8 +250,9 @@ static int stop_instance(tuner_state_t *state) {
 static int wait_state(afx_instance_t instance, uint32_t wanted) {
     for (unsigned ms = 0; ms < 1000; ++ms) {
         afx_instance_status_t status;
-        if (afx_update() < 0) return -AFX_TIMEOUT;
-        if (afx_instance_status(instance, &status) == AFX_OK) {
+        int current = afx_instance_status(instance, &status);
+        if (current == -AFX_STALE_GENERATION) return -AFX_BAD_COMMAND; /* ended and recycled */
+        if (current == AFX_OK) {
             if (status.state == wanted) return AFX_OK;
             if (status.state == AFX_DONE || status.state == AFX_ERROR) return -AFX_BAD_COMMAND;
         }
@@ -580,7 +582,6 @@ int main(void) {
                 close(client);
             }
         }
-        (void)afx_update();
         playback_update(&state);
         present();
         if (exiting) break;

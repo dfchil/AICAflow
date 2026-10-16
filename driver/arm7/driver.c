@@ -139,10 +139,20 @@ static void publish(uint32_t index, uint32_t reference, uint32_t state, uint32_t
     record->next_deadline = deadline;
     record->detail = detail;
     record->epoch = epoch + 1u;
-    /* News reaches the host by interrupt (see AFX_AICA_MCIPD), raised after the
-     * record, which the ARM7 writes in program order. While the host has not
-     * yet cleared an earlier one, this write changes nothing. */
-    if (news) *(volatile uint32_t *)(AFX_AICA_REG_BASE + AFX_AICA_MCIPD) = AFX_AICA_MCI_SCPU;
+    /* News goes to the host's event ring, then by interrupt (see
+     * AFX_AICA_MCIPD), after the record, which the ARM7 writes in program
+     * order. While the host has not yet cleared an earlier interrupt, raising
+     * it changes nothing. */
+    if (news) {
+        uint32_t head = QUEUE->event_head;
+        if (head - QUEUE->event_tail < AFX_EVENT_CAPACITY) {
+            QUEUE->events[head & (AFX_EVENT_CAPACITY - 1u)] = (uint8_t)index;
+            QUEUE->event_head = head + 1u;
+        } else {
+            QUEUE->event_overflows = QUEUE->event_overflows + 1u;
+        }
+        *(volatile uint32_t *)(AFX_AICA_REG_BASE + AFX_AICA_MCIPD) = AFX_AICA_MCI_SCPU;
+    }
 }
 static int physical_channel(const volatile afx_runtime_slot_t *context,
                             uint32_t local, uint32_t *out);

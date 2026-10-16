@@ -11,7 +11,7 @@ harness = r'''
 #include <stdio.h>
 typedef int afx_dsp_program_t;
 typedef struct { int state; } afx_instance_status_t;
-enum { AFX_OK, AFX_DONE, AFX_ERROR, AFX_RUNNING, AFX_TIMEOUT };
+enum { AFX_OK, AFX_DONE, AFX_ERROR, AFX_RUNNING, AFX_TIMEOUT, AFX_STALE_GENERATION };
 static int selected, input, installed_effect = -1, playing_effect = -1;
 static int instance, flows[] = {1, 2}, uploads, fail_upload, fail_activate;
 static bool running, returns_enabled = true, audible;
@@ -22,7 +22,6 @@ static unsigned selected_input(void) { return input; }
 static int afx_instance_status(int i, afx_instance_status_t *s) { (void)i; s->state = AFX_RUNNING; return 0; }
 static int afx_instance_stop(int i) { (void)i; return 0; }
 static int wait_for(int i, int state) { (void)i; (void)state; return 0; }
-static int afx_instance_recycle(int i) { (void)i; return 0; }
 static int wait_recycled(int i) { (void)i; return 0; }
 static int afx_dsp_scene_returns(bool enabled) { audible = enabled; return 0; }
 static int afx_dsp_scene_disable(void) { audible = false; return 0; }
