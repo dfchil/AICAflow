@@ -16,7 +16,7 @@
 - [DSP](dsp.md) — programming guide and instruction cheatsheet.
 - [Memory layout](memory.md) — AICA RAM and reservations.
 - [Runtime ABI](specs/runtime.md) — firmware bootstrap and execution.
-- [SH4/ARM7 IPC](specs/ipc.md) — queues, commands and observations.
+- [SH4/ARM7 IPC](specs/ipc.md) — commands, observations and status reports by interrupt.
 - [Runtime asset formats](../driver/format/docs/assets.md) — AFB, AFX, AFC and AFI.
 - [AFX instruction language](../driver/format/docs/instruction-language.md) — control-stream bytecode.
 - [Public format code](../driver/format/README.md) — portable headers and codec.

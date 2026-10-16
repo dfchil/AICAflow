@@ -9,8 +9,8 @@ File layouts, bytecode and the SH4/ARM7 interface:
   optional SH4 AFI catalog.
 - [AFX instruction language](../../driver/format/docs/instruction-language.md) — the exact timed
   bytecode in an AFX control stream.
-- [SH-4 ↔ ARM7 IPC](ipc.md) — queue records, command ownership and durable
-  observations.
+- [SH-4 ↔ ARM7 IPC](ipc.md) — queue records, command ownership, durable
+  observations and the status reports the ARM7 sends back by interrupt.
 
 Binary asset and IPC multibyte values are little-endian. The exact numeric
 constants and C layouts are authoritative in

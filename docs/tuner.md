@@ -72,7 +72,7 @@ The tuner owns exactly one current bank and one current control flow:
 | `bank-upload` | Stops and frees the old AFX, releases the old AFB allocation, then loads the new AFB. |
 | `control-upload-play` | Stops and frees the old AFX, but keeps the current AFB, then uploads and starts the new control flow. |
 | `--index track.afc` | Keeps the AFB and AFX; replaces only the host-side seek index. |
-| `stop` | Stops/recycles playback; keeps AFB and AFX for `play`, patching and inspection. |
+| `stop` | Stops playback, which AICAflow then recycles; keeps AFB and AFX for `play`, patching and inspection. |
 | a staged upload | Uses a temporary SH4 buffer. It is freed after its commit, when a later upload begins, or on `reset`/`exit`. |
 
 Freed AICA memory is reusable but not zeroed, and `reset` does not zero it either.

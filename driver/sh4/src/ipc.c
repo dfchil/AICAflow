@@ -23,6 +23,92 @@ bool g_upload_dma_stream;
 mutex_t g_host_mutex = RECURSIVE_MUTEX_INITIALIZER;
 uint32_t const g_spu_base = AFX_SPU_RAM_BASE_SH4;
 
+/* The AICA's main-CPU interrupt (see AFX_AICA_MCIPD) runs a KOS threaded
+ * handler: in interrupt context only the ASIC event is masked; a KOS worker
+ * thread then clears the interrupt, drains the event ring, takes each reported
+ * slot's observation, recycles instances that ended and reports them, and
+ * unmasks. The program makes no call for any of it. KOS calls the masking
+ * part again for every other ASIC interrupt while the line is raised; that
+ * only masks again and wakes the worker, which coalesces. KOS hooks
+ * ASIC_EVT_SPU_IRQ nowhere itself; a program that does must not use AICAflow. */
+#define AICA_REG_SH4(offset) (0xa0700000u + (offset))
+static volatile bool g_host_irq_seen;
+volatile bool g_events_running;
+static uint32_t g_event_tail, g_event_overflows;
+static void host_irq_mask(uint16_t code) {
+    asic_evt_disable(code, ASIC_IRQ_DEFAULT);
+    g_host_irq_seen = true;
+}
+static void host_irq_unmask(uint16_t code) {
+    asic_evt_enable(code, ASIC_IRQ_DEFAULT);
+}
+/* Slots with news since the last call, from the event ring; every slot after
+ * an overflow. */
+static uint64_t events_take(void) {
+    uint32_t head = read_spu_word(AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, event_head));
+    uint32_t overflows = read_spu_word(AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, event_overflows));
+    uint64_t changed = 0;
+    if (overflows != g_event_overflows || head - g_event_tail > AFX_EVENT_CAPACITY) {
+        g_event_overflows = overflows;
+        changed = UINT64_MAX;
+    } else if (head != g_event_tail) {
+        uint32_t words[AFX_EVENT_CAPACITY / 4];
+        for (uint32_t i = 0; i < AFX_EVENT_CAPACITY / 4; ++i)
+            words[i] = read_spu_word(AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, events) + i * 4u);
+        for (uint32_t at = g_event_tail; at != head; ++at) {
+            uint32_t slot = at & (AFX_EVENT_CAPACITY - 1u);
+            uint32_t index = (words[slot / 4u] >> ((slot & 3u) * 8u)) & 0xffu;
+            if (index < AFX_MAX_FLOW_SLOTS) changed |= UINT64_C(1) << index;
+        }
+    }
+    if (head != g_event_tail) {
+        g_event_tail = head;
+        g2_write_32(g_spu_base + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, event_tail), head);
+    }
+    return changed;
+}
+static void host_events(uint32_t code, void *data) {
+    (void)code; (void)data;
+    /* Blocking: an upload may hold the lock for a while, and this thread can
+     * wait it out where the program's calls cannot. */
+    mutex_lock(&g_host_mutex);
+    g_events_running = true;
+    /* Clear before reading, and read the register back so the clear has landed:
+     * news published before it is then visible to the reads that follow, and
+     * news published after it raises the interrupt again. */
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIRE), AFX_AICA_MCI_SCPU);
+    (void)g2_read_32(AICA_REG_SH4(AFX_AICA_MCIPD));
+    if (g_ready && g_lifecycle) {
+        uint64_t changed = events_take();
+        for (uint32_t index = 0; index < AFX_MAX_FLOW_SLOTS; ++index)
+            if (g_instances[index].live &&
+                ((changed >> index) & 1u || g_instances[index].recycle_wanted)) (void)update_slot(index);
+    }
+    g_events_running = false;
+    mutex_unlock(&g_host_mutex);
+    events_report_ended();
+}
+static void host_irq_stop(void) {
+    asic_evt_disable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
+    asic_evt_remove_handler(ASIC_EVT_SPU_IRQ); /* Also ends the worker thread. */
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIEB), 0);
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIRE), AFX_AICA_MCI_SCPU);
+    g_host_irq_seen = false;
+}
+/* The firmware raises the interrupt once after booting: unmask, and wait for
+ * it to arrive. */
+static bool host_irq_start(void) {
+    g_host_irq_seen = false;
+    g_event_tail = g_event_overflows = 0;
+    if (asic_evt_request_threaded_handler(ASIC_EVT_SPU_IRQ, host_events, NULL,
+                                          host_irq_mask, host_irq_unmask)) return false;
+    g2_write_32(AICA_REG_SH4(AFX_AICA_MCIEB), AFX_AICA_MCI_SCPU);
+    asic_evt_enable(ASIC_EVT_SPU_IRQ, ASIC_IRQ_DEFAULT);
+    uint64_t started = timer_ms_gettime64();
+    while (!g_host_irq_seen && timer_ms_gettime64() - started < 100) thd_pass();
+    if (!g_host_irq_seen) host_irq_stop();
+    return g_host_irq_seen;
+}
 uint32_t new_sequence(void) {
     if (!g_next_sequence) ++g_next_sequence;
     return g_next_sequence++;
@@ -77,6 +163,7 @@ bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *
     return true;
 }
 static void stop_driver(void) {
+    host_irq_stop();
     spu_disable();
     /* ARM reset does not stop DSP. Remove memory accesses and drain the DSP
      * pipeline before its former ring can become firmware or asset memory. */
@@ -111,7 +198,9 @@ int afx_init(const void *firmware, uint32_t size) {
             read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, stack_base)) == info.stack_base &&
             read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, error)) == AFX_OK &&
             (capabilities & AFX_CAP_BOOTSTRAP)) {
-            if (!allocator_reset(info.asset_base)) { spu_disable(); return -AFX_NO_HOST_RAM; }
+            /* Status reaches the host only through the interrupt. */
+            if (!host_irq_start()) { spu_disable(); return -AFX_TIMEOUT; }
+            if (!allocator_reset(info.asset_base)) { stop_driver(); return -AFX_NO_HOST_RAM; }
             maps_reset();
             g_ready = true;
             g_lifecycle = (capabilities & AFX_CAP_LIFECYCLE) != 0;

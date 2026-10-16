@@ -344,45 +344,96 @@ int afx_instance_lanes_set(afx_instance_t instance, uint32_t modifier,
     memcpy(request.values, values, sizeof(request.values));
     return enqueue(AFX_CMD_LANE_SET, instance, new_sequence(), modifier, &request, sizeof(request));
 }
-int afx_instance_recycle(afx_instance_t instance) {
+/* Instances released since the end callback last ran, with their last status. */
+static struct ended_instance { afx_instance_t instance; afx_instance_status_t status; } g_ended[AFX_MAX_FLOW_SLOTS];
+static uint32_t g_ended_count;
+static afx_end_callback_t g_end_callback;
+static void *g_end_user;
+void afx_set_end_callback(afx_end_callback_t callback, void *user) {
+    mutex_lock(&g_host_mutex);
+    g_end_callback = callback;
+    g_end_user = user;
+    mutex_unlock(&g_host_mutex);
+}
+void events_report_ended(void) {
+    struct ended_instance ended[AFX_MAX_FLOW_SLOTS];
+    mutex_lock(&g_host_mutex);
+    uint32_t count = g_ended_count;
+    afx_end_callback_t callback = g_end_callback;
+    void *user = g_end_user;
+    memcpy(ended, g_ended, count * sizeof(ended[0]));
+    g_ended_count = 0;
+    mutex_unlock(&g_host_mutex);
+    /* Unlocked, so the callback can start the next sound. */
+    for (uint32_t i = 0; callback && i < count; ++i) callback(ended[i].instance, &ended[i].status, user);
+}
+/* An instance that ended is recycled, so its slot and channels come back
+ * without the program asking. */
+static void recycle_ended(uint32_t index) {
+    afx_instance_slot_t *slot = &g_instances[index];
+    if (slot->pending || slot->recycling || slot->recycle_refused ||
+        (slot->status.state != AFX_DONE && slot->status.state != AFX_ERROR)) return;
+    afx_instance_status_t last = slot->status;
+    uint32_t sequence = new_sequence();
+    slot->recycle_wanted = enqueue(AFX_CMD_RECYCLE, last.reference, sequence, 0, NULL, 0) != AFX_OK;
+    if (slot->recycle_wanted) return; /* Retried with the next event. */
+    slot->pending = slot->recycling = true;
+    slot->ended = last;
+    slot->status.sequence = sequence;
+}
+bool update_slot(uint32_t index) {
+    afx_instance_slot_t *slot = &g_instances[index];
+    afx_instance_status_t observed;
+    if (!read_observed(index, &slot->observed_epoch, &observed)) {
+        if (slot->recycle_wanted) recycle_ended(index);
+        return false;
+    }
+    afx_instance_t reference = AFX_MAKE_HANDLE(index, slot->generation);
+    /* FREE carries no generation in its reference, so its sequence is the
+     * guard against a delayed recycle observation freeing this slot after
+     * it has been reused by a later generation. */
+    if (slot->recycling && observed.reference == 0 && observed.state == AFX_FREE &&
+        observed.sequence == slot->status.sequence) {
+        if (g_ended_count < AFX_MAX_FLOW_SLOTS)
+            g_ended[g_ended_count++] = (struct ended_instance){ reference, slot->ended };
+        release_instance_preserving_generation(index);
+        return true;
+    }
+    if (observed.reference != reference || !observed.sequence ||
+        observed.sequence < slot->status.sequence) return true;
+    uint32_t expected = slot->status.sequence;
+    if (slot->recycling) {
+        /* Refused (it was not over after all): keep the slot, stop asking. */
+        if (observed.sequence >= expected) {
+            slot->recycling = slot->pending = false;
+            slot->recycle_refused = true;
+            slot->status = observed;
+        }
+        return true;
+    }
+    if (memcmp(&observed, &slot->status, sizeof(observed)))
+        slot->status = observed;
+    if (slot->pending && observed.sequence >= expected)
+        {
+            if (slot->staging_addr) {
+                (void)free_allocation(slot->staging_addr);
+                slot->staging_addr = 0;
+            }
+            slot->pending = false;
+        }
+    recycle_ended(index);
+    return true;
+}
+int afx_instance_refresh(afx_instance_t instance) {
     HOST_GUARD(-AFX_BUSY);
     uint32_t index;
-    if (!resolve_instance(instance, &index)) return -AFX_STALE_GENERATION;
-    if (g_instances[index].pending || (g_instances[index].status.state != AFX_DONE &&
-                                       g_instances[index].status.state != AFX_ERROR))
-        return -AFX_BUSY;
-    return lifecycle(instance, AFX_CMD_RECYCLE);
-}
-int afx_update(void) {
-    HOST_GUARD(-AFX_BUSY);
     if (!g_ready || !g_lifecycle) return -AFX_UNSUPPORTED;
-    for (uint32_t index = 0; index < AFX_MAX_FLOW_SLOTS; ++index) {
-        afx_instance_slot_t *slot = &g_instances[index];
-        if (!slot->live) continue;
-        afx_instance_status_t observed;
-        if (!read_observed(index, &slot->observed_epoch, &observed)) continue;
-        afx_instance_t reference = AFX_MAKE_HANDLE(index, slot->generation);
-        /* FREE carries no generation in its reference, so its sequence is the
-         * guard against a delayed recycle observation freeing this slot after
-         * it has been reused by a later generation. */
-        if (slot->recycling && observed.reference == 0 && observed.state == AFX_FREE &&
-            observed.sequence == slot->status.sequence) {
-            release_instance_preserving_generation(index);
-            continue;
-        }
-        if (observed.reference != reference || !observed.sequence ||
-            observed.sequence < slot->status.sequence) continue;
-        uint32_t expected = slot->status.sequence;
-        if (memcmp(&observed, &slot->status, sizeof(observed)))
-            slot->status = observed;
-        if (slot->pending && observed.sequence >= expected)
-            {
-                if (slot->staging_addr) {
-                    (void)free_allocation(slot->staging_addr);
-                    slot->staging_addr = 0;
-                }
-                slot->pending = false;
-            }
+    if (!resolve_instance(instance, &index)) return -AFX_STALE_GENERATION;
+    /* An odd epoch never matches a stable one, so the record is read even if
+     * it was read before; a publication in progress is retried. */
+    for (uint32_t attempt = 0; attempt < 4; ++attempt) {
+        g_instances[index].observed_epoch = 1u;
+        if (update_slot(index)) break;
     }
     return AFX_OK;
 }

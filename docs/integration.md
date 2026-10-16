@@ -20,12 +20,15 @@ int result = afx_init(firmware, sizeof(firmware));
 ```
 
 Load one AFB into an `afx_bank_t`, upload an AFX bound to that bank, then
-activate the resulting flow. Call `afx_update()` regularly and recycle finished
-instances. The complete checked-in [quickstart](../examples/quickstart/code/main.c)
+activate the resulting flow. AICAflow takes the firmware's status reports by
+itself and frees instances that end. The complete checked-in [quickstart](../examples/quickstart/code/main.c)
 demonstrates memory inputs and completion waits; these are the corresponding
 application steps:
 
 1. Initialize once. Startup/shutdown require other host calls to be quiescent.
+   `afx_init()` takes the AICA's interrupt (KOS event `ASIC_EVT_SPU_IRQ`) for
+   the firmware's status reports, so the program must not hook it, and fails
+   with `AFX_TIMEOUT` if the interrupt does not arrive (an emulator without it).
 2. If using delay-memory DSP, choose/install its ring before filling the arena.
 3. Load AFB with `afx_bank_load_file()` or `afx_bank_load_memory()` into a
    zero-initialized `afx_bank_t`.
@@ -34,11 +37,18 @@ application steps:
    activating; an active referenced flow cannot replace its seek index.
 5. Activate with `afx_instance_activate()`. Apply player gain/tempo and other
    live controls using the returned instance handle.
-6. Call `afx_update()` and inspect `afx_instance_status()` regularly. A zero
-   return from a lifecycle call means queued, not "ARM7 finished". Check both
-   the API result and the later observed state/result.
-7. On completion or explicit STOP, wait for DONE/ERROR, queue recycle and wait
-   until the old handle is stale. Only then free its flow and release its bank.
+6. The firmware reports every change of state by interrupt, and AICAflow's
+   event thread takes it; `afx_instance_status()` shows it, without reading
+   AICA RAM. A zero return from a lifecycle call means queued, not "ARM7
+   finished": the result arrives later in the status.
+7. An instance that ends, by itself or after `afx_instance_stop()`, is
+   recycled by that thread: its channels and slot are freed and its handle goes
+   stale. `afx_set_end_callback()` reports each one with the status it ended
+   with, from the event thread. The callback must not wait for a lock that the
+   program holds while waiting for an instance to end: the event thread would
+   stop. Hand the report to the program's own thread instead, as DKR does with a
+   small queue. Once the handle is stale, its flow can be freed and its bank
+   released.
 
 Integer APIs generally return zero on success and a negative `afx_result_t`
 on failure. Handle/address getters use zero for invalid results. Do not spin
@@ -117,8 +127,8 @@ KOS build. This configuration was link-tested, not hardware-tested.
 
 An uploaded flow retains its bank; an instance retains its flow. Several
 different or concurrent flows can share a bank, but each flow binds to just
-one. A scene transition should stop/recycle old instances before freeing their
-flows/bank. Shared banks can stay resident across scene changes. The application
+one. A scene transition should stop old instances and wait for their handles to
+go stale before freeing their flows/bank. Shared banks can stay resident across scene changes. The application
 controls residency; the driver has no automatic sample cache.
 
 `afx_instance_patch()` addresses a **local channel**, not a physical AICA

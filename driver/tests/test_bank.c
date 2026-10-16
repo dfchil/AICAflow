@@ -35,6 +35,110 @@ static void test_observation_cache(void) {
     assert(read_observed(63, &epoch, &status) && epoch == 0);
 }
 
+/* Status arrives by interrupt and AICAflow's event thread takes it: the
+ * program makes no call. The thread reads only the slots the event ring names,
+ * recycles an instance that ended and reports it, and loses no news published
+ * while it works. */
+static afx_instance_t ev_instance, ev_other;
+static unsigned ended_calls;
+static afx_instance_t ended_instance;
+static afx_instance_status_t ended_status;
+static void on_end(afx_instance_t instance, const afx_instance_status_t *status, void *user) {
+    assert(user == &ended_calls);
+    /* Unlocked: the program may call in, and the handle is already stale. */
+    afx_instance_status_t now;
+    assert(afx_instance_status(instance, &now) == -AFX_STALE_GENERATION);
+    ++ended_calls;
+    ended_instance = instance;
+    ended_status = *status;
+}
+static void publish_done(void) { observed(5, ev_instance, AFX_DONE, 3, AFX_OK); }
+static void publish_other(void) { observed(6, ev_other, AFX_PAUSED, 2, AFX_OK); }
+static void publish_running_and_dispatch(void) {
+    observed(5, ev_instance, AFX_RUNNING, 4, AFX_OK);
+    irq_other_asic_event(); /* Another ASIC interrupt while the thread reads. */
+}
+static void live_slot(uint32_t index, afx_instance_t *out) {
+    afx_instance_slot_t *slot = &g_instances[index];
+    memset(slot, 0, sizeof(*slot));
+    slot->live = true;
+    slot->generation = 1;
+    *out = AFX_MAKE_HANDLE(index, 1);
+}
+static void drain_queue(void) {
+    afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
+}
+static void test_events(void) {
+    afx_instance_status_t status;
+    irq_run_worker(); /* The boot interrupt: nothing to read. */
+    afx_set_end_callback(on_end, &ended_calls);
+    live_slot(5, &ev_instance);
+    live_slot(6, &ev_other);
+    unsigned reads = observed_reads, runs = worker_runs;
+    irq_run_worker();
+    assert(observed_reads == reads && worker_runs == runs); /* No news, no work. */
+    /* One record read for one event: epoch, seven fields, epoch. */
+    observed(5, ev_instance, AFX_RUNNING, 1, AFX_OK);
+    irq_run_worker();
+    assert(observed_reads - reads == 9);
+    assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.state == AFX_RUNNING);
+    /* A position-only republish is not news; refresh reads it on request. */
+    reads = observed_reads;
+    observed_position(5, 0x40);
+    irq_run_worker();
+    assert(observed_reads == reads && worker_runs == runs + 1);
+    assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.position == 0);
+    assert(afx_instance_refresh(ev_instance) == AFX_OK);
+    assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.position == 0x40);
+    /* Published right after the clear: taken in the same pass. */
+    observed(5, ev_instance, AFX_RUNNING, 2, AFX_OK);
+    irq_hook_on_clear = publish_other;
+    irq_run_worker();
+    assert(afx_instance_status(ev_other, &status) == AFX_OK && status.state == AFX_PAUSED);
+    /* Published before the unmask: the interrupt arrives on unmask. */
+    irq_hook_on_unmask = publish_done;
+    observed(6, ev_other, AFX_RUNNING, 3, AFX_OK);
+    irq_run_worker();
+    /* It ended: the thread asked the firmware to recycle it. */
+    afx_cmd_t command = queued(queue_head() - 1);
+    assert(command.opcode == AFX_CMD_RECYCLE && command.reference == ev_instance);
+    assert(g_instances[5].recycling && !ended_calls);
+    drain_queue();
+    /* KOS calls the masking part again for other ASIC interrupts meanwhile. */
+    observed(5, 0, AFX_FREE, command.sequence, AFX_OK);
+    irq_other_asic_event();
+    irq_other_asic_event();
+    irq_run_worker();
+    assert(ended_calls == 1 && ended_instance == ev_instance);
+    assert(ended_status.state == AFX_DONE && ended_status.result == AFX_OK);
+    assert(afx_instance_status(ev_instance, &status) == -AFX_STALE_GENERATION && !g_instances[5].live);
+    /* While the thread reads, after the clear, another ASIC interrupt. */
+    live_slot(5, &ev_instance);
+    irq_hook_on_clear = publish_running_and_dispatch;
+    observed(6, ev_other, AFX_RUNNING, 4, AFX_OK);
+    irq_run_worker();
+    assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.sequence == 4);
+    /* More news than the ring holds: every live record is read again. */
+    for (uint32_t i = 0; i < AFX_EVENT_CAPACITY + 2u; ++i)
+        observed(i & 1u ? 5 : 6, i & 1u ? ev_instance : ev_other, AFX_RUNNING, 10 + i, AFX_OK);
+    assert(afx_read32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, event_overflows)) == 2);
+    irq_run_worker();
+    assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.sequence == 10 + AFX_EVENT_CAPACITY + 1u);
+    assert(afx_instance_status(ev_other, &status) == AFX_OK && status.sequence == 10 + AFX_EVENT_CAPACITY);
+    /* A refused recycle is not asked again. */
+    observed(6, ev_other, AFX_DONE, 40, AFX_OK);
+    irq_run_worker();
+    command = queued(queue_head() - 1);
+    assert(command.opcode == AFX_CMD_RECYCLE && command.reference == ev_other);
+    drain_queue();
+    uint32_t head = queue_head();
+    observed(6, ev_other, AFX_ERROR, command.sequence, AFX_BUSY);
+    irq_run_worker();
+    assert(queue_head() == head && g_instances[6].recycle_refused && !g_instances[6].pending);
+    afx_set_end_callback(NULL, NULL);
+    memset(&g_instances[5], 0, sizeof(g_instances[5]));
+    memset(&g_instances[6], 0, sizeof(g_instances[6]));
+}
 static void test_bounded_bank_upload(void) {
     const uint32_t bytes = 2u * 65536u + 17u;
     uint8_t *input = malloc(bytes + 1u);
@@ -225,7 +329,8 @@ static void test_one_lifecycle_command(afx_asset_t flow) {
     uint32_t activation = g_instances[index].status.sequence, head = queue_head();
     assert(afx_instance_stop(instance) == -AFX_BUSY && queue_head() == head);
     observed(index, instance, AFX_RUNNING, activation, AFX_OK);
-    assert(afx_update() == AFX_OK && !g_instances[index].pending);
+    irq_run_worker();
+    assert(!g_instances[index].pending);
     assert(afx_instance_stop(instance) == AFX_OK && queue_head() == head + 1u);
     assert(afx_instance_stop(instance) == -AFX_BUSY && queue_head() == head + 1u);
     release_instance_preserving_generation(index);
@@ -241,7 +346,8 @@ static void test_enqueue_tail_cache(afx_asset_t flow) {
     assert(afx_instance_activate(flow, &instance) == AFX_OK);
     uint32_t index = AFX_HANDLE_INDEX(instance);
     observed(index, instance, AFX_RUNNING, g_instances[index].status.sequence, AFX_OK);
-    assert(afx_update() == AFX_OK && !g_instances[index].pending);
+    irq_run_worker();
+    assert(!g_instances[index].pending);
     uint8_t *tail = ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail);
     afx_write32(tail, queue_head());
     unsigned before = tail_reads;
@@ -329,7 +435,7 @@ static void test_relative_flow(const afx_bank_t *bank) {
         assert(activation.bank_bytes == bank->bytes);
         uint32_t index = AFX_HANDLE_INDEX(instance);
         observed(index, instance, AFX_PAUSED, command.sequence, AFX_OK);
-        assert(afx_update() == AFX_OK);
+        irq_run_worker();
         uint16_t patch_values[] = {0, 0};
         uint32_t head = queue_head();
         for (uint32_t mask = 1; mask <= 3; ++mask)
@@ -369,7 +475,7 @@ static void test_relative_flow(const afx_bank_t *bank) {
         afx_cmd_t command = queued(queue_head() - 1);
         uint32_t index = AFX_HANDLE_INDEX(instance), selected = UINT32_MAX;
         observed(index, instance, AFX_PAUSED, command.sequence, AFX_OK);
-        assert(afx_update() == AFX_OK);
+        irq_run_worker();
         unsigned reads_before = asset_reads;
         assert(afx_instance_seek_checkpoint(instance, targets[i], &selected) == AFX_OK);
         assert(selected == (i ? 7u : 0u) && asset_reads == reads_before);
@@ -493,6 +599,7 @@ int main(int argc, char **argv) {
     afx_write32(dsp_registers + 0x3408, 0x6000); /* DSP left running by a previous driver. */
     firmware(fw); assert(afx_init(fw, sizeof(fw)) == AFX_OK);
     test_observation_cache();
+    test_events();
     test_bounded_bank_upload();
     test_direct_bank_upload();
     test_queue_capacity();
@@ -604,5 +711,10 @@ int main(int argc, char **argv) {
         free(b); free(f); free(s);
     }
     afx_shutdown();
+    assert(!irq_handler);
+    /* A firmware whose boot report never arrives does not start. */
+    irq_boot_raise = 0;
+    assert(afx_init(fw, sizeof(fw)) == -AFX_TIMEOUT && !running);
+    assert(!irq_handler && !(afx_read32(dsp_registers + AFX_AICA_MCIEB) & AFX_AICA_MCI_SCPU));
     return 0;
 }

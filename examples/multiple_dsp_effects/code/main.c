@@ -39,7 +39,6 @@ static void text(unsigned line, const char *value) {
 
 static int wait_recycled(afx_instance_t handle) {
     for (unsigned waited = 0; waited < 2000; ++waited) {
-        if (afx_update() < 0) return -AFX_TIMEOUT;
         if (afx_instance_status(handle, &(afx_instance_status_t){0}) == -AFX_STALE_GENERATION) return AFX_OK;
         thd_sleep(1);
     }
@@ -129,14 +128,8 @@ static void render(void *unused) {
 
 static void cleanup(void) {
     if (running) {
+        /* AICAflow recycles it once it has ended. */
         afx_instance_stop(instance);
-        for (unsigned waited = 0; waited < 2000; ++waited) {
-            afx_instance_status_t status;
-            if (afx_update() || afx_instance_status(instance, &status)) break;
-            if (status.state == AFX_DONE || status.state == AFX_ERROR) break;
-            thd_sleep(1);
-        }
-        afx_instance_recycle(instance);
         wait_recycled(instance);
         running = false;
     }
@@ -169,19 +162,16 @@ int main(void) {
 
 static void update(void *unused) {
     (void)unused;
-    int result = afx_update();
+    int result = AFX_OK;
     enj_ctrlr_state_t **states = enj_ctrl_get_states(), *pad = NULL;
     for (size_t index = 0; index < enj_ctrl_states_length() && !pad; ++index) pad = states[index];
-    if (!result && running) {
+    if (running) {
+        /* Once it has ended, AICAflow recycles it and the handle goes stale. */
         afx_instance_status_t status;
-        if (!afx_instance_status(instance, &status) && (status.state == AFX_DONE || status.state == AFX_ERROR)) {
-            result = afx_instance_recycle(instance);
-            if (!result) result = wait_recycled(instance);
-            if (!result) {
-                running = false;
-                finished = true;
-                snprintf(message, sizeof(message), "Complete: both effects ran in one DSP scene");
-            }
+        if (afx_instance_status(instance, &status) == -AFX_STALE_GENERATION) {
+            running = false;
+            finished = true;
+            snprintf(message, sizeof(message), "Complete: both effects ran in one DSP scene");
         }
     }
     if (!result && pad && finished && pad->button.A == ENJ_BUTTON_DOWN_THIS_FRAME) result = start();

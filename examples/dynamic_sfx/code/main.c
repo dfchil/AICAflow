@@ -33,7 +33,7 @@ static int wait_for(afx_instance_t instance, uint32_t wanted, uint32_t timeout_m
     uint64_t deadline = timer_ms_gettime64() + timeout_ms;
     do {
         afx_instance_status_t status;
-        if (afx_update() < 0 || afx_instance_status(instance, &status)) return -1;
+        if (afx_instance_status(instance, &status)) return -1;
         if (status.state == wanted) return 0;
         if (status.state == AFX_DONE || status.state == AFX_ERROR) return -1;
         thd_sleep(1);
@@ -240,9 +240,19 @@ typedef struct {
     afx_instance_t engine, slide;
     uint16_t pitch, lfo;
     uint8_t engine_pan, throttle, filter_q, brightness, slide_pan;
-    bool engine_enabled, engine_muted, slide_enabled, slide_active, slide_recycling,
+    bool engine_enabled, engine_muted, slide_enabled, slide_active,
          slide_stopping, slide_left_to_right, next_slide_left_to_right;
 } demo_state_t;
+
+/* How the last slide ended. AICAflow recycles an instance that ends and
+ * reports it here, from its event thread. */
+static volatile uint32_t slide_end_result;
+static afx_instance_t slide_instance;
+static void on_end(afx_instance_t instance, const afx_instance_status_t *status, void *user) {
+    (void)user;
+    if (instance == slide_instance && status->state == AFX_ERROR)
+        slide_end_result = status->result ? status->result : AFX_BAD_COMMAND;
+}
 
 static demo_state_t demo;
 
@@ -345,20 +355,16 @@ static int update_slide(demo_state_t *state, uint32_t now) {
     if (state->slide) {
         afx_instance_status_t status;
         int result = afx_instance_status(state->slide, &status);
-        if (result == -AFX_STALE_GENERATION && state->slide_recycling) {
+        if (result == -AFX_STALE_GENERATION) { /* Ended, and AICAflow recycled it. */
+            if (slide_end_result) return -(int)slide_end_result;
             state->slide = 0;
-            state->slide_recycling = false;
             state->slide_stopping = false;
             state->next_slide = now + SLIDE_PAUSE_TICKS;
         } else if (result) {
             return result;
         } else if (status.state == AFX_ERROR) {
             return status.result ? -(int)status.result : -AFX_BAD_COMMAND;
-        } else if (status.state == AFX_DONE && !state->slide_recycling) {
-            result = afx_instance_recycle(state->slide);
-            if (!result) state->slide_recycling = true;
-            else if (result != -AFX_BUSY && result != -AFX_IPC_FULL) return result;
-        } else if (!state->slide_enabled && !state->slide_stopping) {
+        } else if (status.state != AFX_DONE && !state->slide_enabled && !state->slide_stopping) {
             result = afx_instance_stop(state->slide);
             if (!result) state->slide_stopping = true;
             else if (result != -AFX_BUSY && result != -AFX_IPC_FULL) return result;
@@ -367,6 +373,7 @@ static int update_slide(demo_state_t *state, uint32_t now) {
     if (state->slide_enabled && !state->slide && (int32_t)(now - state->next_slide) >= 0) {
         int result = afx_instance_activate(state->slide_flows[state->next_slide_left_to_right],
                                            &state->slide);
+        if (!result) slide_instance = state->slide;
         if (!result) {
             state->slide_left_to_right = state->next_slide_left_to_right;
             state->next_slide_left_to_right = !state->next_slide_left_to_right;
@@ -414,12 +421,11 @@ static void update(void *data) {
         if (!result) state->engine_muted = true;
         else if (result != -AFX_BUSY && result != -AFX_IPC_FULL) state->result = result;
     }
-    if (!state->result && afx_update() < 0) state->result = -1;
     if (!state->result) state->result = update_slide(state, now);
     uint32_t elapsed = (int32_t)(now - state->slide_started) > 0 ?
                        now - state->slide_started : 0;
     uint32_t step = elapsed * SLIDE_PAN_STEPS / SLIDE_DURATION_TICKS;
-    state->slide_active = state->slide && !state->slide_recycling && elapsed < SLIDE_DURATION_TICKS;
+    state->slide_active = state->slide && elapsed < SLIDE_DURATION_TICKS;
     state->slide_pan = state->slide_active ? slide_pan(step > SLIDE_PAN_STEPS ? SLIDE_PAN_STEPS : step,
                                                       state->slide_left_to_right) : 0;
     enj_render_list_add(PVR_LIST_OP_POLY, render_sprites, state);
@@ -437,6 +443,7 @@ int main(int argc, char **argv) {
     enj_state_init_defaults();
     if (enj_state_startup()) return 1;
     int result = afx_init(firmware, sizeof(firmware));
+    afx_set_end_callback(on_end, NULL);
     if (!result) result = load_dynamic_bank(&bank);
     if (!result) result = make_engine_loop(&bank, &engine_loop);
     if (!result) result = make_slide_sequence(&bank, false, &demo.slide_flows[0]);

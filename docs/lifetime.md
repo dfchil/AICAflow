@@ -5,8 +5,9 @@
 An AFB owns one contiguous AICA sample allocation. An uploaded AFX flow retains
 that bank; an active instance retains its flow. Release in this order:
 
-1. Stop an active instance and wait for `AFX_DONE` or `AFX_ERROR`.
-2. Recycle the instance and wait until its handle is stale.
+1. Stop an active instance (one that ends by itself needs no stop).
+2. Wait until its handle is stale: AICAflow recycles an instance that ended,
+   and reports it to the end callback (`afx_set_end_callback()`).
 3. Free the AFX flow with `afx_asset_free()`.
 4. Release the bank with `afx_bank_release()`.
 

@@ -58,12 +58,17 @@ typedef struct {
  * Every byte, including final zero padding, uses DMA. */
 #define AFX_UPLOAD_DMA_STEP_BYTES 65536u
 /* Init/shutdown require all other host calls to be quiescent. Other host APIs
- * serialize bookkeeping and publication with a recursive try-lock. Every
+ * serialize bookkeeping and publication with a recursive try-lock: a call that
+ * finds it held returns AFX_BUSY, except while AICAflow's event thread holds
+ * it, briefly, when the call waits instead. Every
  * operation that can fail returns 0 on success and a negative afx_result_t on
  * failure. Handle/address getters use 0 only for an invalid query result.
  * Upload and seek hold the lock for their complete call. Status
  * timer/heartbeat reads are independent G2 reads.
  * Integer result APIs return 0 or negative afx_result_t; firmware must match. */
+/* afx_init takes the AICA's interrupt (KOS event ASIC_EVT_SPU_IRQ) for
+ * status reports and keeps it until afx_shutdown. It returns -AFX_TIMEOUT if
+ * the firmware's boot report does not arrive through it. */
 int afx_init(const void *arm7_firmware, uint32_t firmware_size);
 void afx_shutdown(void);
 
@@ -96,8 +101,12 @@ uint32_t afx_asset_addr(afx_asset_t asset);
 uint32_t afx_asset_size(afx_asset_t asset);
 int afx_asset_work(afx_asset_t asset, afx_work_profile_t *out_profile);
 
-/* Stage 3 lifecycle API. Commands are nonblocking: a zero result means queued;
- * call afx_update and afx_instance_status for ARM-owned durable completion.
+/* Stage 3 lifecycle API. Commands are nonblocking: a zero result means queued.
+ * The firmware reports every change of state back by interrupt, and AICAflow's
+ * event thread takes it: afx_instance_status() then shows it. An instance that
+ * ends (DONE or ERROR, including after STOP) is recycled by that thread: its
+ * channels and slot are freed, its handle becomes stale, and the end callback
+ * (afx_set_end_callback) reports it. The program never polls.
  * A lifecycle command returns AFX_BUSY while an earlier one is unacknowledged.
  * PATCH/gain/tempo/lane commands may follow ACTIVATE immediately; queue order
  * applies them before the first authored deadline. */
@@ -153,10 +162,24 @@ int afx_dsp_scene_program_ring(const void *program, uint32_t bytes, uint8_t rbl)
 /* Gates the current scene program’s stereo returns without replacing its state. */
 int afx_dsp_scene_returns(bool enabled);
 int afx_dsp_scene_disable(void);
-int afx_instance_recycle(afx_instance_t instance);
+/* The instance's last reported status; no AICA access. state, sequence and
+ * result are as the firmware last reported them; position, next_deadline and
+ * detail of a RUNNING instance only as of its last change of state. Use
+ * afx_instance_refresh for current ones. Returns -AFX_STALE_GENERATION once
+ * the instance has ended and been recycled. */
 int afx_instance_status(afx_instance_t instance, afx_instance_status_t *out_status);
-/* Refreshes ARM-owned instance observations; returns 0 even when none changed. */
-int afx_update(void);
+/* Reads one instance's observation from AICA RAM now, including the position
+ * of a RUNNING instance. */
+int afx_instance_refresh(afx_instance_t instance);
+/* Called once for each instance that ended, after its channels and slot are
+ * free, with the status it ended with (DONE or ERROR; result says why). It
+ * runs on AICAflow's event thread with no AICAflow lock held, so it may start
+ * another instance. While it runs, no other report is taken: it must not wait
+ * for anything that itself waits for an instance to end, such as a lock the
+ * program holds while it does. A program that shares state with it is safest
+ * handing the report over (a queue, a flag) instead of locking. NULL removes it. */
+typedef void (*afx_end_callback_t)(afx_instance_t instance, const afx_instance_status_t *status, void *user);
+void afx_set_end_callback(afx_end_callback_t callback, void *user);
 
 uint32_t afx_status_heartbeat(void);
 uint32_t afx_status_timer_ticks(void);
