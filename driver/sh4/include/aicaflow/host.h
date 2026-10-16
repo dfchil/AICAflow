@@ -174,8 +174,10 @@ int afx_instance_refresh(afx_instance_t instance);
 /* Called once for each instance that ended, after its channels and slot are
  * free, with the status it ended with (DONE or ERROR; result says why). It
  * runs on AICAflow's event thread with no AICAflow lock held, so it may start
- * another instance; anything it shares with the program's threads needs the
- * program's own locking. NULL removes it. */
+ * another instance. While it runs, no other report is taken: it must not wait
+ * for anything that itself waits for an instance to end, such as a lock the
+ * program holds while it does. A program that shares state with it is safest
+ * handing the report over (a queue, a flag) instead of locking. NULL removes it. */
 typedef void (*afx_end_callback_t)(afx_instance_t instance, const afx_instance_status_t *status, void *user);
 void afx_set_end_callback(afx_end_callback_t callback, void *user);
 

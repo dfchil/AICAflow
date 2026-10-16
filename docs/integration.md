@@ -44,8 +44,11 @@ application steps:
 7. An instance that ends, by itself or after `afx_instance_stop()`, is
    recycled by that thread: its channels and slot are freed and its handle goes
    stale. `afx_set_end_callback()` reports each one with the status it ended
-   with, from the event thread. Once the handle is stale, its flow can be
-   freed and its bank released.
+   with, from the event thread. The callback must not wait for a lock that the
+   program holds while waiting for an instance to end: the event thread would
+   stop. Hand the report to the program's own thread instead, as DKR does with a
+   small queue. Once the handle is stale, its flow can be freed and its bank
+   released.
 
 Integer APIs generally return zero on success and a negative `afx_result_t`
 on failure. Handle/address getters use zero for invalid results. Do not spin
