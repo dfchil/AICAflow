@@ -38,9 +38,20 @@ static void dsp_clear_delay(void) {
 }
 static afx_status_t status;
 #define STATUS (&status)
+static uint32_t clock_value;
+#define CLOCK (&clock_value)
+#define AFX_TEMPO_NORMAL 256u
+#define AFX_TEMPO_MIN 16u
+#define AFX_TEMPO_MAX 4096u
+#define AFX_TEMPO_WAIT_CHUNK (UINT32_MAX / AFX_TEMPO_MAX)
+/* The executor reads its stream from AICA RAM by address; here from a buffer. */
+#define STREAM_BASE 0x4000u
+static uint8_t stream_bytes[64];
+static uint8_t setup_bytes[AFX_SETUP_BYTES];
 static afx_observed_t observed_records[AFX_MAX_FLOW_SLOTS];
 #define OBSERVED observed_records
-static uint32_t last_state, last_sequence;
+static uint32_t last_state, last_sequence, last_position, last_deadline;
+static uint32_t loop_position, loop_deadline, loop_publishes;
 static int physical_channel(const volatile afx_runtime_slot_t *context,
                             uint32_t local, uint32_t *out) {
     if (local >= context->channels) return 0;
@@ -49,9 +60,12 @@ static int physical_channel(const volatile afx_runtime_slot_t *context,
 }
 static void publish(uint32_t index, uint32_t reference, uint32_t state, uint32_t sequence,
                     uint32_t result, uint32_t position, uint32_t deadline, uint32_t detail) {
-    (void)index; (void)reference;
-    (void)position; (void)deadline; (void)detail;
+    (void)index; (void)reference; (void)detail;
     last_result = result; last_state = state; last_sequence = sequence;
+    last_position = position; last_deadline = deadline;
+    if ((state >> AFX_STATE_LOOPS_SHIFT) && !loop_publishes++) {
+        loop_position = position; loop_deadline = deadline;
+    }
 }
 '''
 globals_ = source[source.index("static const uint8_t gain_attenuation"):
@@ -59,12 +73,17 @@ globals_ = source[source.index("static const uint8_t gain_attenuation"):
 names = ("range", "asset_range", "clear_words", "dsp_returns", "dsp_disable", "dsp_nop", "scene_result", "dsp_control", "reference_index",
          "multiply_gain", "apply_gain", "projected_mix", "projected_direct",
          "projected_dsp_send", "write_projection", "release_voice", "keyoff",
-         "stream_position", "install_voice", "write_restore", "set_instance_gain", "set_lanes", "rebuild",
-         "lifecycle")
+         "stream_position", "state_word", "install_voice", "write_restore", "set_instance_gain", "set_lanes", "rebuild",
+         "lifecycle", "tick_due", "schedule_wait", "record_lateness", "complete", "write_note",
+         "write_patch", "service")
 body = "\n".join(function(name) for name in names)
 # Keep production validation/installation intact; only translate staging pointers.
 assert body.count("(request.states_address +") == 2
 body = body.replace("(request.states_address +", "((uintptr_t)restore_states +")
+assert body.count("(const uint8_t *)context->pc,") == 1
+body = body.replace("(const uint8_t *)context->pc,", "stream_bytes + (context->pc - STREAM_BASE),")
+assert body.count("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)") == 1
+body = body.replace("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)", "setup_bytes")
 checks = r'''
 int main(void) {
     /* All supported sizes, at a non-top address; disable resets ownership. */
@@ -209,6 +228,48 @@ int main(void) {
     assert(voice_flags[0] == VOICE_MUTED);
     assert(write_restore(ctx, &restore_states[0], 1) == AFX_OK);
     assert(voice_flags[0] == VOICE_MUTED); /* Muted restores do not latch. */
+    /* A looping stream: WAIT8 2, KEYOFF 0, WAIT8 3, LOOP back to the KEYOFF.
+     * The LOOP moves the cursor in the tick it is due; the deadline carries on. */
+    (void)setup_bytes;
+    memset(stream_bytes, 0, sizeof(stream_bytes));
+    stream_bytes[0] = AFX_OP_WAIT8; stream_bytes[1] = 2;
+    stream_bytes[2] = AFX_OP_KEYOFF; stream_bytes[3] = 0;
+    stream_bytes[4] = AFX_OP_WAIT8; stream_bytes[5] = 3;
+    stream_bytes[6] = AFX_OP_LOOP; afx_write32(stream_bytes + 7, 2);
+    volatile afx_runtime_slot_t *loop = &contexts[2];
+    *loop = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 1,
+        .image_base = STREAM_BASE, .stream_start = 0, .pc = STREAM_BASE, .end = STREAM_BASE + 11,
+        .flags = AFX_FLAG_LOOP, .tempo_period_q8_8 = 256, .gain = 255};
+    voice_flags[0] = VOICE_LATCHED;
+    clock_value = 0;
+    service(2);
+    assert(loop->deadline == 2 && loop->pc == STREAM_BASE + 2 && loop->loops == 0);
+    clock_value = 2;
+    service(2); /* KEYOFF, WAIT 3 */
+    assert(loop->deadline == 5 && loop->pc == STREAM_BASE + 6 && !loop_publishes);
+    clock_value = 5;
+    service(2); /* LOOP, KEYOFF, WAIT 3: one tick, no gap */
+    assert(loop->loops == 1 && loop->deadline == 8 && loop->pc == STREAM_BASE + 6);
+    assert(loop_publishes == 1 && loop_position == 2 && loop_deadline == 5);
+    assert(last_state == (AFX_RUNNING | (1u << AFX_STATE_LOOPS_SHIFT)) && last_result == AFX_OK);
+    clock_value = 8;
+    service(2); /* The second loop: the body is WAIT 3 long, so it comes 3 ticks later. */
+    assert(loop->loops == 2 && loop->deadline == 11 && loop->pc == STREAM_BASE + 6);
+    assert(last_state == (AFX_RUNNING | (2u << AFX_STATE_LOOPS_SHIFT)));
+    /* Without the flag, LOOP ends the flow in error. */
+    loop->flags = 0;
+    clock_value = 11;
+    service(2);
+    assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !loop->reference);
+    /* A loop body that never waits (which validation refuses) ends it too. */
+    stream_bytes[0] = AFX_OP_KEYOFF; stream_bytes[1] = 0;
+    stream_bytes[2] = AFX_OP_LOOP; afx_write32(stream_bytes + 3, 0);
+    *loop = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 1,
+        .image_base = STREAM_BASE, .stream_start = 0, .pc = STREAM_BASE, .end = STREAM_BASE + 7,
+        .flags = AFX_FLAG_LOOP, .tempo_period_q8_8 = 256, .gain = 255};
+    clock_value = 0;
+    service(2);
+    assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !loop->reference);
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
@@ -221,4 +282,4 @@ with tempfile.TemporaryDirectory() as directory:
                     "-I" + str(root / "driver/arm7"),
                     str(path / "check.c"), "-o", str(path / "check")], check=True)
     subprocess.run([str(path / "check")], check=True)
-print("ARM7 gain, pan, lifecycle races, voice flags and checkpoint restore: PASS")
+print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore and LOOP: PASS")

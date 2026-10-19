@@ -151,11 +151,12 @@ bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *
     uint32_t base = AFX_OBSERVED_ADDR + index * sizeof(afx_observed_t);
     uint32_t first = read_spu_word(base);
     if ((first & 1u) || first == *last_epoch) return false;
+    uint32_t state = read_spu_word(base + 8);
     afx_instance_status_t copy = {
-        .reference = read_spu_word(base + 4), .state = read_spu_word(base + 8),
+        .reference = read_spu_word(base + 4), .state = state & AFX_STATE_MASK,
         .sequence = read_spu_word(base + 12), .result = read_spu_word(base + 16),
         .position = read_spu_word(base + 20), .next_deadline = read_spu_word(base + 24),
-        .detail = read_spu_word(base + 28)
+        .detail = read_spu_word(base + 28), .loops = state >> AFX_STATE_LOOPS_SHIFT
     };
     if (first != read_spu_word(base) || (first & 1u)) return false;
     *out = copy;

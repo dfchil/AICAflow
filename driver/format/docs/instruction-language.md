@@ -42,6 +42,7 @@ a missing or early terminal instruction are rejected.
 | 13 | PARK | — | 1 | Stop execution without releasing the controlled flow. Must be final and requires AFX_FLAG_CONTROLLED. |
 | 14 | NOTE_PL | channel:u8 setup:u16 pitch:u16 mix:u16 | 8 | Compact NOTE form: only PITCH and MIX/TOTAL_LEVEL override the setup. |
 | 15 | PATCH_LEVEL | channel:u8 mix:u16 | 4 | Compact PATCH form: only MIX/TOTAL_LEVEL changes. |
+| 16 | LOOP | target:u32 | 5 | Continue at the stream-relative byte offset `target`, in the same tick. Must be the final instruction and requires AFX_FLAG_LOOP. |
 
 NOTE_PL and PATCH_LEVEL are compact encodings of NOTE and PATCH.
 
@@ -49,6 +50,16 @@ A finite one-shot normally emits NOTE, one or more WAITs, KEYOFF, any intended
 release-tail WAIT, then END. A looping source sample does not make a flow
 infinite: it still needs an authored KEYOFF and END. PARK is reserved for
 SH-4-controlled flows.
+
+A flow that repeats, such as a song with an intro, ends with LOOP instead of
+END. The stream is delta-timed, so the loop is a cursor move: the executor
+continues at the target without touching the flow's deadline, and the loop is
+gapless and drift-free. The target is an instruction boundary before the LOOP;
+the events there run in the same tick as those just before the LOOP, as one
+burst. Voices sounding when the LOOP runs keep sounding unless the stream keys
+them off first; a NOTE at the target replaces the voice on its channel. The
+instance never completes by itself: the host stops it. Each loop is reported
+to the host (the loop count in the observed state word; `afx_set_loop_callback`).
 
 ## NOTE and PATCH field masks
 
@@ -80,9 +91,13 @@ and source are set by NOTE; use KEYOFF to release a voice.
 
 ## Termination and timing constraints
 
-- The stream contains exactly one terminal END or PARK, and it is last.
+- The stream contains exactly one terminal END, PARK or LOOP, and it is last.
 - WAIT values are nonzero.
 - Only a controlled flow may end with PARK.
+- Only a flow with AFX_FLAG_LOOP may end with LOOP, and such a flow must. The
+  target is the offset of an instruction before the LOOP, at least one WAIT
+  lies between them, and the header's `loop_tick` is the authored tick of the
+  target (the sum of the WAITs before it).
 - A normal flow must use END; keying off a voice does not automatically retire
   the instance.
 - The AFX header tick-rate numerator and denominator define authored ticks.

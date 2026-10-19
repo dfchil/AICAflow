@@ -5,11 +5,13 @@
 #include <aicaflow/limits.h>
 #include <aicaflow/result.h>
 
-/* ABI 8: status reported back by interrupt through an event ring; ABI 7
- * brought bank-relative playback, compact state and allocated DSP rings.
+/* ABI 9: a looping flow (AFX_OP_LOOP) reports each loop through its observed
+ * state word, which carries the loop count above the state; ABI 8 reported
+ * status back by interrupt through an event ring; ABI 7 brought
+ * bank-relative playback, compact state and allocated DSP rings.
  * Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
-#define AFX_ABI_VERSION 8
+#define AFX_ABI_VERSION 9
 #define AFX_FIRMWARE_MAGIC 0x32524641
 #define AFX_STATUS_MAGIC 0x32534641
 #define AFX_LAYOUT_ID 0x20261009
@@ -74,6 +76,11 @@ typedef uint32_t afx_handle_t;
 #define AFX_HANDLE_GENERATION(handle) ((handle) >> 16)
 
 enum { AFX_FREE, AFX_RUNNING, AFX_PAUSED, AFX_PARKED, AFX_DONE, AFX_ERROR };
+/* The observed state word: the AFX_* state in the low byte and, for a live
+ * instance (RUNNING, PAUSED, PARKED), the number of LOOPs it has taken above
+ * it, so each loop is news. DONE, ERROR and FREE records carry the plain state. */
+#define AFX_STATE_MASK 0xffu
+#define AFX_STATE_LOOPS_SHIFT 8u
 enum {
     AFX_CMD_NOP, AFX_CMD_ACTIVATE, AFX_CMD_STOP, AFX_CMD_PAUSE,
     AFX_CMD_REBUILD, AFX_CMD_RECYCLE, AFX_CMD_PATCH, AFX_CMD_INSTANCE_GAIN,
@@ -133,10 +140,10 @@ typedef struct {
 typedef struct {
     volatile uint32_t epoch; /* Publication counter: odd while ARM7 writes, even when stable. */
     volatile uint32_t reference; /* Instance handle; zero denotes a recycled free slot. */
-    volatile uint32_t state; /* AFX_FREE/RUNNING/PAUSED/PARKED/DONE/ERROR. */
+    volatile uint32_t state; /* AFX_FREE/RUNNING/PAUSED/PARKED/DONE/ERROR in the low byte; a live instance's loop count above (AFX_STATE_LOOPS_SHIFT). */
     volatile uint32_t sequence; /* Sequence associated with this observation. */
     volatile uint32_t result; /* Nonnegative afx_result_t from ARM7. */
-    volatile uint32_t position; /* Byte offset from the uploaded AFX image base. */
+    volatile uint32_t position; /* Byte offset from the uploaded AFX image base; after a LOOP, its target. */
     volatile uint32_t next_deadline; /* Next scheduled deadline in wrapping hardware timer ticks. */
     volatile uint32_t detail; /* State-specific diagnostic: lateness, channel or error detail. */
 } afx_observed_t; /* ARM-only writes; odd epoch while publishing. */
@@ -233,7 +240,7 @@ typedef struct {
     uint8_t channels; /* Number of bound local channels, 1..64 while active. */
     uint8_t state; /* Current AFX_* playback state. */
     uint8_t tempo_fraction; /* Fractional hardware tick carried between scaled waits, 0..255. */
-    uint8_t reserved; /* Unused byte, cleared with the context. */
+    uint8_t loops; /* LOOPs taken, modulo 256; published above the state. */
 } afx_runtime_slot_t;
 
 #if defined(__cplusplus)

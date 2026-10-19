@@ -22,6 +22,7 @@ typedef struct {
     uint8_t channel; /* Local channel index for NOTE, PATCH and KEYOFF. */
     uint16_t setup; /* Setup template index used by NOTE. */
     uint32_t wait; /* Authored tick duration for a WAIT instruction. */
+    uint32_t target; /* Stream-relative byte offset a LOOP continues at. */
     uint32_t mask; /* Selected AFX_FIELD_* bits for NOTE/PATCH values. */
     uint32_t bytes; /* Total encoded instruction length in bytes. */
     const uint8_t *values; /* Borrowed pointer to packed little-endian 16-bit selected values. */
@@ -45,6 +46,7 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     case AFX_OP_WAIT8: prefix = 2; break;
     case AFX_OP_WAIT16: prefix = 3; break;
     case AFX_OP_WAIT32: prefix = 5; break;
+    case AFX_OP_LOOP: prefix = 5; break;
     case AFX_OP_KEYOFF: prefix = 2; break;
     case AFX_OP_NOTE: prefix = 8; break;
     case AFX_OP_NOTE_PL: prefix = 4; break;
@@ -71,6 +73,7 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     if (e.opcode == AFX_OP_WAIT8) e.wait = p[1];
     if (e.opcode == AFX_OP_WAIT16) e.wait = afx_read16(p + 1);
     if (e.opcode == AFX_OP_WAIT32) e.wait = afx_read32(p + 1);
+    if (e.opcode == AFX_OP_LOOP) e.target = afx_read32(p + 1);
     if (e.opcode >= AFX_OP_WAIT8 && e.opcode <= AFX_OP_WAIT32 && !e.wait)
         return AFX_BAD_COMMAND;
     e.bytes = prefix + afx_field_value_bytes(e.mask);

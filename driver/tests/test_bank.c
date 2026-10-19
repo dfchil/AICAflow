@@ -52,6 +52,13 @@ static void on_end(afx_instance_t instance, const afx_instance_status_t *status,
     ended_instance = instance;
     ended_status = *status;
 }
+static unsigned loop_calls;
+static afx_instance_status_t loop_status;
+static void on_loop(afx_instance_t instance, const afx_instance_status_t *status, void *user) {
+    assert(user == &loop_calls && instance == ev_instance);
+    ++loop_calls;
+    loop_status = *status;
+}
 static void publish_done(void) { observed(5, ev_instance, AFX_DONE, 3, AFX_OK); }
 static void publish_other(void) { observed(6, ev_other, AFX_PAUSED, 2, AFX_OK); }
 static void publish_running_and_dispatch(void) {
@@ -90,10 +97,24 @@ static void test_events(void) {
     assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.position == 0);
     assert(afx_instance_refresh(ev_instance) == AFX_OK);
     assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.position == 0x40);
+    /* A LOOP: the state word carries the loop count, which is news, and the
+     * loop callback reports it with the record's position. */
+    afx_set_loop_callback(on_loop, &loop_calls);
+    observed(5, ev_instance, AFX_RUNNING | (1u << AFX_STATE_LOOPS_SHIFT), 1, AFX_OK);
+    irq_run_worker();
+    assert(loop_calls == 1 && loop_status.loops == 1 && loop_status.state == AFX_RUNNING);
+    assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.state == AFX_RUNNING &&
+           status.loops == 1);
+    /* Other news with the same loop count is not a loop. */
+    observed(5, ev_instance, AFX_RUNNING | (1u << AFX_STATE_LOOPS_SHIFT), 2, AFX_OK);
+    irq_run_worker();
+    assert(loop_calls == 1);
+    assert(afx_instance_status(ev_instance, &status) == AFX_OK && status.sequence == 2);
     /* Published right after the clear: taken in the same pass. */
-    observed(5, ev_instance, AFX_RUNNING, 2, AFX_OK);
+    observed(5, ev_instance, AFX_RUNNING | (2u << AFX_STATE_LOOPS_SHIFT), 2, AFX_OK);
     irq_hook_on_clear = publish_other;
     irq_run_worker();
+    assert(loop_calls == 2 && loop_status.loops == 2);
     assert(afx_instance_status(ev_other, &status) == AFX_OK && status.state == AFX_PAUSED);
     /* Published before the unmask: the interrupt arrives on unmask. */
     irq_hook_on_unmask = publish_done;
@@ -111,6 +132,7 @@ static void test_events(void) {
     irq_run_worker();
     assert(ended_calls == 1 && ended_instance == ev_instance);
     assert(ended_status.state == AFX_DONE && ended_status.result == AFX_OK);
+    assert(ended_status.loops == 2); /* A DONE record carries no count; the last one stays. */
     assert(afx_instance_status(ev_instance, &status) == -AFX_STALE_GENERATION && !g_instances[5].live);
     /* While the thread reads, after the clear, another ASIC interrupt. */
     live_slot(5, &ev_instance);

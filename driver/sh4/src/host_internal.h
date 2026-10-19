@@ -52,9 +52,10 @@ typedef struct {
     uint32_t control_id; /* Identity matched against the optional AFC sidecar. */
     uint32_t bank_id_low; /* Low half of the authored bank identity. */
     uint32_t bank_id_high; /* High half of the authored bank identity. */
+    uint32_t loop_tick; /* With AFX_FLAG_LOOP in flags, the authored tick the LOOP continues at. */
 } afx_asset_slot_t;
 #if defined(__sh__)
-_Static_assert(sizeof(afx_asset_slot_t) == 80, "SH-4 asset bookkeeping size");
+_Static_assert(sizeof(afx_asset_slot_t) == 84, "SH-4 asset bookkeeping size");
 #endif
 typedef struct {
     bool live; /* Instance handle is allocated. */
@@ -136,7 +137,8 @@ bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *
  * releases a recycled slot, and recycles one that ended. Called with the host
  * lock held; ended instances are reported by events_report_ended(). */
 bool update_slot(uint32_t index);
-/* Calls the end callback for instances update_slot released; without the lock. */
+/* Calls the loop callback for instances update_slot saw loop, then the end
+ * callback for those it released; without the lock. */
 void events_report_ended(void);
 
 #endif

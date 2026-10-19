@@ -55,7 +55,7 @@ AFC checkpoint directly; it does not read or replay AFX commands.
 Each ARM7 playback context is 64 bytes. The bank base occupies 16 bits in
 32-byte units; the context also stores the bank end for address validation.
 
-SH-4 asset bookkeeping is 80 bytes per reserved slot. It stores one optional
+SH-4 asset bookkeeping is 84 bytes per reserved slot. It stores one optional
 bank handle and only the AFX metadata needed after loading, not the full file
 header or an upload-image copy. AFC payloads are separate optional allocations.
 

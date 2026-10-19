@@ -4,7 +4,7 @@
 
 /* Version of this public source interface, independent of repository releases,
  * asset-format versions below, and the host/firmware ABI in protocol.h. */
-#define AFX_FORMAT_API_VERSION 1
+#define AFX_FORMAT_API_VERSION 2
 #define AFX_FILE_MAGIC 0x32584641
 #define AFX_CHECKPOINT_MAGIC 0x31504b43
 #define AFX_CHECKPOINT_VERSION 1
@@ -35,10 +35,13 @@ enum {
 enum {
     AFX_OP_END = 0, AFX_OP_WAIT8 = 1, AFX_OP_WAIT16 = 2, AFX_OP_WAIT32 = 3,
     AFX_OP_NOTE = 0x10, AFX_OP_PATCH = 0x11, AFX_OP_KEYOFF = 0x12,
-    AFX_OP_PARK = 0x13, AFX_OP_NOTE_PL = 0x14, AFX_OP_PATCH_LEVEL = 0x15
+    AFX_OP_PARK = 0x13, AFX_OP_NOTE_PL = 0x14, AFX_OP_PATCH_LEVEL = 0x15,
+    AFX_OP_LOOP = 0x16 /* Terminal: continue at a stream-relative byte offset, in the same tick. */
 };
+/* AFX_FLAG_LOOP: the stream ends with LOOP instead of END, and the header's
+ * loop_tick is the authored tick of the loop target. */
 enum { AFX_FLAG_CONTROLLED = 1, AFX_FLAG_MUSIC = 2, AFX_FLAG_METADATA = 4,
-       AFX_FLAG_MUSIC_CHORUS = 8, AFX_FLAG_LANES = 16 };
+       AFX_FLAG_MUSIC_CHORUS = 8, AFX_FLAG_LANES = 16, AFX_FLAG_LOOP = 32 };
 
 #define AFX_METADATA_MAGIC 0x314d5841u
 #define AFX_CONTAINER_VERSION 1u
@@ -79,7 +82,7 @@ typedef struct {
     uint32_t bank_id_high; /* High 32 bits of the required AFB identity. */
     uint32_t relocations_offset; /* Binding-table byte offset from the beginning of the file. */
     uint32_t relocation_count; /* Number of 12-byte binding records. */
-    uint32_t reserved0; /* Must be zero. */
+    uint32_t loop_tick; /* With AFX_FLAG_LOOP, the authored tick of the LOOP target; otherwise zero. */
     uint32_t reserved1; /* Must be zero. */
     uint32_t required_channels; /* Local voice count required by the flow, 1..64. */
     uint32_t tick_rate_num; /* Numerator of authored ticks per second. */

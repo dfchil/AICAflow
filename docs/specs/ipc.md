@@ -7,7 +7,7 @@ ARM7 executor. Applications should use the public SH-4 API in
 driver/sh4/include/aicaflow/host.h, not write the queue directly. This document
 describes the wire contract used by that API.
 
-The current firmware ABI is 8 and its fixed layout ID is defined in
+The current firmware ABI is 9 and its fixed layout ID is defined in
 driver/include/aicaflow/protocol.h. Bootstrap rejects a firmware image that
 does not report matching values.
 
@@ -83,7 +83,13 @@ acknowledged; timeout alone never permits freeing it.
 The ARM7 publishes one afx_observed_t per flow slot. Its epoch is odd while
 being updated and even when stable; SH-4 reads a matching stable epoch. It
 contains the reference, state, command sequence, result, stream position, next
-deadline and maximum lateness detail.
+deadline and maximum lateness detail. The state word holds the AFX_* state in
+its low byte (`AFX_STATE_MASK`); for a live instance (RUNNING, PAUSED, PARKED)
+the number of LOOPs it has taken, modulo 256, sits above it
+(`AFX_STATE_LOOPS_SHIFT`), so a loop changes the word and is news. DONE, ERROR
+and FREE records carry the plain state. The record a LOOP publishes has the
+loop target as its position (image-relative, like every position) and, as
+next_deadline, the hardware tick the flow continued at.
 
 ### Status reports
 
@@ -122,6 +128,10 @@ The states are FREE, RUNNING, PAUSED, PARKED, DONE and ERROR. An IPC command
 can be accepted into the queue yet later produce an error, for example because
 the instance became stale or a rebuild payload fails validation. DSP completion
 is reported separately by dsp_sequence and dsp_result in the status block.
+
+ABI 9 adds the loop count to the state word; a host that masks the state as
+ABI 9 does reads ABI 8 records unchanged, but an ABI 8 host misreads a looped
+instance's state, so firmware and host move together.
 
 Activation encodes the bank base as a 16-bit address in 32-byte units and its
 size as a 32-bit byte count. REBUILD sample address words are bank-relative,

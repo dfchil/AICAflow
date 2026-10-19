@@ -74,6 +74,7 @@ int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size
     g_assets[index].control_id = header.control_id;
     g_assets[index].bank_id_low = header.bank_id_low;
     g_assets[index].bank_id_high = header.bank_id_high;
+    g_assets[index].loop_tick = header.loop_tick;
     g_assets[index].peak_commands = profile.peak_commands;
     g_assets[index].peak_register_writes = profile.peak_register_writes;
     if (bank) {
@@ -91,4 +92,12 @@ int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size
 failed:
     if (asset) (void)afx_asset_free(asset);
     return result;
+}
+bool afx_asset_loops(afx_asset_t asset, uint32_t *out_loop_tick) {
+    HOST_GUARD(false);
+    uint32_t index;
+    if (!resolve_asset(asset, &index) || !g_assets[index].flow ||
+        !(g_assets[index].flags & AFX_FLAG_LOOP)) return false;
+    if (out_loop_tick) *out_loop_tick = g_assets[index].loop_tick;
+    return true;
 }

@@ -25,6 +25,7 @@ afx_result_t afx_encode_event(uint8_t *out, uint32_t capacity, const afx_event_t
         if (e->wait > 65535) return AFX_BAD_COMMAND;
         prefix = 3; afx_write16(tmp + 1, (uint16_t)e->wait); break;
     case AFX_OP_WAIT32: prefix = 5; afx_write32(tmp + 1, e->wait); break;
+    case AFX_OP_LOOP: prefix = 5; afx_write32(tmp + 1, e->target); break;
     case AFX_OP_KEYOFF: prefix = 2; tmp[1] = e->channel; break;
     case AFX_OP_PATCH_LEVEL:
         if (e->mask != (1u << AFX_FIELD_TOTAL_LEVEL) || !values) return AFX_BAD_COMMAND;
@@ -96,10 +97,10 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
         !h->required_channels || h->required_channels > AFX_MAX_FLOW_CHANNELS ||
         !h->tick_rate_num || !h->tick_rate_den ||
         !table(h->relocations_offset, h->relocation_count, 12, h->image_offset) ||
-        h->reserved0 || h->reserved1 ||
+        (h->loop_tick && !(h->flags & AFX_FLAG_LOOP)) || h->reserved1 ||
         h->relocation_count != h->setup_count ||
         (h->flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
-                      AFX_FLAG_LANES))) return AFX_BAD_BOUNDS;
+                      AFX_FLAG_LANES | AFX_FLAG_LOOP))) return AFX_BAD_BOUNDS;
     if (!(h->bank_id_low || h->bank_id_high) && h->relocation_count) return AFX_BAD_SAMPLE;
     image = file + h->image_offset;
     for (uint32_t i = 0; i < h->relocation_count; ++i) {
@@ -121,6 +122,51 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
     return AFX_OK;
 }
 
+/* The work of one event, towards the burst between two waits. */
+static void event_work(const afx_event_t *event, uint32_t *commands, uint32_t *writes) {
+    if (event->opcode == AFX_OP_NOTE) {
+        ++*commands; *writes += 19;
+    } else if (event->opcode == AFX_OP_PATCH) {
+        ++*commands; *writes += afx_field_value_bytes(event->mask) / 2u;
+    } else if (event->opcode == AFX_OP_KEYOFF) {
+        ++*commands; ++*writes;
+    }
+}
+
+/* The loop target of a stream ending in LOOP: it must be an instruction
+ * boundary before the LOOP, the loop body must wait at least once (the
+ * executor would otherwise spin), and the header's loop_tick must be the
+ * authored tick of the target. Returns the burst that starts at the target,
+ * which the LOOP joins to the burst that ends the stream. */
+static afx_result_t loop_validate(const uint8_t *stream, uint32_t size, uint32_t target,
+                                  const afx_file_header_t *h, uint32_t *commands,
+                                  uint32_t *writes) {
+    uint32_t cursor = 0, tick = 0, waits = 0;
+    *commands = *writes = 0;
+    if (target >= size - 5u) return AFX_BAD_COMMAND; /* At or past the LOOP itself. */
+    while (cursor < target) {
+        afx_event_t event;
+        afx_result_t result = afx_decode_event(stream + cursor, size - cursor, &event);
+        if (result) return result;
+        cursor += event.bytes;
+        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) tick += event.wait;
+    }
+    if (cursor != target || tick != h->loop_tick) return AFX_BAD_COMMAND;
+    while (cursor < size) {
+        afx_event_t event;
+        afx_result_t result = afx_decode_event(stream + cursor, size - cursor, &event);
+        if (result) return result;
+        cursor += event.bytes;
+        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) {
+            ++waits;
+            if (waits == 1) break;
+        }
+        event_work(&event, commands, writes);
+    }
+    if (!waits) return AFX_BAD_COMMAND;
+    return AFX_OK;
+}
+
 static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_t *h,
                                      afx_validation_profile_t *profile) {
     uint32_t cursor = h->stream_offset, end = cursor + h->stream_size;
@@ -129,6 +175,7 @@ static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_
     afx_validation_profile_t work = {0};
     while (cursor < end) {
         afx_event_t event;
+        uint32_t at = cursor;
         afx_result_t result = afx_decode_event(image + cursor, end - cursor, &event);
         if (result) return result;
         cursor += event.bytes;
@@ -136,19 +183,26 @@ static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_
             if (commands > work.peak_commands) work.peak_commands = commands;
             if (writes > work.peak_register_writes) work.peak_register_writes = writes;
             commands = writes = 0;
-        } else if (event.opcode == AFX_OP_NOTE) {
-            ++commands; writes += 19;
-        } else if (event.opcode == AFX_OP_PATCH) {
-            ++commands; writes += afx_field_value_bytes(event.mask) / 2u;
-        } else if (event.opcode == AFX_OP_KEYOFF) {
-            ++commands; ++writes;
         }
+        event_work(&event, &commands, &writes);
         if (event.opcode == AFX_OP_NOTE && event.setup >= h->setup_count) return AFX_BAD_COMMAND;
         if (event.opcode >= AFX_OP_NOTE && event.opcode <= AFX_OP_KEYOFF &&
             event.channel >= h->required_channels) return AFX_BAD_COMMAND;
-        if (event.opcode == AFX_OP_END || event.opcode == AFX_OP_PARK) {
-            if (cursor != end || (event.opcode == AFX_OP_PARK && !(h->flags & AFX_FLAG_CONTROLLED)))
+        if (event.opcode == AFX_OP_END || event.opcode == AFX_OP_PARK || event.opcode == AFX_OP_LOOP) {
+            if (cursor != end || (event.opcode == AFX_OP_PARK && !(h->flags & AFX_FLAG_CONTROLLED)) ||
+                ((event.opcode == AFX_OP_LOOP) != ((h->flags & AFX_FLAG_LOOP) != 0)))
                 return AFX_BAD_COMMAND;
+            if (event.opcode == AFX_OP_LOOP) {
+                /* The LOOP runs the burst at its target right after the burst
+                 * that precedes it, in the same tick. */
+                uint32_t head_commands, head_writes;
+                result = loop_validate(image + h->stream_offset, h->stream_size, event.target, h,
+                                       &head_commands, &head_writes);
+                if (result) return result;
+                (void)at;
+                commands += head_commands;
+                writes += head_writes;
+            }
             terminal = 1;
         }
     }

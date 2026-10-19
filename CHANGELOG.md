@@ -5,6 +5,26 @@
 Changes since 0.2.0-rc1. The entries up to 2026-10-09 were reconstructed from
 the commit history.
 
+### Added
+
+- Looping flows. A stream may end with `LOOP target` instead of `END`
+  (`AFX_OP_LOOP`, flag `AFX_FLAG_LOOP`, header field `loop_tick`): the ARM7
+  continues at the target in the same tick, so a song with an intro repeats
+  without a gap or drift and without the SH4's help. Validation requires the
+  target to be an instruction boundary with a WAIT between it and the LOOP,
+  and `loop_tick` to be the target's authored tick. Each loop is reported to
+  the host: the observed state word carries the instance's loop count above
+  the state (firmware ABI 9), `afx_instance_status_t` has `loops`, and
+  `afx_set_loop_callback()` is called per loop, before the end callback, with
+  the loop target as position (image-relative) and the hardware tick the flow
+  continued at as `next_deadline`. Checked on hardware with
+  `make -C driver loop-check` (tests/check_loop.c): four loops of the
+  quickstart fixture, 8160 ticks apart every time. `afx_asset_loops()` tells whether a flow loops and at which
+  authored tick. A looping instance never ends by itself. The firmware and the
+  host library must be updated together; the AFX file version is unchanged
+  (older validators reject the flag and the opcode). The authoring tools do
+  not emit LOOP yet.
+
 ### Changed
 
 - Firmware ABI 8: the ARM7 reports back to the SH4 by interrupt, and the
