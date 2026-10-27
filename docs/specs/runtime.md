@@ -23,7 +23,8 @@ one 64-bit AFB identity; identity zero is allowed only for a flow with no
 sample relocation.
 
 The relevant stream operations are `WAIT8`, `WAIT16`, `WAIT32`, `NOTE`,
-`NOTE_PL`, `PATCH`, `PATCH_LEVEL`, `KEYOFF`, `PARK`, `LOOP` and `END`. A finite
+`NOTE_PL`, `PATCH`, `PATCH_LEVEL`, `PATCH_ENV`, `PATCH_ENV_LEVEL`, `KEYOFF`,
+`PARK`, `LOOP` and `END`. A finite
 sound must explicitly reach `KEYOFF` then `END`, even if its source sample
 loops. `PARK` is only for a controlled flow that the SH-4 will resume or stop.
 `LOOP` ends a repeating flow (AFX_FLAG_LOOP): the ARM7 continues at its target

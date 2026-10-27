@@ -129,6 +129,31 @@ static void test_bytecode(void) {
     assert(afx_decode_event(bytes, written, &decoded) == AFX_OK);
     assert(decoded.opcode == AFX_OP_LOOP && decoded.target == 0x12345 && decoded.bytes == 5);
     assert(afx_decode_event(bytes, 4, &decoded) == AFX_BAD_BOUNDS);
+    /* The compact PATCH forms: 2 bytes plus their values, decoded as PATCH with the form's mask. */
+    static const struct { uint8_t opcode; uint32_t mask, bytes; } compact[] = {
+        {AFX_OP_PATCH_LEVEL, AFX_PATCH_LEVEL_MASK, 4},
+        {AFX_OP_PATCH_ENV, AFX_PATCH_ENV_MASK, 4},
+        {AFX_OP_PATCH_ENV_LEVEL, AFX_PATCH_ENV_LEVEL_MASK, 6},
+    };
+    for (uint32_t i = 0; i < sizeof(compact) / sizeof(compact[0]); ++i) {
+        assert(afx_compact_opcode(AFX_OP_PATCH, compact[i].mask) == compact[i].opcode);
+        event = (afx_event_t){.opcode = compact[i].opcode, .channel = 7, .mask = compact[i].mask};
+        assert(afx_encode_event(bytes, sizeof(bytes), &event, values, &written) == AFX_OK);
+        assert(written == compact[i].bytes && bytes[0] == compact[i].opcode);
+        assert(afx_decode_event(bytes, written, &decoded) == AFX_OK);
+        assert(decoded.opcode == AFX_OP_PATCH && decoded.channel == 7 &&
+               decoded.mask == compact[i].mask && decoded.bytes == written);
+        assert(afx_read16(decoded.values) == values[0]);
+        if (written == 6) assert(afx_read16(decoded.values + 2) == values[1]);
+        assert(afx_decode_event(bytes, written - 1, &decoded) == AFX_BAD_BOUNDS);
+        /* A compact opcode carries only its own mask. */
+        event.mask = AFX_NOTE_PL_MASK;
+        assert(afx_encode_event(bytes, sizeof(bytes), &event, values, &written) == AFX_BAD_COMMAND);
+    }
+    assert(afx_compact_opcode(AFX_OP_NOTE, AFX_NOTE_PL_MASK) == AFX_OP_NOTE_PL);
+    assert(afx_compact_opcode(AFX_OP_NOTE, AFX_PATCH_ENV_MASK) == AFX_OP_NOTE);
+    assert(afx_compact_opcode(AFX_OP_PATCH, AFX_NOTE_PL_MASK) == AFX_OP_PATCH);
+    assert(afx_compact_opcode(AFX_OP_KEYOFF, 0) == AFX_OP_KEYOFF);
 }
 
 static void test_control_id(void) {

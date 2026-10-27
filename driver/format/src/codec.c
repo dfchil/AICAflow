@@ -27,9 +27,11 @@ afx_result_t afx_encode_event(uint8_t *out, uint32_t capacity, const afx_event_t
     case AFX_OP_WAIT32: prefix = 5; afx_write32(tmp + 1, e->wait); break;
     case AFX_OP_LOOP: prefix = 5; afx_write32(tmp + 1, e->target); break;
     case AFX_OP_KEYOFF: prefix = 2; tmp[1] = e->channel; break;
-    case AFX_OP_PATCH_LEVEL:
-        if (e->mask != (1u << AFX_FIELD_TOTAL_LEVEL) || !values) return AFX_BAD_COMMAND;
-        prefix = 2; tmp[1] = e->channel; afx_write16(tmp + 2, values[0]);
+    case AFX_OP_PATCH_LEVEL: case AFX_OP_PATCH_ENV: case AFX_OP_PATCH_ENV_LEVEL:
+        if (afx_compact_opcode(AFX_OP_PATCH, e->mask) != e->opcode || !values) return AFX_BAD_COMMAND;
+        prefix = 2; tmp[1] = e->channel;
+        for (uint32_t i = 0; i < afx_field_value_bytes(e->mask) / 2; ++i)
+            afx_write16(tmp + prefix + 2 * i, values[i]);
         break;
     case AFX_OP_NOTE_PL:
         if (e->mask != AFX_NOTE_PL_MASK || !values) return AFX_BAD_COMMAND;
@@ -47,7 +49,9 @@ afx_result_t afx_encode_event(uint8_t *out, uint32_t capacity, const afx_event_t
         break;
     default: return AFX_BAD_COMMAND;
     }
-    n = prefix + ((e->opcode == AFX_OP_PATCH_LEVEL || e->opcode == AFX_OP_NOTE_PL || e->opcode == AFX_OP_NOTE || e->opcode == AFX_OP_PATCH) ? afx_field_value_bytes(e->mask) : 0);
+    n = prefix + ((e->opcode >= AFX_OP_NOTE && e->opcode <= AFX_OP_PATCH) || e->opcode == AFX_OP_NOTE_PL ||
+                  e->opcode == AFX_OP_PATCH_LEVEL || e->opcode == AFX_OP_PATCH_ENV ||
+                  e->opcode == AFX_OP_PATCH_ENV_LEVEL ? afx_field_value_bytes(e->mask) : 0);
     afx_result_t r = afx_decode_event(tmp, n, &decoded);
     if (r != AFX_OK) return r;
     if (capacity < n) return AFX_BAD_BOUNDS;

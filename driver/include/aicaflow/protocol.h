@@ -5,13 +5,14 @@
 #include <aicaflow/limits.h>
 #include <aicaflow/result.h>
 
-/* ABI 9: a looping flow (AFX_OP_LOOP) reports each loop through its observed
+/* ABI 10: the executor decodes the compact PATCH_ENV and PATCH_ENV_LEVEL
+ * forms, which an ABI 9 firmware rejects as bad commands; ABI 9: a looping flow (AFX_OP_LOOP) reports each loop through its observed
  * state word, which carries the loop count above the state; ABI 8 reported
  * status back by interrupt through an event ring; ABI 7 brought
  * bank-relative playback, compact state and allocated DSP rings.
  * Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
-#define AFX_ABI_VERSION 9
+#define AFX_ABI_VERSION 10
 #define AFX_FIRMWARE_MAGIC 0x32524641
 #define AFX_STATUS_MAGIC 0x32534641
 #define AFX_LAYOUT_ID 0x20261009
