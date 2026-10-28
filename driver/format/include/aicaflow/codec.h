@@ -18,7 +18,7 @@ static inline int afx_range(uint32_t offset, uint32_t bytes, uint32_t limit) {
     return offset <= limit && bytes <= limit - offset;
 }
 typedef struct {
-    uint8_t opcode; /* Decoded opcode; compact NOTE_PL/PATCH_LEVEL normalize to NOTE/PATCH. */
+    uint8_t opcode; /* Decoded opcode; the compact NOTE_PL/PATCH_* forms normalize to NOTE/PATCH. */
     uint8_t channel; /* Local channel index for NOTE, PATCH and KEYOFF. */
     uint16_t setup; /* Setup template index used by NOTE. */
     uint32_t wait; /* Authored tick duration for a WAIT instruction. */
@@ -50,22 +50,28 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     case AFX_OP_KEYOFF: prefix = 2; break;
     case AFX_OP_NOTE: prefix = 8; break;
     case AFX_OP_NOTE_PL: prefix = 4; break;
-    case AFX_OP_PATCH_LEVEL: prefix = 2; break;
+    case AFX_OP_PATCH_LEVEL: case AFX_OP_PATCH_ENV: case AFX_OP_PATCH_ENV_LEVEL: prefix = 2; break;
     case AFX_OP_PATCH: prefix = 6; break;
     default: return AFX_BAD_COMMAND;
     }
     if (size < prefix) return AFX_BAD_BOUNDS;
-    /* Normalize the compact wire form; all consumers use normal NOTE/PATCH semantics. */
+    /* Normalize the compact wire forms; all consumers use normal NOTE/PATCH semantics. */
     if (e.opcode == AFX_OP_NOTE_PL) e.opcode = AFX_OP_NOTE;
-    if (e.opcode == AFX_OP_PATCH_LEVEL) e.opcode = AFX_OP_PATCH;
+    if (e.opcode == AFX_OP_PATCH_LEVEL || e.opcode == AFX_OP_PATCH_ENV ||
+        e.opcode == AFX_OP_PATCH_ENV_LEVEL) e.opcode = AFX_OP_PATCH;
     if (e.opcode >= AFX_OP_NOTE && e.opcode <= AFX_OP_KEYOFF) {
         e.channel = p[1];
         if (e.channel >= AFX_MAX_FLOW_CHANNELS) return AFX_BAD_COMMAND;
     }
     if (e.opcode == AFX_OP_NOTE || e.opcode == AFX_OP_PATCH) {
         if (e.opcode == AFX_OP_NOTE) e.setup = afx_read16(p + 2);
-        e.mask = p[0] == AFX_OP_NOTE_PL ? AFX_NOTE_PL_MASK :
-                 p[0] == AFX_OP_PATCH_LEVEL ? (1u << AFX_FIELD_TOTAL_LEVEL) : afx_read32(p + prefix - 4);
+        switch (p[0]) {
+        case AFX_OP_NOTE_PL: e.mask = AFX_NOTE_PL_MASK; break;
+        case AFX_OP_PATCH_LEVEL: e.mask = AFX_PATCH_LEVEL_MASK; break;
+        case AFX_OP_PATCH_ENV: e.mask = AFX_PATCH_ENV_MASK; break;
+        case AFX_OP_PATCH_ENV_LEVEL: e.mask = AFX_PATCH_ENV_LEVEL_MASK; break;
+        default: e.mask = afx_read32(p + prefix - 4); break;
+        }
         if (e.mask & ~(e.opcode == AFX_OP_PATCH ? AFX_PATCH_FIELD_MASK : AFX_FIELD_MASK))
             return AFX_BAD_COMMAND;
         e.values = p + prefix;
@@ -80,6 +86,19 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     if (e.bytes > size) return AFX_BAD_BOUNDS;
     *out = e;
     return AFX_OK;
+}
+/* The wire opcode for a NOTE or PATCH: its compact form when the mask is one
+ * a compact form carries, else the opcode itself. Authoring tools pick
+ * encodings with this so they need not know the compact forms. */
+static inline uint8_t afx_compact_opcode(uint8_t opcode, uint32_t mask) {
+    if (opcode == AFX_OP_NOTE && mask == AFX_NOTE_PL_MASK) return AFX_OP_NOTE_PL;
+    if (opcode != AFX_OP_PATCH) return opcode;
+    switch (mask) {
+    case AFX_PATCH_LEVEL_MASK: return AFX_OP_PATCH_LEVEL;
+    case AFX_PATCH_ENV_MASK: return AFX_OP_PATCH_ENV;
+    case AFX_PATCH_ENV_LEVEL_MASK: return AFX_OP_PATCH_ENV_LEVEL;
+    default: return opcode;
+    }
 }
 afx_result_t afx_encode_event(uint8_t *out, uint32_t capacity, const afx_event_t *event,
                               const uint16_t *values, uint32_t *written);

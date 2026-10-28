@@ -4,7 +4,7 @@
 
 /* Version of this public source interface, independent of repository releases,
  * asset-format versions below, and the host/firmware ABI in protocol.h. */
-#define AFX_FORMAT_API_VERSION 2
+#define AFX_FORMAT_API_VERSION 3
 #define AFX_FILE_MAGIC 0x32584641
 #define AFX_CHECKPOINT_MAGIC 0x31504b43
 #define AFX_CHECKPOINT_VERSION 1
@@ -31,12 +31,17 @@ enum {
 #define AFX_PATCH_FIELD_MASK (AFX_FIELD_MASK & ~((1u << AFX_FIELD_CONTROL) | (1u << AFX_FIELD_SAMPLE_LOW)))
 #define AFX_SETUP_BYTES (AFX_FIELD_COUNT * 2u)
 #define AFX_NOTE_PL_MASK ((1u << AFX_FIELD_PITCH) | (1u << AFX_FIELD_TOTAL_LEVEL))
+/* The fields of the compact PATCH forms: a voice's level, its envelope rates, or both. */
+#define AFX_PATCH_LEVEL_MASK (1u << AFX_FIELD_TOTAL_LEVEL)
+#define AFX_PATCH_ENV_MASK (1u << AFX_FIELD_ENV_AD)
+#define AFX_PATCH_ENV_LEVEL_MASK (AFX_PATCH_ENV_MASK | AFX_PATCH_LEVEL_MASK)
 
 enum {
     AFX_OP_END = 0, AFX_OP_WAIT8 = 1, AFX_OP_WAIT16 = 2, AFX_OP_WAIT32 = 3,
     AFX_OP_NOTE = 0x10, AFX_OP_PATCH = 0x11, AFX_OP_KEYOFF = 0x12,
     AFX_OP_PARK = 0x13, AFX_OP_NOTE_PL = 0x14, AFX_OP_PATCH_LEVEL = 0x15,
-    AFX_OP_LOOP = 0x16 /* Terminal: continue at a stream-relative byte offset, in the same tick. */
+    AFX_OP_LOOP = 0x16, /* Terminal: continue at a stream-relative byte offset, in the same tick. */
+    AFX_OP_PATCH_ENV = 0x17, AFX_OP_PATCH_ENV_LEVEL = 0x18
 };
 /* AFX_FLAG_LOOP: the stream ends with LOOP instead of END, and the header's
  * loop_tick is the authored tick of the loop target. */

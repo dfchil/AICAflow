@@ -43,8 +43,14 @@ a missing or early terminal instruction are rejected.
 | 14 | NOTE_PL | channel:u8 setup:u16 pitch:u16 mix:u16 | 8 | Compact NOTE form: only PITCH and MIX/TOTAL_LEVEL override the setup. |
 | 15 | PATCH_LEVEL | channel:u8 mix:u16 | 4 | Compact PATCH form: only MIX/TOTAL_LEVEL changes. |
 | 16 | LOOP | target:u32 | 5 | Continue at the stream-relative byte offset `target`, in the same tick. Must be the final instruction and requires AFX_FLAG_LOOP. |
+| 17 | PATCH_ENV | channel:u8 env_ad:u16 | 4 | Compact PATCH form: only ENV_AD (attack and decay rates) changes. |
+| 18 | PATCH_ENV_LEVEL | channel:u8 env_ad:u16 mix:u16 | 6 | Compact PATCH form: ENV_AD and MIX/TOTAL_LEVEL change. |
 
-NOTE_PL and PATCH_LEVEL are compact encodings of NOTE and PATCH.
+NOTE_PL, PATCH_LEVEL, PATCH_ENV and PATCH_ENV_LEVEL are compact encodings of
+NOTE and PATCH; `afx_compact_opcode()` picks the one for a mask. PATCH_ENV
+lets a flow shape a note's fade with the AICA envelope: a decay-rate change
+mid-note takes effect at once, so a few rate changes can replace a run of
+level steps.
 
 A finite one-shot normally emits NOTE, one or more WAITs, KEYOFF, any intended
 release-tail WAIT, then END. A looping source sample does not make a flow

@@ -133,6 +133,10 @@ ABI 9 adds the loop count to the state word; a host that masks the state as
 ABI 9 does reads ABI 8 records unchanged, but an ABI 8 host misreads a looped
 instance's state, so firmware and host move together.
 
+ABI 10 changes no record: its firmware decodes the compact PATCH_ENV and
+PATCH_ENV_LEVEL forms, which ABI 9 firmware rejects, so a host whose
+validator accepts them requires it.
+
 Activation encodes the bank base as a 16-bit address in 32-byte units and its
 size as a 32-bit byte count. REBUILD sample address words are bank-relative,
 not absolute AICA addresses. PATCH rejects CONTROL and SAMPLE_LOW. Firmware and host must be upgraded

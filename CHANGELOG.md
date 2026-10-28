@@ -24,6 +24,12 @@ the commit history.
   host library must be updated together; the AFX file version is unchanged
   (older validators reject the flag and the opcode). The authoring tools do
   not emit LOOP yet.
+- Compact envelope patches: `PATCH_ENV` (0x17, channel and ENV_AD, 4 bytes)
+  and `PATCH_ENV_LEVEL` (0x18, ENV_AD and MIX, 6 bytes) decode to PATCH like
+  `PATCH_LEVEL`. A flow can shape a note's fade with the AICA envelope, whose
+  decay rate applies at once when changed mid-note, instead of a run of level
+  steps. `afx_compact_opcode()` picks the compact form for an opcode and mask.
+  Format API 3; firmware ABI 10 (ABI 9 firmware rejects the opcodes).
 
 ### Changed
 
