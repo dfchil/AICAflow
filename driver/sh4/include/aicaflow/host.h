@@ -25,6 +25,7 @@ typedef struct {
     uint32_t position; /* Instruction byte offset relative to the uploaded AFX image. */
     uint32_t next_deadline; /* Next event deadline in wrapping hardware timer ticks. */
     uint32_t detail; /* State-specific diagnostic: lateness, channel or error detail. */
+    uint32_t loops; /* LOOPs the instance has taken (modulo 256), as last reported. */
 } afx_instance_status_t;
 
 typedef struct {
@@ -100,6 +101,10 @@ int afx_asset_free(afx_asset_t asset);
 uint32_t afx_asset_addr(afx_asset_t asset);
 uint32_t afx_asset_size(afx_asset_t asset);
 int afx_asset_work(afx_asset_t asset, afx_work_profile_t *out_profile);
+/* Whether a flow loops (its stream ends with LOOP): true, with the authored
+ * tick its LOOP continues at, for a looping flow; false otherwise. A looping
+ * instance never ends by itself; stop it. */
+bool afx_asset_loops(afx_asset_t asset, uint32_t *out_loop_tick);
 
 /* Stage 3 lifecycle API. Commands are nonblocking: a zero result means queued.
  * The firmware reports every change of state back by interrupt, and AICAflow's
@@ -180,6 +185,13 @@ int afx_instance_refresh(afx_instance_t instance);
  * handing the report over (a queue, a flag) instead of locking. NULL removes it. */
 typedef void (*afx_end_callback_t)(afx_instance_t instance, const afx_instance_status_t *status, void *user);
 void afx_set_end_callback(afx_end_callback_t callback, void *user);
+/* Called once for each LOOP an instance takes, with its status then: position
+ * is the loop target (image-relative, like every position) and next_deadline
+ * the hardware tick it continued at, so a player clock is
+ * loop_tick + (now - next_deadline) / tempo. Same thread and rules as the end
+ * callback; loops are reported before ends. NULL removes it. */
+typedef void (*afx_loop_callback_t)(afx_instance_t instance, const afx_instance_status_t *status, void *user);
+void afx_set_loop_callback(afx_loop_callback_t callback, void *user);
 
 uint32_t afx_status_heartbeat(void);
 uint32_t afx_status_timer_ticks(void);

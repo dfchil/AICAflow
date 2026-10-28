@@ -44,6 +44,60 @@ static void test_bank_bound_container(void) {
     assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
 }
 
+/* A looping stream: NOTE_PL, WAIT8 1, then LOOP back to the NOTE_PL. */
+static void looping(uint8_t file[160], uint32_t target, uint32_t loop_tick, uint32_t flags) {
+    candidate(file);
+    afx_write32(file + 12, flags);
+    afx_write32(file + 28, 15);
+    afx_write32(file + 56, loop_tick);
+    file[140] = AFX_OP_WAIT8; file[141] = 1;
+    file[142] = AFX_OP_LOOP; afx_write32(file + 143, target);
+}
+
+static void test_loop(void) {
+    uint8_t file[160];
+    afx_file_header_t header;
+    afx_validation_profile_t profile;
+    uint64_t ticks;
+    uint32_t num, den;
+    looping(file, 0, 0, AFX_FLAG_LOOP);
+    assert(afx_file_validate_profile(file, sizeof(file), &header, &profile) == AFX_OK);
+    assert((header.flags & AFX_FLAG_LOOP) && header.loop_tick == 0);
+    /* The LOOP joins the burst before it (nothing) to the burst at its target (the NOTE). */
+    assert(profile.peak_commands == 1 && profile.peak_register_writes == 19);
+    assert(afx_flow_duration(file, sizeof(file), &ticks, &num, &den) == AFX_OK && ticks == 1);
+    /* Looping to the WAIT itself: an instruction boundary one tick in. */
+    looping(file, 8, 0, AFX_FLAG_LOOP);
+    assert(afx_file_validate_profile(file, sizeof(file), &header, &profile) == AFX_OK);
+    assert(profile.peak_commands == 1);
+    /* Into the middle of an instruction, at the LOOP itself, or past it. */
+    looping(file, 3, 0, AFX_FLAG_LOOP);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    looping(file, 10, 0, AFX_FLAG_LOOP);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    looping(file, 15, 0, AFX_FLAG_LOOP);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    /* The header's loop tick must be the target's authored tick. */
+    looping(file, 0, 1, AFX_FLAG_LOOP);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    looping(file, 8, 1, AFX_FLAG_LOOP);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    /* The flag and the terminal instruction must agree; loop_tick needs the flag. */
+    looping(file, 0, 0, 0);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    looping(file, 0, 0, AFX_FLAG_LOOP); file[142] = AFX_OP_END; afx_write32(file + 28, 11);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    candidate(file); afx_write32(file + 56, 1);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_BOUNDS);
+    /* A loop body that never waits would spin. */
+    looping(file, 0, 0, AFX_FLAG_LOOP);
+    file[140] = AFX_OP_LOOP; afx_write32(file + 141, 0); afx_write32(file + 28, 13);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    /* The old layout check reads the flag and tick without decoding the stream. */
+    looping(file, 3, 7, AFX_FLAG_LOOP);
+    assert(afx_file_validate_layout(file, sizeof(file), &header) == AFX_OK && header.loop_tick == 7);
+}
+
 static void test_bytecode(void) {
     uint8_t bytes[44];
     uint16_t values[] = {0x1234, 0x5678};
@@ -70,6 +124,11 @@ static void test_bytecode(void) {
     assert(afx_decode_event(bytes, written, &decoded) == AFX_OK);
     event = (afx_event_t){.opcode = AFX_OP_WAIT32, .wait = 0};
     assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_BAD_COMMAND);
+    event = (afx_event_t){.opcode = AFX_OP_LOOP, .target = 0x12345};
+    assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_OK && written == 5);
+    assert(afx_decode_event(bytes, written, &decoded) == AFX_OK);
+    assert(decoded.opcode == AFX_OP_LOOP && decoded.target == 0x12345 && decoded.bytes == 5);
+    assert(afx_decode_event(bytes, 4, &decoded) == AFX_BAD_BOUNDS);
 }
 
 static void test_control_id(void) {
@@ -126,6 +185,7 @@ int main(int argc, char **argv) {
     if (argc == 2) test_firmware_image(argv[1]);
     test_sample_addresses();
     test_bank_bound_container();
+    test_loop();
     test_bytecode();
     test_control_id();
     puts("bank-bound protocol checks passed");

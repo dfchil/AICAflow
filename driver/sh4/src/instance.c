@@ -125,7 +125,7 @@ int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
         .setups_offset = 0, .setup_count = flow->setup_count,
         .channel_map = map_address, .required_channels = count,
         .flags = flow->flags & (AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC |
-                                       AFX_FLAG_MUSIC_CHORUS | AFX_FLAG_LANES),
+                                       AFX_FLAG_MUSIC_CHORUS | AFX_FLAG_LANES | AFX_FLAG_LOOP),
         .start_tick = start_tick, .bank_base_units = (uint16_t)(bank_base >> 5),
         .bank_bytes = bank_bytes
     };
@@ -349,22 +349,44 @@ static struct ended_instance { afx_instance_t instance; afx_instance_status_t st
 static uint32_t g_ended_count;
 static afx_end_callback_t g_end_callback;
 static void *g_end_user;
+/* Instances that looped since the loop callback last ran, with the status
+ * the loop was reported with. One entry per instance: the last loop seen. */
+static struct ended_instance g_looped[AFX_MAX_FLOW_SLOTS];
+static uint32_t g_looped_count;
+static afx_loop_callback_t g_loop_callback;
+static void *g_loop_user;
 void afx_set_end_callback(afx_end_callback_t callback, void *user) {
     mutex_lock(&g_host_mutex);
     g_end_callback = callback;
     g_end_user = user;
     mutex_unlock(&g_host_mutex);
 }
-void events_report_ended(void) {
-    struct ended_instance ended[AFX_MAX_FLOW_SLOTS];
+void afx_set_loop_callback(afx_loop_callback_t callback, void *user) {
     mutex_lock(&g_host_mutex);
-    uint32_t count = g_ended_count;
+    g_loop_callback = callback;
+    g_loop_user = user;
+    mutex_unlock(&g_host_mutex);
+}
+static void note_looped(afx_instance_t instance, const afx_instance_status_t *status) {
+    for (uint32_t i = 0; i < g_looped_count; ++i)
+        if (g_looped[i].instance == instance) { g_looped[i].status = *status; return; }
+    if (g_looped_count < AFX_MAX_FLOW_SLOTS)
+        g_looped[g_looped_count++] = (struct ended_instance){ instance, *status };
+}
+void events_report_ended(void) {
+    struct ended_instance ended[AFX_MAX_FLOW_SLOTS], looped[AFX_MAX_FLOW_SLOTS];
+    mutex_lock(&g_host_mutex);
+    uint32_t count = g_ended_count, loops = g_looped_count;
     afx_end_callback_t callback = g_end_callback;
-    void *user = g_end_user;
+    afx_loop_callback_t loop_callback = g_loop_callback;
+    void *user = g_end_user, *loop_user = g_loop_user;
     memcpy(ended, g_ended, count * sizeof(ended[0]));
-    g_ended_count = 0;
+    memcpy(looped, g_looped, loops * sizeof(looped[0]));
+    g_ended_count = g_looped_count = 0;
     mutex_unlock(&g_host_mutex);
     /* Unlocked, so the callback can start the next sound. */
+    for (uint32_t i = 0; loop_callback && i < loops; ++i)
+        loop_callback(looped[i].instance, &looped[i].status, loop_user);
     for (uint32_t i = 0; callback && i < count; ++i) callback(ended[i].instance, &ended[i].status, user);
 }
 /* An instance that ended is recycled, so its slot and channels come back
@@ -411,6 +433,10 @@ bool update_slot(uint32_t index) {
         }
         return true;
     }
+    /* A terminal record carries no loop count: keep the last one reported. */
+    if (observed.state == AFX_DONE || observed.state == AFX_ERROR) observed.loops = slot->status.loops;
+    else if (observed.loops != slot->status.loops && slot->status.state != AFX_FREE)
+        note_looped(reference, &observed);
     if (memcmp(&observed, &slot->status, sizeof(observed)))
         slot->status = observed;
     if (slot->pending && observed.sequence >= expected)

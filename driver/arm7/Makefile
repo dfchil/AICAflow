@@ -2,7 +2,7 @@
 # target. AICA firmware must follow the explicit DC_ARM_* cross tools.
 ARM_CC := $(DC_ARM_CC)
 ARM_OBJCOPY := $(DC_ARM_OBJCOPY)
-ARM_CFLAGS ?= -marm -mcpu=arm7di -O2 -ffreestanding -fno-builtin -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -std=c11
+ARM_CFLAGS ?= -marm -mcpu=arm7di -O2 -ffreestanding -fno-builtin -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-tree-loop-distribute-patterns -Wall -Wextra -Werror -std=c11
 ARM_LDFLAGS ?= -nostdlib -Wl,-T,build/aicaflow.ld -Wl,--build-id=none -Wl,-Map,aicaflow.map
 TARGET := ../../firmware/aicaflow.drv
 ELF := aicaflow.elf

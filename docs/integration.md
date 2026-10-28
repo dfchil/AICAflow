@@ -142,6 +142,17 @@ Runtime lane modifiers are persistent SH4-controlled grouping modifiers
 (gain/mute/pan/send) on authored lane maps. These are distinct from ordinary
 timed PATCH operations in the control stream.
 
+## Looping flows
+
+A flow whose stream ends with `LOOP` (header flag `AFX_FLAG_LOOP`;
+`afx_asset_loops()` says so and gives the authored tick it continues at)
+repeats by itself, gaplessly, until stopped: it never ends on its own, so the
+end callback does not see it until `afx_instance_stop()`. Each loop is
+reported like other news, and `afx_set_loop_callback()` is called for it, with
+the loop target as the status position (image-relative) and the hardware tick
+the flow continued at as `next_deadline`; `afx_instance_status()` counts them in
+`loops`. Seek ticks address the authored first pass.
+
 ## Seek, DSP and player metadata
 
 Seeking requires a matching AFC and a paused music instance. SH4 selects the

@@ -55,7 +55,7 @@ All fields are unsigned 32-bit little-endian words:
 | 0 | magic | `AFX2` |
 | 4 | abi | AFX file version `7`, not firmware IPC ABI |
 | 8 | total_size | Complete file bytes |
-| 12 | flags | Controlled/music/lane flags defined in `format.h` |
+| 12 | flags | Controlled/music/lane/loop flags defined in `format.h` |
 | 16 | image_offset | File-relative start of the 32-byte-aligned upload image |
 | 20 | image_size | Upload image bytes |
 | 24 | stream_offset | Image-relative bytecode start |
@@ -65,7 +65,8 @@ All fields are unsigned 32-bit little-endian words:
 | 40, 44 | bank_id_low, bank_id_high | Identity of the sole bound AFB |
 | 48 | relocations_offset | File-relative relocation-table start |
 | 52 | relocation_count | Number of 12-byte relocation records |
-| 56, 60 | reserved0, reserved1 | Zero |
+| 56 | loop_tick | With AFX_FLAG_LOOP, the authored tick of the final LOOP's target; otherwise zero |
+| 60 | reserved1 | Zero |
 | 64 | required_channels | Local voice count required by this flow |
 | 68, 72 | tick_rate_num, tick_rate_den | Authored ticks per second = numerator / denominator |
 | 76 | work_profile | Peak burst commands in high 16 bits, register writes in low 16 bits |

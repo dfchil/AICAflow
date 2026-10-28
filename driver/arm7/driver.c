@@ -262,6 +262,11 @@ static void complete(uint32_t index, volatile afx_runtime_slot_t *context,
 static uint32_t stream_position(const volatile afx_runtime_slot_t *context) {
     return context->pc - context->image_base;
 }
+/* The state word of a live context: its loop count above its state, so a
+ * LOOP is news to the host (AFX_STATE_LOOPS_SHIFT). */
+static uint32_t state_word(const volatile afx_runtime_slot_t *context) {
+    return (uint32_t)context->state | ((uint32_t)context->loops << AFX_STATE_LOOPS_SHIFT);
+}
 /* Install a complete NOTE/RESTORE state; key-on is always the final write. */
 static afx_result_t install_voice(const volatile afx_runtime_slot_t *context,
                                   uint32_t physical, uint16_t words[AFX_FIELD_COUNT], int run) {
@@ -339,6 +344,7 @@ static void service(uint32_t index) {
     volatile afx_runtime_slot_t *context = &contexts[index];
     if (context->state != AFX_RUNNING) return;
     uint32_t events = 0;
+    int looped = 0;
     while (events < AFX_EXECUTOR_MAX_EVENTS_PER_PASS) {
         uint32_t now = *CLOCK;
         if (!tick_due(now, context->deadline)) return;
@@ -366,6 +372,24 @@ static void service(uint32_t index) {
         case AFX_OP_WAIT16:
         case AFX_OP_WAIT32: {
             schedule_wait(context, event.wait);
+            looped = 0;
+            break;
+        }
+        case AFX_OP_LOOP: {
+            /* Continue at the target in this same tick: the deadline carries on
+             * as authored, so the loop is gapless. A second LOOP without a WAIT
+             * between (which validation refuses) would spin: end the flow. */
+            uint32_t stream = context->image_base + context->stream_start;
+            if (!(context->flags & AFX_FLAG_LOOP) || looped ||
+                event.target >= context->end - stream) {
+                complete(index, context, AFX_ERROR, AFX_BAD_COMMAND, now - context->deadline);
+                return;
+            }
+            context->pc = stream + event.target;
+            context->loops++;
+            looped = 1;
+            publish(index, context->reference, state_word(context), context->sequence, AFX_OK,
+                    stream_position(context), context->deadline, context->max_lateness);
             break;
         }
         case AFX_OP_NOTE:
@@ -394,7 +418,7 @@ static void service(uint32_t index) {
                 return;
             }
             context->state = AFX_PARKED;
-            publish(index, context->reference, AFX_PARKED, context->sequence, AFX_OK,
+            publish(index, context->reference, state_word(context), context->sequence, AFX_OK,
                     stream_position(context), context->deadline, now - context->deadline);
             return;
         default:
@@ -406,7 +430,7 @@ static void service(uint32_t index) {
             return;
         }
     }
-    publish(index, context->reference, AFX_RUNNING, context->sequence, AFX_OK,
+    publish(index, context->reference, state_word(context), context->sequence, AFX_OK,
             stream_position(context), context->deadline, context->max_lateness);
 }
 static void activation(uint32_t reference, uint32_t sequence, const uint8_t payload[48]) {
@@ -437,7 +461,7 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
               (activate.setups_offset + activate.setup_count * AFX_SETUP_BYTES))) ||
         !map_valid(activate.channel_map, activate.required_channels) ||
         (activate.flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
-                            AFX_FLAG_LANES))) {
+                            AFX_FLAG_LANES | AFX_FLAG_LOOP))) {
         publish(index, reference, AFX_ERROR, sequence, AFX_BAD_COMMAND, 0, 0, 0);
         return;
     }
@@ -517,14 +541,14 @@ static void lifecycle(uint32_t opcode, uint32_t reference, uint32_t sequence) {
     }
     if (opcode == AFX_CMD_PAUSE) {
         if (context->state != AFX_RUNNING) {
-            publish(index, reference, context->state, sequence, AFX_BUSY,
+            publish(index, reference, state_word(context), sequence, AFX_BUSY,
                     stream_position(context), context->deadline, 0);
             return;
         }
         context->state = AFX_PAUSED;
         context->sequence = sequence;
         keyoff(context);
-        publish(index, reference, AFX_PAUSED, sequence, AFX_OK,
+        publish(index, reference, state_word(context), sequence, AFX_OK,
                 stream_position(context), context->deadline, 0);
         return;
     }
@@ -534,7 +558,7 @@ static void lifecycle(uint32_t opcode, uint32_t reference, uint32_t sequence) {
         publish(index, reference, AFX_DONE, sequence, AFX_OK, 0, 0, 0);
         return;
     }
-    publish(index, reference, context->state, sequence, AFX_UNSUPPORTED,
+    publish(index, reference, state_word(context), sequence, AFX_UNSUPPORTED,
             stream_position(context), context->deadline, 0);
 }
 static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
@@ -555,7 +579,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
         !asset_range(request.states_address, request.state_count * sizeof(afx_restore_channel_t)) ||
         request.stream_position < context->stream_start ||
         request.stream_position >= stream_end) {
-        publish(index, reference, context->state, sequence, AFX_BAD_COMMAND,
+        publish(index, reference, state_word(context), sequence, AFX_BAD_COMMAND,
                 stream_position(context), context->deadline, 0);
         return;
     }
@@ -566,7 +590,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
         uint32_t bit = 1u << (local & 31u);
         uint32_t *seen = local < 32 ? &seen_low : &seen_high;
         if (local >= context->channels || (*seen & bit)) {
-            publish(index, reference, context->state, sequence, AFX_BAD_COMMAND,
+            publish(index, reference, state_word(context), sequence, AFX_BAD_COMMAND,
                     stream_position(context), context->deadline, local);
             return;
         }
@@ -576,7 +600,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
         uint16_t low = source->fields[AFX_FIELD_SAMPLE_LOW];
         afx_result_t result = resolve_sample_address(context, &control, &low);
         if (result) {
-            publish(index, reference, context->state, sequence, result,
+            publish(index, reference, state_word(context), sequence, result,
                     stream_position(context), context->deadline, local);
             return;
         }
@@ -591,7 +615,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
         afx_result_t result = write_restore(context, &state, (flags & AFX_REBUILD_RUN) != 0);
         if (result) {
             keyoff(context);
-            publish(index, reference, context->state, sequence, result,
+            publish(index, reference, state_word(context), sequence, result,
                     stream_position(context), context->deadline, state.local_channel);
             return;
         }
@@ -601,7 +625,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
     context->deadline = request.next_deadline;
     context->state = (flags & AFX_REBUILD_RUN) ? AFX_RUNNING : AFX_PAUSED;
     context->sequence = sequence;
-    publish(index, reference, context->state, sequence, AFX_OK,
+    publish(index, reference, state_word(context), sequence, AFX_OK,
             request.stream_position, request.next_deadline, context->max_lateness);
 }
 static void patch(uint32_t reference, uint32_t sequence, const uint8_t payload[48]) {
@@ -618,15 +642,22 @@ static void patch(uint32_t reference, uint32_t sequence, const uint8_t payload[4
         request.reserved[0] || request.reserved[1] || request.reserved[2] ||
         request.reserved_tail || request.local_channel >= context->channels ||
         (request.mask & ~AFX_PATCH_FIELD_MASK)) {
-        publish(index, reference, context->state, sequence, AFX_BAD_COMMAND,
+        publish(index, reference, state_word(context), sequence, AFX_BAD_COMMAND,
                 stream_position(context), context->deadline, request.local_channel);
         return;
     }
-    afx_event_t event = { .opcode = AFX_OP_PATCH, .channel = request.local_channel,
-                          .mask = request.mask, .values = (const uint8_t *)request.values };
+    /* Member by member: a brace initializer of the whole event makes GCC zero
+     * the rest with a memset call, which the freestanding firmware lacks. */
+    afx_event_t event;
+    event.opcode = AFX_OP_PATCH;
+    event.channel = request.local_channel;
+    event.setup = 0;
+    event.wait = event.target = event.bytes = 0;
+    event.mask = request.mask;
+    event.values = (const uint8_t *)request.values;
     afx_result_t result = write_patch(context, &event);
     if (result)
-        publish(index, reference, context->state, sequence, result,
+        publish(index, reference, state_word(context), sequence, result,
                 stream_position(context), context->deadline, request.local_channel);
 }
 static void set_instance_gain(uint32_t reference, const uint8_t payload[48]) {
