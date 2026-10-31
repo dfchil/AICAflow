@@ -20,7 +20,7 @@ flowchart TB
     observed["0x1fcf10–0x1fd70f\nARM7 → SH-4 observed instance state"]
     maps["0x1fd710–0x1fd84f\nfive 64-byte channel-map arenas"]
     private["0x1fd850–0x1feb9f\nARM7 private runtime state"]
-    stacks["0x1feba0–0x1ff79f\nARM7 SVC/FIQ/IRQ/ABT/UND stacks"]
+    stacks["0x1ff000–0x1ff5ff\nARM7 SVC/FIQ/IRQ/ABT/UND stacks"]
     clock["0x1ff7a0–0x1ff7bf\nshared timer/clock words"]
     queue["0x1ff7c0–0x1fffff\nSH-4 → ARM7 queue: 32 commands + header\nwith the ARM7 → SH-4 event ring"]
   end
@@ -35,9 +35,9 @@ side of it. A program with no external delay RAM allocates nothing.
 Install memory-using scenes before loading assets to avoid fragmentation.
 
 Fixed regions are adjacent, with the 32-byte-aligned command queue at the top
-of RAM. Status occupies 80 bytes. Private state currently occupies 4,944 bytes;
-the linker rejects growth that would overlap the unchanged stack reservations.
-Increasing private state requires an explicit layout adjustment.
+of RAM. Status occupies 80 bytes. Private state currently occupies 5,136 bytes, which
+leaves 928 bytes below the stacks; the linker rejects growth that would overlap
+them. The main stack starts on a multiple of its size.
 
 SH-4 retains a ring until ARM7 acknowledges DSP disable. An enable/disable
 timeout leaves it allocated; retry disable or shut down the driver. Replacing

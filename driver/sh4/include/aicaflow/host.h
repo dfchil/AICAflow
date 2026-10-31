@@ -146,6 +146,7 @@ int afx_instance_tempo(afx_instance_t instance, uint16_t scale_q8_8);
 /* Applies one persistent modifier to selected lanes. first_lane plus a set bit
  * in mask identifies a value in values[0..31]; callers coalesce changed lanes.
  * Gain and DSP-send values are linear 0..255; pan is a signed AICA pan offset;
+ * pitch is signed and multiplies a voice's pitch by 1 + value / 256;
  * a nonzero mute value releases current voices and suppresses later note-ons. */
 int afx_instance_lanes_set(afx_instance_t instance, uint32_t modifier,
                            uint8_t first_lane, uint32_t mask, const uint8_t values[32]);

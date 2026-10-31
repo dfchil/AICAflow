@@ -7,6 +7,13 @@ the commit history.
 
 ### Added
 
+- Pitch lanes (firmware ABI 11). `AFX_LANE_PITCH` multiplies the pitch of a
+  lane's voices by 1 + value / 256 (value signed), from 0.5 to about 1.5, for a
+  sound that follows a game value, such as a source's distance. It applies to
+  voices sounding now, their release tails included, and to later notes.
+  The ARM7 main stack is now 1024 bytes on a multiple of its size, and the
+  exception stacks, which nothing uses, 128 bytes each: private state had no
+  room left, and now has 928 bytes.
 - Looping flows. A stream may end with `LOOP target` instead of `END`
   (`AFX_OP_LOOP`, flag `AFX_FLAG_LOOP`, header field `loop_tick`): the ARM7
   continues at the target in the same tick, so a song with an intro repeats
