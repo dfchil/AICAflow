@@ -139,7 +139,7 @@ binding and reject sample-address/loop changes and raw seek/rebuild. Use a
 new bound flow when replacing that sample.
 
 Runtime lane modifiers are persistent SH4-controlled grouping modifiers
-(gain/mute/pan/send) on authored lane maps. These are distinct from ordinary
+(gain/mute/pan/send/pitch) on authored lane maps. These are distinct from ordinary
 timed PATCH operations in the control stream.
 
 ## Looping flows

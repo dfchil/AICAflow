@@ -63,7 +63,7 @@ generation prevents stale instance references from targeting a recycled slot.
 | PATCH | afx_instance_patch | Write selected complete AICA register words for one local channel. |
 | INSTANCE_GAIN | afx_instance_gain | Apply linear instance gain, 0–255. |
 | INSTANCE_TEMPO | afx_instance_tempo | Set one whole-flow Q8.8 tempo scale. |
-| LANE_SET | afx_instance_lanes_set | Update persistent lane gain/mute/pan/DSP-send modifiers. |
+| LANE_SET | afx_instance_lanes_set | Update persistent lane gain/mute/pan/DSP-send/pitch modifiers. |
 | DSP_ENABLE | afx_dsp_scene_program or afx_dsp_scene_program_ring | Install the one scene DSP program and optional delay ring. |
 | DSP_DISABLE | afx_dsp_scene_disable | Disable the scene and return its reserved ring. |
 

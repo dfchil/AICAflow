@@ -72,7 +72,7 @@ globals_ = source[source.index("static const uint8_t gain_attenuation"):
                   source.index("static uint32_t dsp_owner")]
 names = ("range", "asset_range", "clear_words", "dsp_returns", "dsp_disable", "dsp_nop", "scene_result", "dsp_control", "reference_index",
          "multiply_gain", "apply_gain", "projected_mix", "projected_direct",
-         "projected_dsp_send", "write_projection", "release_voice", "keyoff",
+         "projected_pitch", "projected_dsp_send", "write_projection", "release_voice", "keyoff",
          "stream_position", "state_word", "install_voice", "write_restore", "set_instance_gain", "set_lanes", "rebuild",
          "lifecycle", "tick_due", "schedule_wait", "record_lateness", "complete", "write_note",
          "write_patch", "service")
@@ -228,6 +228,23 @@ int main(void) {
     assert(voice_flags[0] == VOICE_MUTED);
     assert(write_restore(ctx, &restore_states[0], 1) == AFX_OK);
     assert(voice_flags[0] == VOICE_MUTED); /* Muted restores do not latch. */
+    /* A pitch lane multiplies the word by 1 + value / 256, moving OCT past an octave's end. */
+    voice_flags[0] = VOICE_LATCHED;
+    voice_base_pitch[0] = 256; /* OCT 0, mantissa 1280 */
+    afx_lane_payload_t bend = {.mask = 1, .values = {64}};
+    set_lanes(1, AFX_LANE_PITCH, (const uint8_t *)&bend);
+    assert(registers[0][AFX_FIELD_PITCH] == 576);
+    voice_base_pitch[0] = 512; /* mantissa 1536, times 127 / 256 more: past 2048 */
+    bend.values[0] = 127;
+    set_lanes(1, AFX_LANE_PITCH, (const uint8_t *)&bend);
+    assert(registers[0][AFX_FIELD_PITCH] == ((1u << 11) | 125u));
+    voice_base_pitch[0] = 256; /* a half of 1280: below 1024, OCT -1 */
+    bend.values[0] = (uint8_t)-128;
+    set_lanes(1, AFX_LANE_PITCH, (const uint8_t *)&bend);
+    assert(registers[0][AFX_FIELD_PITCH] == ((15u << 11) | 256u));
+    bend.values[0] = 0;
+    set_lanes(1, AFX_LANE_PITCH, (const uint8_t *)&bend);
+    assert(registers[0][AFX_FIELD_PITCH] == 256);
     /* A looping stream: WAIT8 2, KEYOFF 0, WAIT8 3, LOOP back to the KEYOFF.
      * The LOOP moves the cursor in the tick it is due; the deadline carries on. */
     (void)setup_bytes;

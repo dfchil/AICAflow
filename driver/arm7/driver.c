@@ -31,12 +31,14 @@ static uint8_t voice_lane_gain[AFX_AICA_CHANNEL_COUNT];
 static uint8_t voice_lane_dsp_send[AFX_AICA_CHANNEL_COUNT];
 static uint8_t voice_lane_id[AFX_AICA_CHANNEL_COUNT];
 static int8_t voice_lane_pan[AFX_AICA_CHANNEL_COUNT];
+static int8_t voice_lane_pitch[AFX_AICA_CHANNEL_COUNT];
 enum { VOICE_MUTED = 1u, VOICE_LATCHED = 2u, VOICE_RELEASED = 4u };
 static uint8_t voice_flags[AFX_AICA_CHANNEL_COUNT];
 /* The AICA channel aperture is write-only for our purposes. These retain the
  * authored state before instance/lane projection and the words needed by KEYOFF. */
 static uint16_t voice_control[AFX_AICA_CHANNEL_COUNT];
 static uint16_t voice_base_mix[AFX_AICA_CHANNEL_COUNT];
+static uint16_t voice_base_pitch[AFX_AICA_CHANNEL_COUNT];
 static uint16_t voice_base_direct[AFX_AICA_CHANNEL_COUNT];
 static uint16_t voice_base_dsp_send[AFX_AICA_CHANNEL_COUNT];
 static uint32_t dsp_owner;
@@ -223,6 +225,27 @@ static uint16_t projected_direct(uint32_t physical) {
     uint16_t encoded = pan < 0 ? (uint16_t)(16 - pan) : (uint16_t)pan;
     return (uint16_t)((direct & ~31u) | encoded);
 }
+/* The pitch word times 1 + offset / 256. FNS, the low 10 bits, is the fraction of a mantissa from
+ * 1 to 2, and OCT above it a signed exponent, so a product that leaves the octave moves OCT. */
+static uint16_t projected_pitch(uint32_t physical) {
+    uint16_t word = voice_base_pitch[physical];
+    int offset = voice_lane_pitch[physical];
+    if (!offset) return word;
+    int mantissa = 1024 + (word & 1023u);
+    int octave = (word >> 11) & 15u;
+    if (octave > 7) octave -= 16;
+    mantissa += (mantissa * offset) >> 8;
+    if (mantissa >= 2048) {
+        if (octave == 7) return word;
+        mantissa >>= 1;
+        octave++;
+    } else if (mantissa < 1024) {
+        if (octave == -8) return word;
+        mantissa <<= 1;
+        octave--;
+    }
+    return (uint16_t)((word & ~0x7bffu) | (((uint32_t)octave & 15u) << 11) | ((uint32_t)mantissa - 1024u));
+}
 static uint16_t projected_dsp_send(uint32_t physical) {
     if (voice_flags[physical] & VOICE_RELEASED) return voice_base_dsp_send[physical];
     uint32_t level = (voice_base_dsp_send[physical] >> 4) & 15u;
@@ -235,6 +258,7 @@ static void write_projection(uint32_t physical, uint32_t fields, uint8_t instanc
     if (fields & (1u << AFX_FIELD_TOTAL_LEVEL))
         regs[AFX_FIELD_TOTAL_LEVEL] = projected_mix(physical, instance_gain);
     if (fields & (1u << AFX_FIELD_DIRECT)) regs[AFX_FIELD_DIRECT] = projected_direct(physical);
+    if (fields & (1u << AFX_FIELD_PITCH)) regs[AFX_FIELD_PITCH] = projected_pitch(physical);
     if (fields & (1u << AFX_FIELD_DSP_SEND))
         regs[AFX_FIELD_DSP_SEND] = projected_dsp_send(physical);
 }
@@ -277,8 +301,10 @@ static afx_result_t install_voice(const volatile afx_runtime_slot_t *context,
     voice_base_mix[physical] = words[AFX_FIELD_TOTAL_LEVEL];
     voice_base_direct[physical] = words[AFX_FIELD_DIRECT];
     voice_base_dsp_send[physical] = words[AFX_FIELD_DSP_SEND];
+    voice_base_pitch[physical] = words[AFX_FIELD_PITCH];
     words[AFX_FIELD_TOTAL_LEVEL] = projected_mix(physical, context->gain);
     words[AFX_FIELD_DIRECT] = projected_direct(physical);
+    words[AFX_FIELD_PITCH] = projected_pitch(physical);
     words[AFX_FIELD_DSP_SEND] = projected_dsp_send(physical);
     volatile uint32_t *regs = (volatile uint32_t *)(AFX_AICA_REG_BASE +
         physical * AFX_AICA_CHANNEL_REG_STRIDE);
@@ -324,6 +350,9 @@ static afx_result_t write_patch(const volatile afx_runtime_slot_t *context,
             projection |= 1u << field;
         } else if (field == AFX_FIELD_DSP_SEND) {
             voice_base_dsp_send[physical] = field_value;
+            projection |= 1u << field;
+        } else if (field == AFX_FIELD_PITCH) {
+            voice_base_pitch[physical] = field_value;
             projection |= 1u << field;
         } else regs[field] = field_value;
     }
@@ -493,7 +522,7 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
         voice_lane_id[physical] = (uint8_t)lane;
         voice_control[physical] = 0;
         voice_lane_gain[physical] = voice_lane_dsp_send[physical] = 255;
-        voice_lane_pan[physical] = 0;
+        voice_lane_pan[physical] = voice_lane_pitch[physical] = 0;
         voice_flags[physical] = 0;
     }
     context->flags = activate.flags;
@@ -724,6 +753,11 @@ static void set_lanes(uint32_t reference, uint32_t modifier, const uint8_t paylo
             voice_lane_pan[physical] = (int8_t)value;
             if ((voice_flags[physical] & VOICE_LATCHED) && !(voice_flags[physical] & VOICE_RELEASED))
                 write_projection(physical, 1u << AFX_FIELD_DIRECT, context->gain);
+        } else if (modifier == AFX_LANE_PITCH) {
+            /* A released voice keeps sounding its tail, at the pitch it is set to. */
+            voice_lane_pitch[physical] = (int8_t)value;
+            if (voice_flags[physical] & VOICE_LATCHED)
+                write_projection(physical, 1u << AFX_FIELD_PITCH, context->gain);
         } else {
             voice_lane_dsp_send[physical] = value;
             if ((voice_flags[physical] & VOICE_LATCHED) && !(voice_flags[physical] & VOICE_RELEASED))
@@ -874,6 +908,7 @@ void arm_main(void) {
             voice_base_dsp_send[channel] = 0;
         voice_flags[channel] = 0;
         voice_lane_gain[channel] = voice_lane_dsp_send[channel] = 255;
+        voice_lane_pitch[channel] = 0;
         voice_lane_id[channel] = 0;
         voice_lane_pan[channel] = 0;
         regs[AFX_FIELD_CONTROL] = AFX_KEYON_EXECUTE;

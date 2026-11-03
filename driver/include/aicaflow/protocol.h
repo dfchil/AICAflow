@@ -5,14 +5,14 @@
 #include <aicaflow/limits.h>
 #include <aicaflow/result.h>
 
-/* ABI 10: the executor decodes the compact PATCH_ENV and PATCH_ENV_LEVEL
- * forms, which an ABI 9 firmware rejects as bad commands; ABI 9: a looping flow (AFX_OP_LOOP) reports each loop through its observed
+/* ABI 11: AFX_LANE_PITCH, which an ABI 10 firmware ignores; ABI 10: the
+ * executor decodes the compact PATCH_ENV and PATCH_ENV_LEVEL forms, which an ABI 9 firmware rejects as bad commands; ABI 9: a looping flow (AFX_OP_LOOP) reports each loop through its observed
  * state word, which carries the loop count above the state; ABI 8 reported
  * status back by interrupt through an event ring; ABI 7 brought
  * bank-relative playback, compact state and allocated DSP rings.
  * Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
-#define AFX_ABI_VERSION 10
+#define AFX_ABI_VERSION 11
 #define AFX_FIRMWARE_MAGIC 0x32524641
 #define AFX_STATUS_MAGIC 0x32534641
 #define AFX_LAYOUT_ID 0x20261009
@@ -50,14 +50,17 @@
 #define AFX_PRIVATE_BASE (AFX_CHANNEL_MAP_ARENA_ADDR + AFX_CHANNEL_MAP_ARENAS * AFX_CHANNEL_MAP_ARENA_SIZE)
 #define AFX_CLOCK_BASE (AFX_QUEUE_ADDR - 32)
 #define AFX_AICA_TIMER_TICK_ADDR AFX_CLOCK_BASE
-#define AFX_EXCEPTION_STACK_BYTES 256
-#define AFX_MAIN_STACK_BYTES 2048
-#define AFX_UND_STACK_TOP AFX_CLOCK_BASE
-#define AFX_ABT_STACK_TOP (AFX_UND_STACK_TOP - AFX_EXCEPTION_STACK_BYTES)
-#define AFX_IRQ_STACK_TOP (AFX_ABT_STACK_TOP - AFX_EXCEPTION_STACK_BYTES)
-#define AFX_FIQ_STACK_TOP (AFX_IRQ_STACK_TOP - AFX_EXCEPTION_STACK_BYTES)
-#define AFX_SVC_STACK_TOP (AFX_FIQ_STACK_TOP - AFX_EXCEPTION_STACK_BYTES)
-#define AFX_STACK_BASE (AFX_SVC_STACK_TOP - AFX_MAIN_STACK_BYTES)
+/* The main stack starts on a multiple of its size, so that sp & (size - 1) is its fill. The exception
+ * stacks above it hold nothing today: the handlers in crt0.s take no stack. */
+#define AFX_EXCEPTION_STACK_BYTES 128
+#define AFX_MAIN_STACK_BYTES 1024
+#define AFX_STACK_BASE ((AFX_CLOCK_BASE - AFX_MAIN_STACK_BYTES - 4 * AFX_EXCEPTION_STACK_BYTES) \
+                        & ~(AFX_MAIN_STACK_BYTES - 1))
+#define AFX_SVC_STACK_TOP (AFX_STACK_BASE + AFX_MAIN_STACK_BYTES)
+#define AFX_FIQ_STACK_TOP (AFX_SVC_STACK_TOP + AFX_EXCEPTION_STACK_BYTES)
+#define AFX_IRQ_STACK_TOP (AFX_FIQ_STACK_TOP + AFX_EXCEPTION_STACK_BYTES)
+#define AFX_ABT_STACK_TOP (AFX_IRQ_STACK_TOP + AFX_EXCEPTION_STACK_BYTES)
+#define AFX_UND_STACK_TOP (AFX_ABT_STACK_TOP + AFX_EXCEPTION_STACK_BYTES)
 #define AFX_STACK_PATTERN 0xa5a5a5a5
 #define AFX_TIMER_RELOAD 212
 
@@ -91,7 +94,7 @@ enum {
 #define AFX_KEYON_EXECUTE 0x8000u
 #define AFX_EXECUTOR_MAX_EVENTS_PER_PASS 32u
 #define AFX_EXECUTOR_MAX_COMMANDS_PER_PASS 8u
-enum { AFX_LANE_GAIN, AFX_LANE_MUTE, AFX_LANE_PAN, AFX_LANE_DSP_SEND,
+enum { AFX_LANE_GAIN, AFX_LANE_MUTE, AFX_LANE_PAN, AFX_LANE_DSP_SEND, AFX_LANE_PITCH,
        AFX_LANE_MODIFIER_COUNT };
 enum { AFX_CAP_BOOTSTRAP = 1, AFX_CAP_LIFECYCLE = 2, AFX_CAP_PLAYBACK = 4, AFX_CAP_DSP = 8, AFX_CAP_DSP_HOST_INIT = 16 };
 /* The firmware reports news to the host: an observation whose reference,
@@ -271,6 +274,7 @@ AFX_ASSERT((AFX_CONTROL_BASE & 31u) == 0, "asset ceiling alignment");
 AFX_ASSERT(sizeof(afx_status_t) == AFX_STATUS_BYTES, "status layout size");
 AFX_ASSERT(AFX_STATUS_ADDR + sizeof(afx_status_t) == AFX_OBSERVED_ADDR, "status/observed adjacency");
 AFX_ASSERT((AFX_QUEUE_ADDR & 31u) == 0, "queue alignment");
+AFX_ASSERT((AFX_STACK_BASE & (AFX_MAIN_STACK_BYTES - 1)) == 0, "main stack alignment");
 AFX_ASSERT(AFX_QUEUE_ADDR + sizeof(afx_cmd_queue_t) == AFX_AICA_RAM_SIZE, "queue at RAM top");
 AFX_ASSERT(AFX_OBSERVED_ADDR + 64 * sizeof(afx_observed_t) == AFX_CHANNEL_MAP_ARENA_ADDR, "observed overlap");
 AFX_ASSERT(AFX_CHANNEL_MAP_ARENA_ADDR + AFX_CHANNEL_MAP_ARENAS * AFX_CHANNEL_MAP_ARENA_SIZE == AFX_PRIVATE_BASE, "maps overlap");
