@@ -49,6 +49,7 @@ static uint32_t clock_value;
 /* The executor reads its stream from AICA RAM by address; here from a buffer. */
 #define STREAM_BASE 0x4000u
 static uint8_t stream_bytes[64];
+static _Alignas(4) uint8_t image_bytes[64]; /* A flow image at STREAM_BASE, for its bank table. */
 static uint8_t setup_bytes[AFX_SETUP_BYTES];
 static afx_observed_t observed_records[AFX_MAX_FLOW_SLOTS];
 #define OBSERVED observed_records
@@ -77,7 +78,7 @@ names = ("range", "asset_range", "clear_words", "dsp_returns", "dsp_disable", "d
          "projected_pitch", "projected_dsp_send", "write_projection", "release_voice", "keyoff",
          "stream_position", "state_word", "install_voice", "write_restore", "set_instance_gain", "set_lanes", "rebuild",
          "lifecycle", "tick_due", "schedule_wait", "record_lateness", "complete", "write_note",
-         "write_patch", "patch", "service")
+         "write_patch", "patch", "service", "bank_table_valid")
 body = "\n".join(function(name) for name in names)
 # Keep production validation/installation intact; only translate staging pointers.
 assert body.count("(request.states_address +") == 2
@@ -86,6 +87,9 @@ assert body.count("(const uint8_t *)context->pc,") == 1
 body = body.replace("(const uint8_t *)context->pc,", "stream_bytes + (context->pc - STREAM_BASE),")
 assert body.count("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)") == 1
 body = body.replace("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)", "setup_bytes")
+assert body.count("(activate->image_base + table + slot * 4u)") == 1
+body = body.replace("(activate->image_base + table + slot * 4u)",
+                    "((uintptr_t)image_bytes + activate->image_base - STREAM_BASE + table + slot * 4u)")
 checks = r'''
 int main(void) {
     /* All supported sizes, at a non-top address; disable resets ownership. */
@@ -334,6 +338,27 @@ int main(void) {
     afx_gain_payload_t silent = {.gain = 0};
     set_instance_gain(4, (const uint8_t *)&silent);
     assert(write_note(fresh, &note) == AFX_OK && registers[0][AFX_FIELD_TOTAL_LEVEL] == 0xff00);
+
+    /* A bank table, at the first word after a 37-byte stream: empty, or each
+     * slot a bank inside the asset arena, and inside the image. */
+    afx_activation_t banked = {.image_base = STREAM_BASE, .image_size = 56,
+                               .stream_offset = 4, .stream_size = 33};
+    uint32_t *table = (uint32_t *)(image_bytes + 40);
+    assert(bank_table_valid(&banked));
+    table[1] = AFX_BANK_TABLE_ENTRY(0x8000, 0x1000);
+    table[3] = AFX_BANK_TABLE_ENTRY(AFX_ASSET_MAX - 0x40, 0x40);
+    assert(bank_table_valid(&banked));
+    table[2] = AFX_BANK_TABLE_ENTRY(0x400, 0x20); /* Below the asset base. */
+    assert(!bank_table_valid(&banked));
+    table[2] = AFX_BANK_TABLE_ENTRY(AFX_ASSET_MAX - 0x40, 0x41); /* Past the arena. */
+    assert(!bank_table_valid(&banked));
+    table[2] = 0x8000u >> 5; /* An address without a size. */
+    assert(!bank_table_valid(&banked));
+    table[2] = 0;
+    banked.image_size = 55; /* The table must lie inside the image. */
+    assert(!bank_table_valid(&banked));
+    banked.image_size = 56; banked.image_base = STREAM_BASE + 2;
+    assert(!bank_table_valid(&banked));
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
@@ -346,4 +371,4 @@ with tempfile.TemporaryDirectory() as directory:
                     "-I" + str(root / "driver/arm7"),
                     str(path / "check.c"), "-o", str(path / "check")], check=True)
     subprocess.run([str(path / "check")], check=True)
-print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore, LOOP and held PATCH: PASS")
+print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore, LOOP, held PATCH and bank tables: PASS")

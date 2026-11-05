@@ -43,6 +43,13 @@ int afx_bank_release(afx_bank_t *bank);
  * no SH-4 copy of the image. The caller may release data after this returns. */
 int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size,
                          afx_asset_t *out_flow);
+/* As afx_bank_flow_upload(), for a flow with AFX_FLAG_BANKS that plays from
+ * several banks: banks[i] fills bank slot i and must carry the identity the
+ * file gives that slot, and count must be the file's afx_file_bank_count().
+ * The flow retains every bank until it is freed. A single bank, or none, may
+ * also go through this call. */
+int afx_flow_upload(const afx_bank_t *const banks[], uint32_t count, const void *data,
+                    uint32_t size, afx_asset_t *out_flow);
 
 /* Attach an optional AFC seek index before activating flow. Normal playback
  * never needs it. A mismatched flow or bank identity is rejected. */

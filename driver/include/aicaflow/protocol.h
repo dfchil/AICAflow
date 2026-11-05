@@ -5,7 +5,8 @@
 #include <aicaflow/limits.h>
 #include <aicaflow/result.h>
 
-/* ABI 12: a PATCH command on a channel that has not sounded since activation
+/* ABI 13: a flow with AFX_FLAG_BANKS plays samples from up to four banks,
+ * which an ABI 12 firmware refuses at activation; ABI 12: a PATCH command on a channel that has not sounded since activation
  * holds for that channel's first NOTE, which an ABI 11 firmware lets overwrite
  * it; ABI 11: AFX_LANE_PITCH, which an ABI 10 firmware ignores; ABI 10: the
  * executor decodes the compact PATCH_ENV and PATCH_ENV_LEVEL forms, which an ABI 9 firmware rejects as bad commands; ABI 9: a looping flow (AFX_OP_LOOP) reports each loop through its observed
@@ -14,7 +15,7 @@
  * bank-relative playback, compact state and allocated DSP rings.
  * Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
-#define AFX_ABI_VERSION 12
+#define AFX_ABI_VERSION 13
 #define AFX_FIRMWARE_MAGIC 0x32524641
 #define AFX_STATUS_MAGIC 0x32534641
 #define AFX_LAYOUT_ID 0x20261009
@@ -34,6 +35,12 @@
 #define AFX_DSP_RING_NONE 4u
 #define AFX_ASSET_MAX AFX_CONTROL_BASE
 #define AFX_UPLOAD_ALIGN 32
+/* One bank table entry (format.h: AFX_BANK_TABLE_BYTES, one u32 per slot):
+ * the bank's AICA byte address and its payload length rounded up to 32
+ * bytes, both divided by 32. Zero for an unused slot; slot 0 is unused, since
+ * the activation carries that bank. */
+#define AFX_BANK_TABLE_ENTRY(base, bytes) \
+    (((uint32_t)(base) >> 5) | ((((uint32_t)(bytes) + 31u) >> 5) << 16))
 #define AFX_STATUS_ADDR AFX_CONTROL_BASE
 #define AFX_STATUS_BYTES 80
 /* Keep the producer, consumer and command array on 32-byte boundaries. */

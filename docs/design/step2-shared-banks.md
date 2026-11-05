@@ -1,7 +1,8 @@
 # Step 2 design: shared banks and a planned AICA RAM layout
 
-Status: design note for review. There is no code yet. It builds on firmware
-ABI 12 (PR #16).
+Status: approved on 2026-11-05 with four banks per flow and two PRs. Part A
+is PR 2a (firmware ABI 13), which stacks on #16. Part B follows as PR 2b. The
+AICAforge side (`--shared`, `afx_scene`) is a separate AICAforge PR.
 
 ## What the ports hit
 

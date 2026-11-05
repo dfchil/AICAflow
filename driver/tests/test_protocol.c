@@ -1,5 +1,8 @@
 #include <aicaflow/firmware.h>
 #include <aicaflow/codec.h>
+/* The firmware reads a flow's bank table from AICA RAM; here from a buffer. */
+static uint32_t bank_table[AFX_MAX_FLOW_BANKS];
+#define AFX_BANK_TABLE_READ(context, slot) ((void)(context), bank_table[slot])
 #include "../arm7/sample_address.h"
 
 #include <assert.h>
@@ -42,6 +45,71 @@ static void test_bank_bound_container(void) {
     assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_RELOCATION);
     candidate(file); file[140] = AFX_OP_PARK;
     assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+}
+
+/* A flow with AFX_FLAG_BANKS and three bank slots whose one setup plays from
+ * slot `slot`: relocation at 80, bank list at 92, image at 128 with the bank
+ * table at image offset 48. */
+static void banked(uint8_t file[192], uint32_t slot) {
+    memset(file, 0, 192);
+    afx_write32(file, AFX_FILE_MAGIC); afx_write32(file + 4, AFX_FILE_VERSION);
+    afx_write32(file + 8, 192); afx_write32(file + 12, AFX_FLAG_BANKS);
+    afx_write32(file + 16, 128); afx_write32(file + 20, 64);
+    afx_write32(file + 24, AFX_SETUP_BYTES); afx_write32(file + 28, 9);
+    afx_write32(file + 32, 1); afx_write32(file + 36, 1);
+    afx_write32(file + 40, 0x12345678); afx_write32(file + 44, 9);
+    afx_write32(file + 48, 80); afx_write32(file + 52, 1); afx_write32(file + 60, 92);
+    afx_write32(file + 64, 1); afx_write32(file + 68, 1000); afx_write32(file + 72, 1);
+    afx_write32(file + 80, 0); afx_write32(file + 84, (slot << AFX_BANK_SLOT_SHIFT) | 0x20);
+    afx_write32(file + 88, 64);
+    afx_write32(file + 92, 2);
+    afx_write32(file + 96, 0xc0de0001); afx_write32(file + 100, 1);
+    afx_write32(file + 104, 0xc0de0002); afx_write32(file + 108, 2);
+    afx_write16(file + 128, (uint16_t)(slot << 5)); afx_write16(file + 130, 0x20);
+    afx_write16(file + 128 + 6, 31);
+    file[128 + 36] = AFX_OP_NOTE_PL;
+    file[128 + 44] = AFX_OP_END;
+}
+
+static void test_banks(void) {
+    uint8_t file[192];
+    afx_file_header_t header;
+    uint32_t low, high;
+    for (uint32_t slot = 0; slot < 3; ++slot) {
+        banked(file, slot);
+        assert(afx_file_validate(file, sizeof(file), &header) == AFX_OK);
+    }
+    assert(header.banks_offset == 92 && afx_file_bank_count(file, &header) == 3);
+    afx_file_bank_identity(file, &header, 0, &low, &high);
+    assert(low == 0x12345678 && high == 9);
+    afx_file_bank_identity(file, &header, 2, &low, &high);
+    assert(low == 0xc0de0002 && high == 2);
+    banked(file, 3); /* A slot past the list. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_RELOCATION);
+    banked(file, 1); afx_write32(file + 12, 0); /* A list without the flag. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_BOUNDS);
+    banked(file, 1); afx_write32(file + 60, 0);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_BOUNDS);
+    for (uint32_t count = 0; count < 5; count += 4) {
+        banked(file, 0); afx_write32(file + 92, count);
+        assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_BOUNDS);
+    }
+    banked(file, 0); afx_write32(file + 92, 3); /* A third entry, with no identity. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_SAMPLE);
+    banked(file, 0); afx_write32(file + 60, 112); afx_write32(file + 112, 2); /* Into the image. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_BOUNDS);
+    banked(file, 0); afx_write32(file + 104, 0); afx_write32(file + 108, 0);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_SAMPLE);
+    banked(file, 0); afx_write32(file + 28, 13); /* The table no longer ends the image. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_BOUNDS);
+    banked(file, 0); file[128 + 48 + 5] = 1; /* The file's table is zero. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_FORMAT);
+    /* Without the flag, the slot bits stay part of a slot 0 address. */
+    uint8_t plain[160];
+    candidate(plain);
+    afx_write32(plain + 84, 1u << AFX_BANK_SLOT_SHIFT); afx_write16(plain + 96, 0x20);
+    assert(afx_file_validate(plain, sizeof(plain), &header) == AFX_OK);
+    assert(afx_file_bank_count(plain, &header) == 1);
 }
 
 /* A looping stream: NOTE_PL, WAIT8 1, then LOOP back to the NOTE_PL. */
@@ -188,6 +256,29 @@ static void test_sample_addresses(void) {
     context.bank_base_units = 0; context.bank_end = 0;
     control = low = 0;
     assert(resolve_sample_address(&context, &control, &low) == AFX_BAD_SAMPLE);
+
+    /* Bank slots: bits 21-22 pick a bank table entry, only with AFX_FLAG_BANKS. */
+    context = (afx_runtime_slot_t){.bank_base_units = 0x1000u >> 5, .bank_end = 0x2000};
+    bank_table[1] = AFX_BANK_TABLE_ENTRY(0x40000, 0x100);
+    bank_table[2] = AFX_BANK_TABLE_ENTRY(0x80000, 0x21); /* Rounds up to 0x40 bytes. */
+    bank_table[3] = 0;
+    control = 0x0020 | 0x0180; low = 0x10; /* Slot 1, offset 0x10, PCM format bits kept. */
+    assert(resolve_sample_address(&context, &control, &low) == AFX_BAD_SAMPLE);
+    context.flags = AFX_FLAG_BANKS;
+    assert(resolve_sample_address(&context, &control, &low) == AFX_OK);
+    assert(control == (0x0180 | 0x04) && low == 0x0010);
+    control = 0x0040; low = 0x3f; /* Slot 2: the last byte of its rounded size. */
+    assert(resolve_sample_address(&context, &control, &low) == AFX_OK);
+    assert(control == 0x08 && low == 0x3f);
+    control = 0x0040; low = 0x40;
+    assert(resolve_sample_address(&context, &control, &low) == AFX_BAD_SAMPLE);
+    control = 0x0060; low = 0; /* Slot 3 is empty. */
+    assert(resolve_sample_address(&context, &control, &low) == AFX_BAD_SAMPLE);
+    control = 0x0020; low = 0x100; /* Past slot 1's bank, inside slot 0's range. */
+    assert(resolve_sample_address(&context, &control, &low) == AFX_BAD_SAMPLE);
+    control = 0; low = 0x0fff; /* Slot 0 still comes from the context. */
+    assert(resolve_sample_address(&context, &control, &low) == AFX_OK);
+    assert(control == 0 && low == 0x1fff);
 }
 
 /* The firmware image a host would upload must describe the layout these
@@ -210,6 +301,7 @@ int main(int argc, char **argv) {
     if (argc == 2) test_firmware_image(argv[1]);
     test_sample_addresses();
     test_bank_bound_container();
+    test_banks();
     test_loop();
     test_bytecode();
     test_control_id();

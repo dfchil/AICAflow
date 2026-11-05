@@ -130,9 +130,13 @@ KOS build. This configuration was link-tested, not hardware-tested.
 
 ## Shared banks and live controls
 
-An uploaded flow retains its bank; an instance retains its flow. Several
-different or concurrent flows can share a bank, but each flow binds to just
-one. A scene transition should stop old instances and wait for their handles to
+An uploaded flow retains its banks; an instance retains its flow. Several
+different or concurrent flows can share a bank. A flow with `AFX_FLAG_BANKS`
+plays from up to four: upload it with `afx_flow_upload(banks, count, ...)`,
+where `banks[i]` is the bank of slot `i` and `count` is
+`afx_file_bank_count()` of the file. A level song can then take its
+instruments from a resident core bank and the rest from a scene bank, with no
+sample in both. A scene transition should stop old instances and wait for their handles to
 go stale before freeing their flows/bank. Shared banks can stay resident across scene changes. The application
 controls residency; the driver has no automatic sample cache.
 

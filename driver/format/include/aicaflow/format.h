@@ -4,7 +4,7 @@
 
 /* Version of this public source interface, independent of repository releases,
  * asset-format versions below, and the host/firmware ABI in protocol.h. */
-#define AFX_FORMAT_API_VERSION 3
+#define AFX_FORMAT_API_VERSION 4
 #define AFX_FILE_MAGIC 0x32584641
 #define AFX_CHECKPOINT_MAGIC 0x31504b43
 #define AFX_CHECKPOINT_VERSION 1
@@ -44,9 +44,25 @@ enum {
     AFX_OP_PATCH_ENV = 0x17, AFX_OP_PATCH_ENV_LEVEL = 0x18
 };
 /* AFX_FLAG_LOOP: the stream ends with LOOP instead of END, and the header's
- * loop_tick is the authored tick of the loop target. */
+ * loop_tick is the authored tick of the loop target.
+ * AFX_FLAG_BANKS: the flow plays samples from up to AFX_MAX_FLOW_BANKS banks
+ * (see AFX_BANK_SLOT_SHIFT). */
 enum { AFX_FLAG_CONTROLLED = 1, AFX_FLAG_MUSIC = 2, AFX_FLAG_METADATA = 4,
-       AFX_FLAG_MUSIC_CHORUS = 8, AFX_FLAG_LANES = 16, AFX_FLAG_LOOP = 32 };
+       AFX_FLAG_MUSIC_CHORUS = 8, AFX_FLAG_LANES = 16, AFX_FLAG_LOOP = 32,
+       AFX_FLAG_BANKS = 64 };
+
+/* With AFX_FLAG_BANKS, bits 21-22 of a bank-relative sample address select
+ * the bank slot that holds the sample; the bits below are the offset in that
+ * bank. Slot 0 is the bank of bank_id_low/high; the header's banks_offset
+ * lists the identities of slots 1 and up: a u32 count, 1 to 3, then a low and
+ * a high u32 word per slot. The image ends with an AFX_BANK_TABLE_BYTES table
+ * at the first 4-byte boundary after the stream, zero in the file, which the
+ * loader fills with each slot's AICA address (see protocol.h). */
+#define AFX_MAX_FLOW_BANKS 4u
+#define AFX_BANK_SLOT_SHIFT 21u
+#define AFX_BANK_SLOT_OFFSET_MASK ((1u << AFX_BANK_SLOT_SHIFT) - 1u)
+#define AFX_BANK_TABLE_BYTES 16u
+#define AFX_BANK_TABLE_OFFSET(stream_end) (((stream_end) + 3u) & ~3u)
 
 #define AFX_METADATA_MAGIC 0x314d5841u
 #define AFX_CONTAINER_VERSION 1u
@@ -88,7 +104,7 @@ typedef struct {
     uint32_t relocations_offset; /* Binding-table byte offset from the beginning of the file. */
     uint32_t relocation_count; /* Number of 12-byte binding records. */
     uint32_t loop_tick; /* With AFX_FLAG_LOOP, the authored tick of the LOOP target; otherwise zero. */
-    uint32_t reserved1; /* Must be zero. */
+    uint32_t banks_offset; /* With AFX_FLAG_BANKS, file-relative offset of the bank list; otherwise zero. */
     uint32_t required_channels; /* Local voice count required by the flow, 1..64. */
     uint32_t tick_rate_num; /* Numerator of authored ticks per second. */
     uint32_t tick_rate_den; /* Denominator of authored ticks per second. */

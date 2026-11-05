@@ -3,7 +3,8 @@
 [Documentation](README.md)
 
 An AFB owns one contiguous AICA sample allocation. An uploaded AFX flow retains
-that bank; an active instance retains its flow. Release in this order:
+its bank, or each of its banks with `AFX_FLAG_BANKS`; an active instance
+retains its flow. Release in this order:
 
 1. Stop an active instance (one that ends by itself needs no stop).
 2. Wait until its handle is stale: AICAflow recycles an instance that ended,

@@ -680,6 +680,95 @@ static void test_relative_flow(const afx_bank_t *bank) {
     assert(afx_asset_free(flow) == AFX_OK);
 }
 
+/* A flow with AFX_FLAG_BANKS over banks a and b (slots 0 and 1) whose one
+ * setup plays from `slot` at `offset`: relocation at 80, bank list at 92,
+ * image at 128 with the bank table at image offset 48. */
+static void banked_flow(uint8_t data[192], const afx_bank_t *a, const afx_bank_t *b,
+                        uint32_t slot, uint32_t offset) {
+    memset(data, 0, 192);
+    afx_write32(data, AFX_FILE_MAGIC); afx_write32(data + 4, AFX_FILE_VERSION);
+    afx_write32(data + 8, 192); afx_write32(data + 12, AFX_FLAG_BANKS);
+    afx_write32(data + 16, 128); afx_write32(data + 20, 64);
+    afx_write32(data + 24, AFX_SETUP_BYTES); afx_write32(data + 28, 9);
+    afx_write32(data + 32, 1); afx_write32(data + 36, 1);
+    afx_write32(data + 40, a->id.low); afx_write32(data + 44, a->id.high);
+    afx_write32(data + 48, 80); afx_write32(data + 52, 1); afx_write32(data + 60, 92);
+    afx_write32(data + 64, 1); afx_write32(data + 68, 1000); afx_write32(data + 72, 1);
+    afx_write32(data + 76, AFX_WORK_PROFILE(1, 19));
+    afx_write32(data + 84, (slot << AFX_BANK_SLOT_SHIFT) | offset); afx_write32(data + 88, 32);
+    afx_write32(data + 92, 1); afx_write32(data + 96, b->id.low); afx_write32(data + 100, b->id.high);
+    afx_write16(data + 128, (uint16_t)((slot << 5) | (offset >> 16)));
+    afx_write16(data + 130, (uint16_t)offset);
+    afx_write16(data + 128 + 6, 31);
+    data[128 + AFX_SETUP_BYTES] = AFX_OP_NOTE_PL;
+    data[128 + AFX_SETUP_BYTES + 8] = AFX_OP_END;
+}
+
+/* One flow plays from two banks: each slot is checked against its own bank,
+ * the ARM7's bank table is filled at upload, and the flow keeps both banks. */
+static void test_flow_banks(void) {
+    uint8_t core_data[96], scene_data[96], file[192], seek[104] = {0};
+    afx_bank_t core = {0}, scene = {0};
+    bank_file(core_data, 0xc0de, 1);
+    bank_file(scene_data, 0x5ce7e, 2);
+    assert(afx_bank_load_memory(&core, core_data, sizeof(core_data)) == AFX_OK);
+    assert(afx_bank_load_memory(&scene, scene_data, sizeof(scene_data)) == AFX_OK);
+    const afx_bank_t *banks[] = {&core, &scene}, *swapped[] = {&scene, &core};
+    afx_asset_t flow;
+    banked_flow(file, &core, &scene, 1, 0x20);
+    assert(afx_flow_upload(banks, 1, file, sizeof(file), &flow) == -AFX_BAD_SAMPLE);
+    assert(afx_bank_flow_upload(&core, file, sizeof(file), &flow) == -AFX_BAD_SAMPLE);
+    assert(afx_flow_upload(swapped, 2, file, sizeof(file), &flow) == -AFX_BAD_SAMPLE);
+    banked_flow(file, &core, &scene, 1, 0x30); /* 32 bytes from 0x30 overrun the scene bank. */
+    assert(afx_flow_upload(banks, 2, file, sizeof(file), &flow) == -AFX_BAD_FORMAT);
+    assert(flow == AFX_ASSET_INVALID && !g_flow_bank_count);
+    banked_flow(file, &core, &scene, 1, 0x20);
+    assert(afx_flow_upload(banks, 2, file, sizeof(file), &flow) == AFX_OK);
+    uint32_t core_index = AFX_HANDLE_INDEX(core.asset), scene_index = AFX_HANDLE_INDEX(scene.asset);
+    assert(g_assets[core_index].references == 1 && g_assets[scene_index].references == 1);
+    assert(flow_bank(AFX_HANDLE_INDEX(flow), 1) == scene.asset);
+    assert(flow_bank(AFX_HANDLE_INDEX(flow), 2) == AFX_ASSET_INVALID);
+    const uint8_t *table = ram + afx_asset_addr(flow) + 48;
+    assert(afx_read32(table) == 0 && afx_read32(table + 8) == 0 && afx_read32(table + 12) == 0);
+    assert(afx_read32(table + 4) == AFX_BANK_TABLE_ENTRY(afx_asset_addr(scene.asset), 64));
+
+    /* The activation carries the flag; slot 0 is the core bank, as before.
+     * A checkpoint state is checked against the bank of its own slot: slot 1
+     * inside the scene bank, slot 3 (empty), and slot 1 past its end. */
+    afx_write32(seek, AFX_SEEK_MAGIC); afx_write32(seek + 4, AFX_SEEK_VERSION);
+    afx_write32(seek + 8, 1); afx_write32(seek + 12, core.id.low);
+    afx_write32(seek + 16, core.id.high); afx_write32(seek + 20, 32);
+    afx_write32(seek + 24, 72); afx_write32(seek + 28, 104);
+    afx_write32(seek + 32, AFX_CHECKPOINT_MAGIC);
+    afx_write32(seek + 36, AFX_CHECKPOINT_VERSION); afx_write32(seek + 40, 1);
+    afx_write32(seek + 52, AFX_SETUP_BYTES); afx_write32(seek + 60, 1);
+    const uint16_t controls[] = {0x0020, 0x0060, 0x0020};
+    const uint16_t lows[] = {0x0020, 0x0000, 0x0040};
+    for (unsigned i = 0; i < 3; ++i) {
+        afx_write16(seek + 68, controls[i]); afx_write16(seek + 70, lows[i]);
+        assert(afx_flow_seek_index_load_memory(flow, seek, sizeof(seek)) == AFX_OK);
+        afx_instance_t instance;
+        assert(afx_instance_activate(flow, &instance) == AFX_OK);
+        afx_cmd_t command = queued(queue_head() - 1);
+        afx_activation_t activation;
+        memcpy(&activation, command.payload, sizeof(activation));
+        assert(activation.flags == AFX_FLAG_BANKS);
+        assert(((uint32_t)activation.bank_base_units << 5) == afx_asset_addr(core.asset));
+        uint32_t index = AFX_HANDLE_INDEX(instance);
+        observed(index, instance, AFX_PAUSED, command.sequence, AFX_OK);
+        irq_run_worker();
+        assert(afx_instance_seek(instance, 0) == (i ? -AFX_BAD_FORMAT : AFX_OK));
+        release_instance_preserving_generation(index);
+        afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
+    }
+
+    /* Released banks live until the flow that plays from them is freed. */
+    assert(afx_asset_release(core.asset) == AFX_OK && afx_asset_release(scene.asset) == AFX_OK);
+    assert(afx_asset_addr(core.asset) && afx_asset_addr(scene.asset));
+    assert(afx_asset_free(flow) == AFX_OK && !g_flow_bank_count);
+    assert(!afx_asset_addr(core.asset) && !afx_asset_addr(scene.asset));
+}
+
 static void test_dsp_allocations(void) {
     afx_dsp_program_t dsp;
     afx_mem_stats_t before, during, after;
@@ -873,6 +962,7 @@ int main(int argc, char **argv) {
     assert(afx_bank_release(&bank) == -AFX_ASSET_REFERENCED);
     assert(afx_asset_free(flow) == AFX_OK);
     assert(afx_bank_release(&bank) == AFX_OK);
+    test_flow_banks();
     if (argc == 4) {
         uint32_t bank_bytes, flow_bytes, seek_bytes;
         uint8_t *b = read_fixture(argv[1], &bank_bytes);
