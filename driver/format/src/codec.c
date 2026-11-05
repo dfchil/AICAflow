@@ -272,6 +272,60 @@ afx_result_t afx_file_validate(const void *data, uint32_t size, afx_file_header_
     return afx_file_validate_profile(data, size, out, NULL);
 }
 
+afx_scene_entry_t afx_scene_entry_at(const void *data, uint32_t i) {
+    afx_scene_entry_t e;
+    read_words(&e, (const uint8_t *)data + AFX_SCENE_HEADER_BYTES + i * AFX_SCENE_ENTRY_BYTES, sizeof(e));
+    return e;
+}
+
+const char *afx_scene_entry_name(const void *data, const afx_scene_entry_t *entry) {
+    return entry->name ? (const char *)data + entry->name : "";
+}
+
+afx_result_t afx_scene_validate(const void *data, uint32_t size, afx_scene_header_t *out) {
+    const uint8_t *file = data;
+    afx_scene_header_t h;
+    if (!data || size < sizeof(h)) return AFX_BAD_BOUNDS;
+    read_words(&h, file, sizeof(h));
+    if (h.magic != AFX_SCENE_MAGIC || h.version != AFX_SCENE_VERSION ||
+        !(h.id_low || h.id_high) || h.reserved) return AFX_BAD_FORMAT;
+    if (h.total_size != size || !h.entry_count ||
+        h.entry_count > (size - AFX_SCENE_HEADER_BYTES) / AFX_SCENE_ENTRY_BYTES ||
+        !h.block_bytes || (h.block_bytes & 31u)) return AFX_BAD_BOUNDS;
+    uint32_t names = AFX_SCENE_HEADER_BYTES + h.entry_count * AFX_SCENE_ENTRY_BYTES, rings = 0;
+    for (uint32_t i = 0; i < h.entry_count; ++i) {
+        afx_scene_entry_t e = afx_scene_entry_at(data, i);
+        int stored = e.kind == AFX_SCENE_BANK || e.kind == AFX_SCENE_FLOW;
+        uint32_t header = e.kind == AFX_SCENE_BANK ? AFX_BANK_HEADER_BYTES : AFX_FILE_HEADER_BYTES;
+        uint32_t align = e.kind == AFX_SCENE_RING ? AFX_SCENE_RING_ALIGN : 32u;
+        if (e.kind < AFX_SCENE_BANK || e.kind > AFX_SCENE_RING || e.reserved ||
+            (e.ticks && e.kind != AFX_SCENE_FLOW) || (e.kind == AFX_SCENE_RING && rings++))
+            return AFX_BAD_FORMAT;
+        if (stored ? e.file_size < header || e.file_offset < names ||
+                     !afx_range(e.file_offset, e.file_size, size)
+                   : e.file_offset || e.file_size) return AFX_BAD_BOUNDS;
+        if (!e.block_bytes || (e.block_bytes & 31u) || (e.block_offset & (align - 1u)) ||
+            !afx_range(e.block_offset, e.block_bytes, h.block_bytes)) return AFX_BAD_BOUNDS;
+        if (e.kind == AFX_SCENE_RING) {
+            uint32_t rbl = 0;
+            while (rbl < 3 && e.block_bytes != AFX_SCENE_RING_MIN_BYTES << rbl) ++rbl;
+            if (e.block_bytes != AFX_SCENE_RING_MIN_BYTES << rbl) return AFX_BAD_BOUNDS;
+        }
+        if (e.name && (e.name < names || e.name >= size || !memchr(file + e.name, 0, size - e.name)))
+            return AFX_BAD_BOUNDS;
+        if (e.name && !file[e.name]) return AFX_BAD_FORMAT;
+        for (uint32_t j = 0; j < i; ++j) {
+            afx_scene_entry_t f = afx_scene_entry_at(data, j);
+            if (e.block_offset < f.block_offset + f.block_bytes &&
+                f.block_offset < e.block_offset + e.block_bytes) return AFX_BAD_BOUNDS;
+            if (e.name && f.name && !strcmp(afx_scene_entry_name(data, &e), afx_scene_entry_name(data, &f)))
+                return AFX_BAD_FORMAT;
+        }
+    }
+    if (out) *out = h;
+    return AFX_OK;
+}
+
 afx_result_t afx_flow_duration(const void *data, uint32_t size, uint64_t *out_ticks,
                                uint32_t *out_tick_rate_num, uint32_t *out_tick_rate_den) {
     afx_file_header_t header;

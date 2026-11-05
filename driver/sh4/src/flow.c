@@ -5,8 +5,8 @@
 #define AFX_VALIDATE_ASSETS 0
 #endif
 
-int afx_flow_upload(const afx_bank_t *const banks[], uint32_t count, const void *data,
-                    uint32_t size, afx_asset_t *out) {
+int flow_upload(const afx_bank_t *const banks[], uint32_t count, const void *data, uint32_t size,
+                uint32_t place, uint32_t place_bytes, afx_asset_t *out) {
     const uint8_t *file = data;
     afx_file_header_t header;
     uint32_t relocations_at, relocation_count;
@@ -68,8 +68,12 @@ int afx_flow_upload(const afx_bank_t *const banks[], uint32_t count, const void 
         (AFX_WORK_PROFILE_COMMANDS(header.work_profile) != profile.peak_commands ||
          AFX_WORK_PROFILE_WRITES(header.work_profile) != profile.peak_register_writes)) goto failed;
 #endif
-    asset = reserve_asset(header.image_size, AFX_UPLOAD_ALIGN, false);
-    if (!asset) { result = -AFX_NO_AICA_RAM; goto failed; }
+    if (place && align_up(header.image_size, AFX_UPLOAD_ALIGN) > place_bytes) {
+        result = -AFX_NO_AICA_RAM; goto failed;
+    }
+    asset = place ? place_asset(place, header.image_size, false) :
+                    reserve_asset(header.image_size, AFX_UPLOAD_ALIGN, false);
+    if (!asset) { result = place ? -AFX_NO_HOST_RAM : -AFX_NO_AICA_RAM; goto failed; }
     uint32_t index;
     (void)resolve_asset(asset, &index);
     g_assets[index].flags = header.flags;
@@ -108,8 +112,12 @@ int afx_flow_upload(const afx_bank_t *const banks[], uint32_t count, const void 
     *out = asset;
     return AFX_OK;
 failed:
-    if (asset) (void)afx_asset_free(asset);
+    if (asset) discard_asset(asset);
     return result;
+}
+int afx_flow_upload(const afx_bank_t *const banks[], uint32_t count, const void *data,
+                    uint32_t size, afx_asset_t *out) {
+    return flow_upload(banks, count, data, size, 0, 0, out);
 }
 int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size,
                          afx_asset_t *out) {

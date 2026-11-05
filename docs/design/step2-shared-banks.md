@@ -1,8 +1,10 @@
 # Step 2 design: shared banks and a planned AICA RAM layout
 
 Status: approved on 2026-11-05 with four banks per flow and two PRs. Part A
-is PR 2a (firmware ABI 13), which stacks on #16. Part B follows as PR 2b. The
-AICAforge side (`--shared`, `afx_scene`) is a separate AICAforge PR.
+is PR #17 (firmware ABI 13), merged. Part B is PR 2b (format API 5, no
+firmware change); [As built](#as-built-part-b) lists where it differs from
+this note. The AICAforge side (`--shared`, `afx_scene`) is a separate
+AICAforge PR.
 
 ## What the ports hit
 
@@ -155,6 +157,28 @@ alongside scenes.
 - It applies the runtime's rounding (32 bytes, 2 KiB for the ring) using the
   code in `driver/format`, so the build check and the loader agree to the byte.
 - DKR's `build_aicaflow_budget.py` becomes a manifest of this kind.
+
+### As built (part B)
+
+- The entries start right after the 32-byte header, and each entry gives the
+  file offset of its own name, so the header has no entry or name offsets.
+- A flow entry does not list what fills its bank slots. The loader takes each
+  slot's identity from the AFX file and looks for that bank in the scene,
+  then in the parents in order. The result is the same, with no table to keep
+  in step with the flow.
+- The loop flag comes from the flow itself (`afx_scene_info_t.loops`); the
+  entry carries only the length in ticks.
+- `afx_scene_slot_load()` names the slot by name, like `afx_scene_find()`.
+  `afx_scene_entry()` returns `AFX_BAD_BOUNDS` past the last entry, so no
+  count call is needed.
+- Up to 16 scenes are loaded at once (`AFX_MAX_SCENES`), released ones that
+  still play included.
+- A scene's flows and banks cannot be freed on their own; the scene releases
+  them.
+- An AFS holds no AFC. A seek index attaches to a scene's flow with
+  `afx_flow_seek_index_load_memory()`, as before.
+- The loader reads a scene from memory; there is no file-streaming variant
+  yet.
 
 ## Compatibility
 

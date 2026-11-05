@@ -6,7 +6,7 @@ INCLUDES := -Iinclude -I../include -I../format/include
 # The validation mode is part of flow's object name, so an object built for
 # the other mode is never picked up.
 FLOW_OBJ := build/flow.validate$(AFX_VALIDATE_ASSETS).o
-HOST_OBJS := build/allocator.o build/dma.o build/instance.o build/ipc.o build/dsp_scene.o
+HOST_OBJS := build/allocator.o build/dma.o build/instance.o build/ipc.o build/dsp_scene.o build/scene.o
 OBJS := $(HOST_OBJS) $(FLOW_OBJ) build/dsp.o build/dsp_prefabs.o build/bank.o build/codec.o build/firmware.o
 LIB := libaicaflow_host.a
 

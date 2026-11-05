@@ -37,7 +37,14 @@ channel's first NOTE, read back from the channel's DIRECT register.
 `make -C driver banks-check` builds `driver/build/check_banks.elf`, which
 prints `AFX_BANKS PASS` when a flow whose setup is in bank slot 1 sounds from
 that bank (its sample address read back beside a one-bank instance) and both
-banks are freed with the last flow that plays from them. The classical
+banks are freed with the last flow that plays from them.
+`make -C driver scenes-check` builds `driver/build/check_scenes.elf`, which
+prints `AFX_SCENES PASS` when, beside a permanent scene that holds the core
+bank and the DSP ring, a level scene and its song slot are loaded, played and
+released eight times with three songs each. The level's flow binds the core
+bank and sounds from the level's own bank, each song sounds from the slot, a
+slot whose song plays keeps it, and every release gives the arena's largest
+free block back. The classical
 player's `make frame-test` exercises its real loader and exits after all three
 pieces; its [README](../examples/music_player/README.md#hardware-frame-test)
 also explains how to restore an interactive build afterwards.

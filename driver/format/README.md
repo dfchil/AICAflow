@@ -11,9 +11,9 @@ and compile `src/codec.c`.
 - `limits.h`: target acceptance limits, not firmware addresses.
 - `result.h`: stable result numbers shared with runtime callers.
 
-`AFX_FORMAT_API_VERSION` (now 4) versions this source interface independently
-of repository releases. On-disk versions remain AFB 1, AFX 7, AFC 1, AFI 1 and
-checkpoint payload 1. The AFX header's `abi` field is the **file version**;
+`AFX_FORMAT_API_VERSION` (now 5) versions this source interface independently
+of repository releases. On-disk versions are AFB 1, AFX 7, AFC 1, AFI 1, AFS 1
+and checkpoint payload 1. The AFX header's `abi` field is the **file version**;
 the firmware ABI and IPC/memory layout stay private to the runtime protocol.
 
 Read [Runtime asset formats](docs/assets.md) and

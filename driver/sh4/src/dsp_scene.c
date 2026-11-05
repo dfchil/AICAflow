@@ -6,6 +6,13 @@ static uint16_t dsp_word(const uint8_t *program, uint32_t offset) {
 static uint32_t ring_bytes(uint8_t rbl) {
     return rbl == AFX_DSP_RING_NONE ? 0 : AFX_DSP_MIN_BYTES << rbl;
 }
+/* Gives the ring back: a scene's stays in its block. */
+static bool ring_free(void) {
+    if (!g_dsp_ring_placed && !free_allocation(g_dsp_ring)) return false;
+    g_dsp_ring = g_dsp_ring_bytes = 0;
+    g_dsp_ring_placed = false;
+    return true;
+}
 static int scene_command(uint32_t opcode, uint32_t bytes, bool host_init) {
     afx_dsp_payload_t payload = {0};
     if (opcode == AFX_CMD_DSP_ENABLE) {
@@ -58,14 +65,18 @@ static int dsp_scene_program(const void *data, uint32_t bytes, uint8_t rbl) {
         if (result) return result;
     }
     if (bytes_reserved) {
-        g_dsp_ring = afx_mem_alloc(bytes_reserved, AFX_DSP_RING_ALIGN);
+        /* A loaded scene's ring, at its planned place, before a new allocation. */
+        g_dsp_ring = scene_ring(bytes_reserved);
+        g_dsp_ring_placed = g_dsp_ring != 0;
+        if (!g_dsp_ring) g_dsp_ring = afx_mem_alloc(bytes_reserved, AFX_DSP_RING_ALIGN);
         if (!g_dsp_ring) return -AFX_NO_AICA_RAM;
+        g_dsp_ring_bytes = bytes_reserved;
     }
     bool host_init = bytes_reserved &&
         (read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, capabilities)) & AFX_CAP_DSP_HOST_INIT);
     int result = scene_command(AFX_CMD_DSP_ENABLE, bytes_reserved, host_init);
     if (result) {
-        if (!g_dsp_scene && g_dsp_ring && free_allocation(g_dsp_ring)) g_dsp_ring = 0;
+        if (!g_dsp_scene && g_dsp_ring) (void)ring_free();
         return result;
     }
     g2_write_32(0xa0702000u, 0);
@@ -118,7 +129,6 @@ int afx_dsp_scene_disable(void) {
     }
     g_dsp_scene = false;
     g_dsp_return_left = g_dsp_return_right = 0;
-    if (g_dsp_ring && !free_allocation(g_dsp_ring)) return -AFX_NO_HOST_RAM;
-    g_dsp_ring = 0;
+    if (g_dsp_ring && !ring_free()) return -AFX_NO_HOST_RAM;
     return AFX_OK;
 }

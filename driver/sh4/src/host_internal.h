@@ -2,6 +2,7 @@
 #define AICAFLOW_HOST_INTERNAL_H
 
 #include <aicaflow/host.h>
+#include <aicaflow/bank.h>
 #include <aicaflow/codec.h>
 
 #include <dc/asic.h>
@@ -37,7 +38,7 @@ typedef struct {
     uint16_t generation; /* Handle generation; advanced when a slot is released. */
     uint32_t addr; /* Absolute AICA byte address of asset data. */
     uint32_t size; /* Logical asset data length in bytes, excluding allocation padding. */
-    uint32_t allocation_size; /* Backing allocation length in bytes, including padding. */
+    uint32_t allocation_size; /* Backing allocation length in bytes, including padding; zero in a scene's block. */
     uint32_t references; /* Outstanding instance/dependent-asset references preventing release. */
     uint32_t upload_cursor; /* Logical bytes uploaded so far. */
     uint8_t *checkpoints; /* Owned SH-4 copy of the optional checkpoint payload; never sent to ARM7. */
@@ -99,7 +100,9 @@ extern uint64_t g_available_channels, g_map_used[AFX_CHANNEL_MAP_ARENAS];
 extern uint32_t g_next_sequence, g_queue_head, g_queue_tail_seen;
 extern uint32_t g_endings_held; /* Instances whose STOP or PAUSE waits for room in the ring. */
 extern bool g_dsp_scene, g_ready, g_lifecycle;
-extern uint32_t g_dsp_ring; /* Owned DSP allocation; retained until stop is acknowledged. */
+extern uint32_t g_dsp_ring; /* DSP delay ring; retained until stop is acknowledged. */
+extern uint32_t g_dsp_ring_bytes; /* Bytes of the ring in use. */
+extern bool g_dsp_ring_placed; /* The ring is a scene's; it is not an allocation of its own. */
 extern uint16_t g_dsp_return_left, g_dsp_return_right;
 extern volatile bool g_upload_dma_done;
 extern afx_asset_t g_upload_dma_asset;
@@ -129,6 +132,11 @@ bool allocator_reset(uint32_t dynamic_base);
 bool free_allocation(uint32_t address);
 bool resolve_asset(afx_asset_t asset, uint32_t *index);
 afx_asset_t reserve_asset(uint32_t size, uint32_t align, bool live);
+/* An asset at address in a scene's block, with no allocation of its own; the
+ * scene frees it, and afx_asset_free() refuses it. */
+afx_asset_t place_asset(uint32_t address, uint32_t size, bool live);
+/* Frees an asset that failed to load, placed or not. */
+void discard_asset(afx_asset_t asset);
 /* Frees an unreferenced asset and drops its reference to its bank. */
 int free_asset_slot(uint32_t index);
 /* Drops one reference, and frees an asset the program released once it has none. */
@@ -137,6 +145,25 @@ void asset_unreference(uint32_t index);
 bool flow_banks_add(uint32_t flow, const afx_asset_t banks[AFX_MAX_FLOW_BANKS - 1u]);
 /* The bank a flow plays from in a slot, or AFX_ASSET_INVALID. */
 afx_asset_t flow_bank(uint32_t flow, uint32_t slot);
+
+/* Uploads sample data as a bank: to a new allocation, or to place in a scene's block. */
+int sample_bank_upload(const void *data, uint32_t bytes, uint32_t place, afx_asset_t *out);
+/* Loads an AFB file as afx_bank_load_memory(), or to place, refusing a payload
+ * larger than place_bytes. */
+int bank_upload(afx_bank_t *bank, const void *data, uint32_t size, uint32_t place, uint32_t place_bytes);
+/* Uploads a flow as afx_flow_upload(), or to place, refusing an image larger
+ * than place_bytes. */
+int flow_upload(const afx_bank_t *const banks[], uint32_t count, const void *data, uint32_t size,
+                uint32_t place, uint32_t place_bytes, afx_asset_t *out);
+
+/* Forgets every scene; the allocator is reset with them. */
+void scenes_reset(void);
+/* Whether address is the start of a scene's block. */
+bool scene_block(uint32_t address);
+/* A placed asset at address was freed; the last one frees a released scene's block. */
+void scene_asset_freed(uint32_t address);
+/* A loaded scene's DSP ring of at least bytes, or zero. */
+uint32_t scene_ring(uint32_t bytes);
 
 void upload_dma_wait(void);
 void upload_dma_complete(void *ignored);

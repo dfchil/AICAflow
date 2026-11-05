@@ -1,4 +1,5 @@
 #include <aicaflow/bank.h>
+#include <aicaflow/scene.h>
 #include <aicaflow/codec.h>
 #include <aicaflow/dsp.h>
 
@@ -846,6 +847,251 @@ static void test_dsp_allocations(void) {
     assert(afx_mem_stats(&after) == AFX_OK && after.free_bytes == before.free_bytes);
 }
 
+/* One entry of a test scene; files are copied in 32-byte aligned. */
+typedef struct {
+    uint32_t kind;
+    const char *name;
+    const uint8_t *file;
+    uint32_t file_size, offset, bytes, ticks;
+} scene_part_t;
+/* An AFS file of parts, in order: header, entries, names, files. Returns its size. */
+static uint32_t scene_file(uint8_t *out, uint32_t capacity, uint32_t id, uint32_t block_bytes,
+                           const scene_part_t *parts, uint32_t count) {
+    uint32_t at = AFX_SCENE_HEADER_BYTES + count * AFX_SCENE_ENTRY_BYTES;
+    memset(out, 0, capacity);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint8_t *entry = out + AFX_SCENE_HEADER_BYTES + i * AFX_SCENE_ENTRY_BYTES;
+        afx_write32(entry, parts[i].kind);
+        if (parts[i].name) {
+            afx_write32(entry + 4, at);
+            memcpy(out + at, parts[i].name, strlen(parts[i].name) + 1);
+            at += (uint32_t)strlen(parts[i].name) + 1;
+        }
+        afx_write32(entry + 16, parts[i].offset);
+        afx_write32(entry + 20, parts[i].bytes);
+        afx_write32(entry + 24, parts[i].ticks);
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!parts[i].file) continue;
+        uint8_t *entry = out + AFX_SCENE_HEADER_BYTES + i * AFX_SCENE_ENTRY_BYTES;
+        at = (at + 31u) & ~31u;
+        assert(at + parts[i].file_size <= capacity);
+        memcpy(out + at, parts[i].file, parts[i].file_size);
+        afx_write32(entry + 8, at);
+        afx_write32(entry + 12, parts[i].file_size);
+        at += parts[i].file_size;
+    }
+    afx_write32(out, AFX_SCENE_MAGIC); afx_write32(out + 4, AFX_SCENE_VERSION);
+    afx_write32(out + 8, id); afx_write32(out + 12, 0);
+    afx_write32(out + 16, at); afx_write32(out + 20, block_bytes);
+    afx_write32(out + 24, count);
+    return at;
+}
+static void end_instance(afx_instance_t instance) {
+    uint32_t index = AFX_HANDLE_INDEX(instance);
+    drain_queue();
+    observed(index, instance, AFX_DONE, g_instances[index].status.sequence, AFX_OK);
+    irq_run_worker();
+    recycle(index);
+}
+
+/* A permanent scene (core bank, a flow, a DSP ring) and a level scene whose
+ * flow also plays from the core bank and whose slot takes a song later. */
+static void test_scenes(void) {
+    _Alignas(32) static uint8_t permanent[1024], level[1024], broken[1024];
+    uint8_t core_data[96], level_data[96], song_data[96], big_data[256];
+    uint8_t jingle[160], theme[192], song[160];
+    const afx_bank_t core = {0, {0xc0de, 3}, 64}, level_bank = {0, {0x1e7e1, 4}, 64};
+    bank_file(core_data, core.id.low, core.id.high);
+    bank_file(level_data, level_bank.id.low, level_bank.id.high);
+    bank_file(song_data, 0x5096, 5);
+    for (uint32_t i = 0; i < 64; ++i) core_data[32 + i] = (uint8_t)i;
+    memset(big_data, 0, sizeof(big_data));
+    memcpy(big_data, song_data, 32);
+    afx_write32(big_data + 20, 224); afx_write32(big_data + 24, 256);
+    flow_file(jingle, core.id.low, core.id.high);
+    banked_flow(theme, &core, &level_bank, 1, 0x20);
+    flow_file(song, 0x5096, 5);
+    const scene_part_t permanent_parts[] = {
+        {AFX_SCENE_BANK, "core", core_data, 96, 0, 64, 0},
+        {AFX_SCENE_RING, "ring", NULL, 0, 2048, AFX_SCENE_RING_MIN_BYTES, 0},
+        {AFX_SCENE_FLOW, "jingle", jingle, 160, 64, 64, 9},
+    };
+    const scene_part_t level_parts[] = {
+        {AFX_SCENE_BANK, NULL, level_data, 96, 0, 64, 0},
+        {AFX_SCENE_FLOW, "theme", theme, 192, 64, 64, 9},
+        {AFX_SCENE_SLOT, "song", NULL, 0, 128, 256, 0},
+    };
+    uint32_t permanent_bytes = scene_file(permanent, sizeof(permanent), 1, 2048 + AFX_SCENE_RING_MIN_BYTES,
+                                          permanent_parts, 3);
+    uint32_t level_bytes = scene_file(level, sizeof(level), 2, 384, level_parts, 3);
+
+    /* The validator: layout, kinds, names and block ranges. */
+    afx_scene_header_t header;
+    assert(afx_scene_validate(permanent, permanent_bytes, &header) == AFX_OK);
+    assert(header.block_bytes == 2048 + AFX_SCENE_RING_MIN_BYTES && header.entry_count == 3);
+    assert(!strcmp(afx_scene_entry_name(permanent, &(afx_scene_entry_t){0}), ""));
+    afx_scene_entry_t entry = afx_scene_entry_at(permanent, 2);
+    assert(entry.kind == AFX_SCENE_FLOW && entry.ticks == 9 && entry.file_size == 160);
+    assert(!strcmp(afx_scene_entry_name(permanent, &entry), "jingle"));
+    assert(afx_scene_validate(level, level_bytes, NULL) == AFX_OK);
+    const struct { uint32_t at, value, result; } cases[] = {
+        {0, 0, AFX_BAD_FORMAT}, {4, 2, AFX_BAD_FORMAT}, {8, 0, AFX_BAD_FORMAT},
+        {16, 0, AFX_BAD_BOUNDS}, {20, 0, AFX_BAD_BOUNDS}, {20, 400, AFX_BAD_BOUNDS},
+        {24, 0, AFX_BAD_BOUNDS}, {24, 1000, AFX_BAD_BOUNDS}, {28, 1, AFX_BAD_FORMAT},
+        {32, 0, AFX_BAD_FORMAT}, {32, 5, AFX_BAD_FORMAT}, {60, 1, AFX_BAD_FORMAT},
+        {56, 1, AFX_BAD_FORMAT}, /* ticks on a bank */
+        {48, 32, AFX_BAD_BOUNDS}, /* the bank overlaps the flow */
+        {48, 16, AFX_BAD_BOUNDS}, /* not on a 32-byte boundary */
+        {52, 0, AFX_BAD_BOUNDS}, {52, 48, AFX_BAD_BOUNDS},
+        {44, 31, AFX_BAD_BOUNDS}, /* an AFB smaller than its header */
+        {40, 8, AFX_BAD_BOUNDS}, /* a file inside the entries */
+        {36, 4096, AFX_BAD_BOUNDS}, /* a name past the end */
+        {36, 8, AFX_BAD_BOUNDS}, /* a name inside the entries */
+        {96, AFX_SCENE_RING, AFX_BAD_BOUNDS}, /* the slot as a ring, not on a 2 KiB boundary */
+        {112, 128 + 1024, AFX_BAD_BOUNDS}, /* the slot outside the block */
+        {108, 64, AFX_BAD_BOUNDS}, /* a slot with a file */
+    };
+    for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        uint32_t saved = afx_read32(level + cases[i].at);
+        afx_write32(level + cases[i].at, cases[i].value);
+        assert(afx_scene_validate(level, level_bytes, NULL) == cases[i].result);
+        afx_write32(level + cases[i].at, saved);
+    }
+    assert(afx_scene_validate(level, level_bytes, NULL) == AFX_OK);
+    uint8_t *names = level + AFX_SCENE_HEADER_BYTES + 3 * AFX_SCENE_ENTRY_BYTES;
+    memcpy(names, "song", 5); /* Two entries named "song". */
+    assert(afx_scene_validate(level, level_bytes, NULL) == AFX_BAD_FORMAT);
+    names[0] = 0; /* An empty name. */
+    assert(afx_scene_validate(level, level_bytes, NULL) == AFX_BAD_FORMAT);
+    memcpy(names, "theme", 5);
+    assert(afx_scene_validate(level, level_bytes, NULL) == AFX_OK);
+    afx_write32(permanent + 32 + 32 + 20, 0x2000); /* An 8 KiB ring: no RBL has that size. */
+    assert(afx_scene_validate(permanent, permanent_bytes, NULL) == AFX_BAD_BOUNDS);
+    afx_write32(permanent + 32 + 32 + 20, AFX_SCENE_RING_MIN_BYTES);
+    afx_write32(permanent + 32 + 2 * 32, AFX_SCENE_RING); /* Two rings. */
+    afx_write32(permanent + 32 + 2 * 32 + 8, 0); afx_write32(permanent + 32 + 2 * 32 + 12, 0);
+    afx_write32(permanent + 32 + 2 * 32 + 24, 0);
+    assert(afx_scene_validate(permanent, permanent_bytes, NULL) == AFX_BAD_FORMAT);
+    permanent_bytes = scene_file(permanent, sizeof(permanent), 1, 2048 + AFX_SCENE_RING_MIN_BYTES,
+                                 permanent_parts, 3);
+
+    /* Loading: one block, each entry at its planned place. */
+    afx_mem_stats_t before, during, after;
+    assert(afx_mem_stats(&before) == AFX_OK);
+    afx_scene_t p = 0, l = 0, refused = 0;
+    afx_asset_t flow = 0;
+    assert(afx_scene_load(level, level_bytes, NULL, 0, &refused) == -AFX_BAD_SAMPLE && !refused);
+    assert(afx_mem_stats(&after) == AFX_OK && after.free_bytes == before.free_bytes);
+    assert(after.active_allocations == before.active_allocations);
+    assert(afx_scene_load(permanent, permanent_bytes, NULL, 0, &p) == AFX_OK && p);
+    afx_scene_info_t info;
+    assert(afx_scene_entry(p, 0, &info) == AFX_OK && info.kind == AFX_SCENE_BANK && !strcmp(info.name, "core"));
+    uint32_t block = info.addr;
+    assert(!(block & (AFX_SCENE_RING_ALIGN - 1u)) && afx_asset_addr(info.asset) == block);
+    assert(!memcmp(ram + block, core_data + 32, 64));
+    afx_asset_t core_asset = info.asset;
+    assert(afx_scene_entry(p, 1, &info) == AFX_OK && info.kind == AFX_SCENE_RING && !info.asset);
+    assert(info.addr == block + 2048 && info.bytes == AFX_SCENE_RING_MIN_BYTES);
+    assert(afx_scene_entry(p, 2, &info) == AFX_OK && info.ticks == 9 && !info.loops);
+    assert(afx_scene_entry(p, 3, &info) == -AFX_BAD_BOUNDS);
+    assert(afx_scene_find(p, "jingle", &flow) == AFX_OK && flow == info.asset);
+    assert(afx_asset_addr(flow) == block + 64 && !memcmp(ram + block + 64, jingle + 96, 64));
+    assert(g_assets[AFX_HANDLE_INDEX(flow)].bank == core_asset);
+    assert(afx_scene_find(p, "core", &flow) == -AFX_INVALID_HANDLE && !flow);
+    assert(afx_scene_find(p, "ring", &flow) == -AFX_INVALID_HANDLE);
+    assert(afx_mem_stats(&during) == AFX_OK && during.active_allocations == before.active_allocations + 1);
+    assert(during.used_bytes == before.used_bytes + 2048 + AFX_SCENE_RING_MIN_BYTES);
+    /* The scene's assets go with it alone. */
+    assert(afx_asset_free(core_asset) == -AFX_ASSET_REFERENCED);
+    assert(afx_asset_release(core_asset) == -AFX_ASSET_REFERENCED);
+    assert(afx_mem_free(block) == -AFX_ASSET_REFERENCED);
+    afx_bank_t loose = {0};
+    assert(afx_bank_load_memory(&loose, core_data, sizeof(core_data)) == AFX_OK);
+    assert(afx_bank_release(&loose) == AFX_OK);
+
+    /* The DSP takes the scene's ring and gives it back to the scene. */
+    afx_dsp_program_t dsp;
+    assert(afx_dsp_program_delay(&dsp, 100, 8192, false) == AFX_OK);
+    auto_dsp_ack = 1;
+    assert(afx_dsp_scene_program_ring(&dsp, sizeof(dsp), 0) == AFX_OK);
+    assert(g_dsp_ring == block + 2048 && g_dsp_ring_placed);
+    assert(afx_mem_stats(&after) == AFX_OK && after.used_bytes == during.used_bytes);
+    uint32_t word = 0;
+    assert(afx_mem_upload(block + 2048 + 4, &word, sizeof(word)) == -AFX_ASSET_REFERENCED);
+    assert(afx_mem_upload(block + 128, &word, sizeof(word)) == AFX_OK);
+    assert(afx_scene_release(p) == -AFX_ASSET_REFERENCED);
+    assert(afx_dsp_scene_program_ring(&dsp, sizeof(dsp), 1) == AFX_OK); /* Too big: an allocation. */
+    assert(!g_dsp_ring_placed && g_dsp_ring && g_dsp_ring != block + 2048);
+    assert(afx_dsp_scene_program_ring(&dsp, sizeof(dsp), 0) == AFX_OK && g_dsp_ring == block + 2048);
+    assert(afx_dsp_scene_disable() == AFX_OK && !g_dsp_ring && !g_dsp_ring_placed);
+    auto_dsp_ack = 0;
+    assert(afx_mem_stats(&after) == AFX_OK && after.used_bytes == during.used_bytes);
+
+    /* The level's flow plays slot 1 from its own bank and slot 0 from the core bank. */
+    uint32_t core_index = AFX_HANDLE_INDEX(core_asset);
+    assert(afx_scene_load(level, level_bytes, &p, 1, &l) == AFX_OK && l);
+    assert(g_assets[core_index].references == 2);
+    afx_asset_t theme_flow, song_flow, stale;
+    assert(afx_scene_find(l, "theme", &theme_flow) == AFX_OK);
+    assert(g_assets[AFX_HANDLE_INDEX(theme_flow)].bank == core_asset);
+    assert(afx_scene_entry(l, 0, &info) == AFX_OK && !strcmp(info.name, "") &&
+           flow_bank(AFX_HANDLE_INDEX(theme_flow), 1) == info.asset);
+    uint32_t level_block = info.addr;
+    assert(afx_read32(ram + afx_asset_addr(theme_flow) + 48 + 4) == AFX_BANK_TABLE_ENTRY(level_block, 64));
+
+    /* A slot: a bank and a flow, the flow after the bank, in place of what it held. */
+    assert(afx_scene_find(l, "song", &song_flow) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_slot_load(l, "theme", song_data, 96, song, 160, &song_flow) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_slot_load(l, "song", NULL, 0, song, 160, &song_flow) == -AFX_BAD_SAMPLE);
+    assert(afx_scene_slot_load(l, "song", song_data, 96, song, 160, &song_flow) == AFX_OK);
+    assert(afx_asset_addr(song_flow) == level_block + 128 + 64);
+    assert(afx_asset_addr(g_assets[AFX_HANDLE_INDEX(song_flow)].bank) == level_block + 128);
+    assert(afx_scene_find(l, "song", &flow) == AFX_OK && flow == song_flow);
+    afx_instance_t instance;
+    assert(afx_instance_activate(song_flow, &instance) == AFX_OK);
+    assert(afx_scene_slot_load(l, "song", song_data, 96, song, 160, &flow) == -AFX_ASSET_REFERENCED);
+    assert(afx_scene_find(l, "song", &flow) == AFX_OK && flow == song_flow);
+    end_instance(instance);
+    stale = song_flow;
+    assert(afx_scene_slot_load(l, "song", song_data, 96, song, 160, &song_flow) == AFX_OK);
+    assert(song_flow != stale && !afx_asset_addr(stale) && afx_asset_addr(song_flow) == level_block + 192);
+    /* Too big for the slot: refused, and the slot is empty. */
+    assert(afx_scene_slot_load(l, "song", big_data, 256, song, 160, &flow) == -AFX_NO_AICA_RAM);
+    assert(afx_scene_find(l, "song", &flow) == -AFX_INVALID_HANDLE && !afx_asset_addr(song_flow));
+    assert(afx_scene_slot_load(l, "song", song_data, 96, song, 160, &song_flow) == AFX_OK);
+    assert(afx_mem_stats(&after) == AFX_OK && after.active_allocations == before.active_allocations + 2);
+
+    /* Release: the permanent scene keeps its block while the level binds its core
+     * bank; the level keeps its own while its theme plays. */
+    assert(afx_instance_activate(theme_flow, &instance) == AFX_OK);
+    assert(afx_scene_release(p) == AFX_OK);
+    assert(afx_scene_find(p, "jingle", &flow) == -AFX_INVALID_HANDLE && afx_scene_release(p) == -AFX_INVALID_HANDLE);
+    assert(afx_asset_addr(core_asset) == block && afx_scene_load(level, level_bytes, &p, 1, &refused) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_release(l) == AFX_OK);
+    assert(afx_mem_stats(&after) == AFX_OK && after.active_allocations == before.active_allocations + 2);
+    assert(!afx_asset_addr(song_flow) && afx_asset_addr(theme_flow));
+    assert(afx_instance_activate(theme_flow, &refused) == -AFX_INVALID_HANDLE);
+    end_instance(instance);
+    assert(!afx_asset_addr(theme_flow) && !afx_asset_addr(core_asset));
+    assert(afx_mem_stats(&after) == AFX_OK && after.free_bytes == before.free_bytes);
+    assert(after.active_allocations == before.active_allocations);
+    assert(after.largest_free_block == before.largest_free_block);
+
+    /* A failure part-way loads nothing. */
+    memcpy(broken, level, level_bytes);
+    afx_write32(broken + afx_read32(broken + 32 + 32 + 8) + 4, 6); /* theme's AFX version */
+    assert(afx_scene_load(permanent, permanent_bytes, NULL, 0, &p) == AFX_OK);
+    assert(afx_scene_load(broken, level_bytes, &p, 1, &refused) == -AFX_BAD_FORMAT && !refused);
+    /* The core bank is bound by the jingle alone again. */
+    assert(afx_scene_entry(p, 0, &info) == AFX_OK && g_assets[AFX_HANDLE_INDEX(info.asset)].references == 1);
+    assert(afx_mem_stats(&after) == AFX_OK && after.active_allocations == before.active_allocations + 1);
+    assert(afx_scene_release(p) == AFX_OK);
+    assert(afx_mem_stats(&after) == AFX_OK && after.free_bytes == before.free_bytes);
+    /* Left loaded: afx_shutdown forgets it with the allocator. */
+    assert(afx_scene_load(permanent, permanent_bytes, NULL, 0, &p) == AFX_OK);
+}
+
 static uint8_t *read_fixture(const char *path, uint32_t *bytes) {
     FILE *file = fopen(path, "rb");
     assert(file && !fseek(file, 0, SEEK_END));
@@ -963,6 +1209,7 @@ int main(int argc, char **argv) {
     assert(afx_asset_free(flow) == AFX_OK);
     assert(afx_bank_release(&bank) == AFX_OK);
     test_flow_banks();
+    test_scenes();
     if (argc == 4) {
         uint32_t bank_bytes, flow_bytes, seek_bytes;
         uint8_t *b = read_fixture(argv[1], &bank_bytes);

@@ -4,7 +4,7 @@
 
 /* Version of this public source interface, independent of repository releases,
  * asset-format versions below, and the host/firmware ABI in protocol.h. */
-#define AFX_FORMAT_API_VERSION 4
+#define AFX_FORMAT_API_VERSION 5
 #define AFX_FILE_MAGIC 0x32584641
 #define AFX_CHECKPOINT_MAGIC 0x31504b43
 #define AFX_CHECKPOINT_VERSION 1
@@ -83,6 +83,19 @@ enum { AFX_FLAG_CONTROLLED = 1, AFX_FLAG_MUSIC = 2, AFX_FLAG_METADATA = 4,
 #define AFX_INDEX_HEADER_BYTES 32u
 enum { AFX_INDEX_RECORD_BYTES = 16u, AFX_INDEX_NAMED_RECORD_BYTES = 32u };
 enum { AFX_PCM16 = 0, AFX_PCM8 = 1, AFX_ADPCM = 2 };
+/* AFS is one scene: the banks and flows a program loads together, and where
+ * each goes in the one AICA block that holds them. A 32-byte header is
+ * followed by entry_count 32-byte entries; names are zero-terminated strings
+ * after the entries. A bank entry holds an AFB file and a flow entry an AFX
+ * file. A slot entry reserves a range for a bank and a flow loaded later, and
+ * a ring entry the DSP delay ring, 16 KiB << RBL at a 2 KiB boundary. */
+#define AFX_SCENE_MAGIC 0x00534641u /* "AFS\\0" in little-endian byte order. */
+#define AFX_SCENE_VERSION 1u
+#define AFX_SCENE_HEADER_BYTES 32u
+#define AFX_SCENE_ENTRY_BYTES 32u
+#define AFX_SCENE_RING_ALIGN 2048u
+#define AFX_SCENE_RING_MIN_BYTES 0x4000u
+enum { AFX_SCENE_BANK = 1, AFX_SCENE_FLOW = 2, AFX_SCENE_SLOT = 3, AFX_SCENE_RING = 4 };
 
 #define AFX_FILE_HEADER_BYTES 80u
 #define AFX_WORK_PROFILE(commands, writes) (((uint32_t)(commands) << 16) | (uint16_t)(writes))
@@ -122,6 +135,27 @@ typedef struct {
     uint32_t byte_offset; /* Legacy name: version 7 stores the bound sample length in bytes. */
 } afx_relocation_t;
 
+typedef struct {
+    uint32_t magic; /* AFX_SCENE_MAGIC signature. */
+    uint32_t version; /* AFX_SCENE_VERSION. */
+    uint32_t id_low; /* Low 32 bits of the scene identity; the identity is nonzero. */
+    uint32_t id_high; /* High 32 bits of the scene identity. */
+    uint32_t total_size; /* Complete AFS file length in bytes. */
+    uint32_t block_bytes; /* Size of the scene's AICA block, a multiple of 32. */
+    uint32_t entry_count; /* Number of entries after the header, at least one. */
+    uint32_t reserved; /* Zero. */
+} afx_scene_header_t;
+typedef struct {
+    uint32_t kind; /* AFX_SCENE_BANK, AFX_SCENE_FLOW, AFX_SCENE_SLOT or AFX_SCENE_RING. */
+    uint32_t name; /* File offset of the entry's zero-terminated name, or zero for none. */
+    uint32_t file_offset; /* A bank's AFB or a flow's AFX file; zero for a slot or ring. */
+    uint32_t file_size; /* Its length in bytes. */
+    uint32_t block_offset; /* Where the entry goes in the block: 32-byte aligned, a ring 2 KiB aligned. */
+    uint32_t block_bytes; /* Its range there, a multiple of 32: a bank's payload, a flow's image. */
+    uint32_t ticks; /* A flow's authored length in ticks; zero for other kinds. */
+    uint32_t reserved; /* Zero. */
+} afx_scene_entry_t;
+
 /* One AFC checkpoint channel record; also used by runtime rebuild requests. */
 typedef struct {
     uint32_t local_channel; /* Local channel index restored by this checkpoint record. */
@@ -136,6 +170,8 @@ typedef struct {
 AFX_FORMAT_ASSERT(sizeof(afx_file_header_t) == 80, "file header");
 AFX_FORMAT_ASSERT(sizeof(afx_sample_t) == 16 && sizeof(afx_relocation_t) == 12, "host tables");
 AFX_FORMAT_ASSERT(sizeof(afx_checkpoint_channel_t) == 40, "checkpoint channel");
+AFX_FORMAT_ASSERT(sizeof(afx_scene_header_t) == AFX_SCENE_HEADER_BYTES &&
+                  sizeof(afx_scene_entry_t) == AFX_SCENE_ENTRY_BYTES, "scene tables");
 #undef AFX_FORMAT_ASSERT
 #endif
 #endif

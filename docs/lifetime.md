@@ -17,6 +17,12 @@ nothing uses it, and otherwise as soon as nothing does, a flow when its last
 instance is recycled and a bank when the last flow that retains it is freed.
 The program must not use a handle it released.
 
+A scene (`<aicaflow/scene.h>`) owns its flows and banks: release the scene,
+not its assets. `afx_scene_release()` releases each of them as above and frees
+the scene's block with the last of them, so a level scene released while its
+song plays, or while a later scene's flow binds its bank, stays in AICA RAM
+until that ends.
+
 Do not release a bank while a flow or instance refers to it. A scene can keep a
 bank resident and upload/release many small AFX control streams against it.
 Finite sounds must author `KEYOFF` and `END`; `PARK` is only for a controlled

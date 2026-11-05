@@ -98,7 +98,9 @@ bool allocator_reset(uint32_t dynamic_base) {
     g_available_channels = UINT64_MAX;
     g_endings_held = 0;
     g_dsp_scene = false;
-    g_dsp_ring = 0;
+    g_dsp_ring = g_dsp_ring_bytes = 0;
+    g_dsp_ring_placed = false;
+    scenes_reset();
     g_dsp_return_left = g_dsp_return_right = 0;
     g_next_sequence = 1;
     if (!dynamic_base || dynamic_base >= g_asset_limit || !reserve_free(1))
@@ -191,7 +193,7 @@ bool free_allocation(uint32_t address) {
 }
 int afx_mem_free(uint32_t address) {
     HOST_GUARD(-AFX_BUSY);
-    if (address && address == g_dsp_ring) return -AFX_ASSET_REFERENCED;
+    if (address && (address == g_dsp_ring || scene_block(address))) return -AFX_ASSET_REFERENCED;
     for (uint32_t i = 0; i < g_asset_capacity; ++i)
         if ((g_assets[i].live || g_assets[i].uploading) && g_assets[i].addr == address)
             return -AFX_ASSET_REFERENCED;
@@ -208,7 +210,8 @@ int afx_mem_upload(uint32_t address, const void *data, uint32_t size) {
     for (uint32_t i = 0; i < g_alloc_count; ++i)
         if (address >= g_allocs[i].addr &&
             afx_range(address - g_allocs[i].addr, rounded, g_allocs[i].size)) {
-            if (g_allocs[i].addr == g_dsp_ring) return -AFX_ASSET_REFERENCED;
+            if (g_dsp_ring && address < g_dsp_ring + g_dsp_ring_bytes && g_dsp_ring < address + rounded)
+                return -AFX_ASSET_REFERENCED;
             upload_words(address, data, size);
             return AFX_OK;
         }
@@ -244,15 +247,13 @@ bool resolve_asset(afx_asset_t asset, uint32_t *index) {
     *index = raw - 1u;
     return true;
 }
-afx_asset_t reserve_asset(uint32_t size, uint32_t align, bool live) {
+/* An asset slot for size bytes at address, in an allocation of its own or,
+ * with allocation_size zero, placed in a scene's block. */
+static afx_asset_t asset_at(uint32_t address, uint32_t size, uint32_t allocation_size, bool live) {
     uint32_t index = 0;
-    uint32_t allocation_size;
     while (index < g_asset_capacity &&
            (g_assets[index].live || g_assets[index].uploading || g_assets[index].retired)) ++index;
     if (index == g_asset_capacity && !reserve_assets(g_asset_capacity + 1)) return 0;
-    allocation_size = align_up(size, align);
-    uint32_t address = allocation_size ? afx_mem_alloc(allocation_size, align) : 0;
-    if (!address) return 0;
     afx_asset_slot_t *slot = &g_assets[index];
     if (!slot->generation) slot->generation = 1;
     slot->live = live;
@@ -264,6 +265,23 @@ afx_asset_t reserve_asset(uint32_t size, uint32_t align, bool live) {
     slot->bank = AFX_ASSET_INVALID;
     slot->sample_bank = false;
     return AFX_MAKE_HANDLE(index, slot->generation);
+}
+afx_asset_t reserve_asset(uint32_t size, uint32_t align, bool live) {
+    uint32_t allocation_size = align_up(size, align);
+    uint32_t address = allocation_size ? afx_mem_alloc(allocation_size, align) : 0;
+    if (!address) return 0;
+    afx_asset_t asset = asset_at(address, size, allocation_size, live);
+    if (!asset) (void)free_allocation(address);
+    return asset;
+}
+afx_asset_t place_asset(uint32_t address, uint32_t size, bool live) {
+    return asset_at(address, size, 0, live);
+}
+void discard_asset(afx_asset_t asset) {
+    uint32_t index;
+    if (!resolve_asset(asset, &index)) return;
+    if (g_upload_dma_asset == asset) upload_dma_wait();
+    (void)free_asset_slot(index);
 }
 afx_asset_t afx_asset_upload(const void *data, uint32_t size, uint32_t align) {
     HOST_GUARD(0);
@@ -282,7 +300,7 @@ int afx_asset_free(afx_asset_t asset) {
     if (!resolve_asset(asset, &index)) return -AFX_INVALID_HANDLE;
     afx_asset_slot_t *slot = &g_assets[index];
     if (g_upload_dma_asset == asset) upload_dma_wait();
-    if (slot->references) return -AFX_ASSET_REFERENCED;
+    if (slot->references || !slot->allocation_size) return -AFX_ASSET_REFERENCED;
     return free_asset_slot(index);
 }
 int afx_asset_release(afx_asset_t asset) {
@@ -291,6 +309,7 @@ int afx_asset_release(afx_asset_t asset) {
     if (!resolve_asset(asset, &index)) return -AFX_INVALID_HANDLE;
     afx_asset_slot_t *slot = &g_assets[index];
     if (g_upload_dma_asset == asset) upload_dma_wait();
+    if (!slot->allocation_size) return -AFX_ASSET_REFERENCED;
     if (slot->references) {
         slot->release_wanted = true;
         return AFX_OK;
@@ -320,7 +339,8 @@ afx_asset_t flow_bank(uint32_t flow, uint32_t slot) {
 }
 int free_asset_slot(uint32_t index) {
     afx_asset_slot_t *slot = &g_assets[index];
-    if (!free_allocation(slot->addr)) return -AFX_BAD_BOUNDS;
+    uint32_t placed = slot->allocation_size ? 0 : slot->addr;
+    if (!placed && !free_allocation(slot->addr)) return -AFX_BAD_BOUNDS;
     afx_asset_t banks[AFX_MAX_FLOW_BANKS] = {slot->bank};
     for (uint32_t i = 0; i < g_flow_bank_count; ++i) {
         if (g_flow_banks[i].flow != index) continue;
@@ -347,6 +367,7 @@ int free_asset_slot(uint32_t index) {
         uint32_t bank_index;
         if (banks[i] && resolve_asset(banks[i], &bank_index)) asset_unreference(bank_index);
     }
+    if (placed) scene_asset_freed(placed);
     return AFX_OK;
 }
 uint32_t afx_asset_addr(afx_asset_t asset) {
