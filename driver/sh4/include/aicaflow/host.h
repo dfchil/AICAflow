@@ -98,6 +98,11 @@ int afx_sample_bank_stream_dma_poll(afx_asset_t bank, bool *out_complete);
 int afx_sample_bank_stream_finish(afx_asset_t bank);
 afx_asset_t afx_asset_upload(const void *data, uint32_t size, uint32_t align);
 int afx_asset_free(afx_asset_t asset);
+/* Frees asset now, or once nothing uses it: a flow when its last instance has
+ * been recycled, a bank when the last flow that retains it is freed. The
+ * program gives the handle up either way: activating a released flow, or
+ * uploading a flow against a released bank, is refused. */
+int afx_asset_release(afx_asset_t asset);
 uint32_t afx_asset_addr(afx_asset_t asset);
 uint32_t afx_asset_size(afx_asset_t asset);
 int afx_asset_work(afx_asset_t asset, afx_work_profile_t *out_profile);
@@ -112,10 +117,22 @@ bool afx_asset_loops(afx_asset_t asset, uint32_t *out_loop_tick);
  * ends (DONE or ERROR, including after STOP) is recycled by that thread: its
  * channels and slot are freed, its handle becomes stale, and the end callback
  * (afx_set_end_callback) reports it. The program never polls.
- * A lifecycle command returns AFX_BUSY while an earlier one is unacknowledged.
+ * STOP and PAUSE never wait for an earlier command: they are queued behind it,
+ * and the ARM7 takes commands in order. Asking again queues nothing, so a
+ * program may repeat STOP until the handle is stale; PAUSE after STOP returns
+ * AFX_BUSY. When the command ring is full they are held back, sent with the
+ * next report or before the next command, and still return 0.
+ * A STOP gives the instance's channels back at once, and so does an instance
+ * that ends: an activation right after it can have them.
  * PATCH/gain/tempo/lane commands may follow ACTIVATE immediately; queue order
- * applies them before the first authored deadline. */
+ * applies them before the first authored deadline. A PATCH on a channel before
+ * its first NOTE holds: that NOTE keeps the patched words instead of its
+ * template's. */
 int afx_instance_activate(afx_asset_t flow_asset, afx_instance_t *out_instance);
+/* Stops old and activates flow in its place, which may take old's channels.
+ * A refusal leaves old as it was. old may have ended, be stopping or be stale,
+ * or be zero; then this only activates. */
+int afx_instance_replace(afx_instance_t old, afx_asset_t flow_asset, afx_instance_t *out_instance);
 /* Absolute AICA timer tick scheduled by activation; zero is an invalid/stale handle. */
 uint32_t afx_instance_start_tick(afx_instance_t instance);
 int afx_instance_stop(afx_instance_t instance);

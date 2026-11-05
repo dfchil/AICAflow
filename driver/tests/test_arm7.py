@@ -1,6 +1,7 @@
 """Run the ARM7 voice/restore logic with host-backed registers and staging RAM."""
 from pathlib import Path
 import os
+import re
 import subprocess
 import tempfile
 
@@ -9,7 +10,8 @@ source = (root / "driver/arm7/driver.c").read_text()
 
 
 def function(name):
-    start = source.index("static ", source.rfind("\n", 0, source.index(name + "(")) + 1)
+    # The definition, not the first use: patch( also ends write_patch(.
+    start = re.search(r"^static [^\n(]*\b" + name + r"\(", source, re.M).start()
     end = source.index("\n}", start) + 2
     return source[start:end]
 
@@ -75,7 +77,7 @@ names = ("range", "asset_range", "clear_words", "dsp_returns", "dsp_disable", "d
          "projected_pitch", "projected_dsp_send", "write_projection", "release_voice", "keyoff",
          "stream_position", "state_word", "install_voice", "write_restore", "set_instance_gain", "set_lanes", "rebuild",
          "lifecycle", "tick_due", "schedule_wait", "record_lateness", "complete", "write_note",
-         "write_patch", "service")
+         "write_patch", "patch", "service")
 body = "\n".join(function(name) for name in names)
 # Keep production validation/installation intact; only translate staging pointers.
 assert body.count("(request.states_address +") == 2
@@ -287,6 +289,51 @@ int main(void) {
     clock_value = 0;
     service(2);
     assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !loop->reference);
+    /* A PATCH command on a channel that has not sounded holds for its first
+     * NOTE, which keeps the patched words instead of its template's, plain and
+     * projected alike; the NOTE after it takes the template's again. */
+    volatile afx_runtime_slot_t *fresh = &contexts[3];
+    *fresh = (afx_runtime_slot_t){.reference = 4, .state = AFX_RUNNING, .channels = 1,
+        .setup_count = 1, .bank_base_units = 0xffe0u >> 5, .bank_end = 0x10100, .gain = 255};
+    memset(setup_bytes, 0, sizeof(setup_bytes));
+    afx_write16(setup_bytes + 2 * AFX_FIELD_CONTROL, 0xc200);
+    afx_write16(setup_bytes + 2 * AFX_FIELD_SAMPLE_LOW, 32);
+    afx_write16(setup_bytes + 2 * AFX_FIELD_ENV_AD, 0x001f);
+    afx_write16(setup_bytes + 2 * AFX_FIELD_DIRECT, 0);
+    afx_write16(setup_bytes + 2 * AFX_FIELD_PITCH, 0x100);
+    voice_flags[0] = 0; voice_held[0] = 0; voice_lane_pan[0] = 0; voice_lane_pitch[0] = 0;
+    voice_lane_gain[0] = voice_lane_dsp_send[0] = 255;
+    afx_patch_payload_t set = {.local_channel = 0,
+        .mask = (1u << AFX_FIELD_ENV_AD) | (1u << AFX_FIELD_DIRECT)};
+    set.values[AFX_FIELD_ENV_AD < AFX_FIELD_DIRECT ? 0 : 1] = 0x0005;
+    set.values[AFX_FIELD_ENV_AD < AFX_FIELD_DIRECT ? 1 : 0] = 0x0f00;
+    patch(4, 7, (const uint8_t *)&set);
+    assert(voice_held[0] == set.mask && registers[0][AFX_FIELD_ENV_AD] == 0x0005);
+    afx_event_t note = {.opcode = AFX_OP_NOTE, .channel = 0, .setup = 0};
+    assert(write_note(fresh, &note) == AFX_OK);
+    assert(registers[0][AFX_FIELD_ENV_AD] == 0x0005 && registers[0][AFX_FIELD_DIRECT] == 0x0f00);
+    assert(registers[0][AFX_FIELD_PITCH] == 0x100 && voice_base_direct[0] == 0x0f00);
+    assert(!voice_held[0] && voice_flags[0] == VOICE_LATCHED);
+    assert(write_note(fresh, &note) == AFX_OK);
+    assert(registers[0][AFX_FIELD_ENV_AD] == 0x001f && registers[0][AFX_FIELD_DIRECT] == 0);
+    /* A sounding channel is patched as before, and nothing is held. */
+    patch(4, 8, (const uint8_t *)&set);
+    assert(!voice_held[0] && registers[0][AFX_FIELD_DIRECT] == 0x0f00);
+    /* Stopping or pausing forgets what was held, and a flow's own PATCH
+     * before its NOTE (no program asked) holds nothing. */
+    keyoff(fresh);
+    patch(4, 9, (const uint8_t *)&set);
+    assert(voice_held[0] == set.mask);
+    keyoff(fresh);
+    assert(!voice_held[0]);
+    afx_event_t authored = {.opcode = AFX_OP_PATCH, .channel = 0, .mask = set.mask,
+                            .values = (const uint8_t *)set.values};
+    assert(write_patch(fresh, &authored) == AFX_OK && !voice_held[0]);
+    /* Gain set before the first NOTE was never lost: the NOTE projects it. */
+    keyoff(fresh);
+    afx_gain_payload_t silent = {.gain = 0};
+    set_instance_gain(4, (const uint8_t *)&silent);
+    assert(write_note(fresh, &note) == AFX_OK && registers[0][AFX_FIELD_TOTAL_LEVEL] == 0xff00);
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
@@ -299,4 +346,4 @@ with tempfile.TemporaryDirectory() as directory:
                     "-I" + str(root / "driver/arm7"),
                     str(path / "check.c"), "-o", str(path / "check")], check=True)
     subprocess.run([str(path / "check")], check=True)
-print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore and LOOP: PASS")
+print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore, LOOP and held PATCH: PASS")

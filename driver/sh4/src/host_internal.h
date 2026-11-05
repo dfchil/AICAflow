@@ -33,6 +33,7 @@ typedef struct {
     bool flow; /* Asset contains an executable AFX flow. */
     bool uploading; /* Upload is incomplete; asset cannot yet be activated. */
     bool sample_bank; /* Asset is a contiguous sample-bank payload. */
+    bool release_wanted; /* Released by the program; freed when nothing references it. */
     uint16_t generation; /* Handle generation; advanced when a slot is released. */
     uint32_t addr; /* Absolute AICA byte address of asset data. */
     uint32_t size; /* Logical asset data length in bytes, excluding allocation padding. */
@@ -64,6 +65,8 @@ typedef struct {
     bool recycling; /* Waiting for RECYCLE acknowledgement before releasing the slot. */
     bool recycle_wanted; /* Ended; RECYCLE still to be queued (the queue was full). */
     bool recycle_refused; /* The firmware refused RECYCLE; do not ask again. */
+    uint8_t ending; /* AFX_CMD_STOP or AFX_CMD_PAUSE asked for and not yet acknowledged; 0 for none. */
+    bool ending_queued; /* That command is in the ring; false while a full ring holds it back. */
     uint16_t generation; /* Generation encoded in the instance handle. */
     uint32_t asset_index; /* Index of the retained flow in g_assets. */
     uint32_t map_addr; /* Absolute AICA byte address of the uploaded channel map. */
@@ -86,6 +89,7 @@ extern uint32_t g_asset_capacity;
 extern afx_instance_slot_t g_instances[AFX_MAX_FLOW_SLOTS];
 extern uint64_t g_available_channels, g_map_used[AFX_CHANNEL_MAP_ARENAS];
 extern uint32_t g_next_sequence, g_queue_head, g_queue_tail_seen;
+extern uint32_t g_endings_held; /* Instances whose STOP or PAUSE waits for room in the ring. */
 extern bool g_dsp_scene, g_ready, g_lifecycle;
 extern uint32_t g_dsp_ring; /* Owned DSP allocation; retained until stop is acknowledged. */
 extern uint16_t g_dsp_return_left, g_dsp_return_right;
@@ -117,6 +121,10 @@ bool allocator_reset(uint32_t dynamic_base);
 bool free_allocation(uint32_t address);
 bool resolve_asset(afx_asset_t asset, uint32_t *index);
 afx_asset_t reserve_asset(uint32_t size, uint32_t align, bool live);
+/* Frees an unreferenced asset and drops its reference to its bank. */
+int free_asset_slot(uint32_t index);
+/* Drops one reference, and frees an asset the program released once it has none. */
+void asset_unreference(uint32_t index);
 
 void upload_dma_wait(void);
 void upload_dma_complete(void *ignored);
@@ -129,8 +137,16 @@ bool resolve_instance(afx_instance_t instance, uint32_t *index);
 void release_instance_preserving_generation(uint32_t index);
 
 uint32_t new_sequence(void);
+/* Queues one command after any STOP or PAUSE a full ring held back. */
 int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
             uint32_t flags, const void *payload, uint32_t payload_size);
+/* Queues one command as it is: -AFX_IPC_FULL when the ring has no room. */
+int queue_command(uint32_t opcode, uint32_t reference, uint32_t sequence,
+                  uint32_t flags, const void *payload, uint32_t payload_size);
+/* Whether the ring has room for this many more commands. */
+bool queue_has_room(uint32_t commands);
+/* Queues the STOPs and PAUSEs a full ring held back, in slot order, until it is full again. */
+void endings_send(void);
 bool read_observed(uint32_t index, uint32_t *last_epoch, afx_instance_status_t *out);
 
 /* Takes one slot's new observation, if it published one, and acts on it:

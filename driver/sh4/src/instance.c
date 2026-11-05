@@ -73,23 +73,30 @@ void release_instance_preserving_generation(uint32_t index) {
     afx_instance_slot_t *slot = &g_instances[index];
     uint16_t generation = slot->generation;
     bool retired = slot->retired;
+    uint32_t asset_index = slot->asset_index;
     if (slot->staging_addr) (void)free_allocation(slot->staging_addr);
+    if (slot->ending && !slot->ending_queued) --g_endings_held;
     g_available_channels |= slot->channel_mask;
     map_release(slot);
-    if (slot->asset_index < g_asset_capacity && g_assets[slot->asset_index].references)
-        --g_assets[slot->asset_index].references;
     if (generation == UINT16_MAX) retired = true;
     else ++generation;
     memset(slot, 0, sizeof(*slot));
     slot->generation = generation;
     slot->retired = retired;
+    /* Last: it may free a released flow, and that flow's released bank. */
+    asset_unreference(asset_index);
 }
 
-int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
-    HOST_GUARD(-AFX_BUSY);
+/* What one activation takes on the SH-4 side, reserved before anything is queued. */
+typedef struct {
+    uint32_t asset_index, index, map_address, bank_base, bank_bytes;
+    uint64_t channels;
+    uint8_t count, arena, offset;
+} activation_plan_t;
+static int activation_reserve(afx_asset_t asset, activation_plan_t *plan) {
     uint32_t asset_index;
-    if (!out || !resolve_asset(asset, &asset_index) || !g_assets[asset_index].flow)
-        return -AFX_INVALID_HANDLE;
+    if (!resolve_asset(asset, &asset_index) || !g_assets[asset_index].flow ||
+        g_assets[asset_index].release_wanted) return -AFX_INVALID_HANDLE;
     afx_asset_slot_t *flow = &g_assets[asset_index];
     uint32_t bank_base = 0, bank_bytes = 0;
     if (flow->bank) {
@@ -113,9 +120,22 @@ int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
         g_available_channels |= channels;
         return -AFX_NO_FLOW_SLOTS;
     }
-    afx_instance_slot_t *slot = &g_instances[index];
+    *plan = (activation_plan_t){ .asset_index = asset_index, .index = index,
+        .map_address = map_address, .bank_base = bank_base, .bank_bytes = bank_bytes,
+        .channels = channels, .count = count, .arena = arena, .offset = offset };
+    return AFX_OK;
+}
+static void activation_unreserve(const activation_plan_t *plan) {
+    afx_instance_slot_t rollback = { .required_channels = plan->count, .map_addr = plan->map_address,
+        .map_arena = plan->arena, .map_offset = plan->offset };
+    map_release(&rollback);
+    g_available_channels |= plan->channels;
+}
+static int activation_send(const activation_plan_t *plan, afx_instance_t *out) {
+    afx_asset_slot_t *flow = &g_assets[plan->asset_index];
+    afx_instance_slot_t *slot = &g_instances[plan->index];
     if (!slot->generation) slot->generation = 1;
-    afx_instance_t reference = AFX_MAKE_HANDLE(index, slot->generation);
+    afx_instance_t reference = AFX_MAKE_HANDLE(plan->index, slot->generation);
     /* ARM deadlines are absolute. A one-tick lead admits queue/G2 latency while
      * preserving the authored deltas instead of making later flows catch up. */
     uint32_t start_tick = read_spu_word(AFX_STATUS_ADDR + offsetof(afx_status_t, timer_ticks)) + 1u;
@@ -123,29 +143,26 @@ int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
         .image_base = flow->addr, .image_size = flow->size,
         .stream_offset = flow->stream_offset, .stream_size = flow->stream_size,
         .setups_offset = 0, .setup_count = flow->setup_count,
-        .channel_map = map_address, .required_channels = count,
+        .channel_map = plan->map_address, .required_channels = plan->count,
         .flags = flow->flags & (AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC |
                                        AFX_FLAG_MUSIC_CHORUS | AFX_FLAG_LANES | AFX_FLAG_LOOP),
-        .start_tick = start_tick, .bank_base_units = (uint16_t)(bank_base >> 5),
-        .bank_bytes = bank_bytes
+        .start_tick = start_tick, .bank_base_units = (uint16_t)(plan->bank_base >> 5),
+        .bank_bytes = plan->bank_bytes
     };
     uint32_t sequence = new_sequence();
     int queued = enqueue(AFX_CMD_ACTIVATE, reference, sequence, 0, &activation, sizeof(activation));
     if (queued) {
-        afx_instance_slot_t rollback = { .required_channels = count, .map_addr = map_address,
-            .map_arena = arena, .map_offset = offset };
-        map_release(&rollback);
-        g_available_channels |= channels;
+        activation_unreserve(plan);
         return queued;
     }
     slot->live = true;
     slot->pending = true;
-    slot->asset_index = asset_index;
-    slot->map_addr = map_address;
-    slot->required_channels = count;
-    slot->map_arena = arena;
-    slot->map_offset = offset;
-    slot->channel_mask = channels;
+    slot->asset_index = plan->asset_index;
+    slot->map_addr = plan->map_address;
+    slot->required_channels = plan->count;
+    slot->map_arena = plan->arena;
+    slot->map_offset = plan->offset;
+    slot->channel_mask = plan->channels;
     slot->start_tick = start_tick;
     slot->status = (afx_instance_status_t){ .reference = reference, .state = AFX_FREE,
                                              .sequence = sequence, .result = AFX_OK };
@@ -153,27 +170,113 @@ int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
     *out = reference;
     return AFX_OK;
 }
+int afx_instance_activate(afx_asset_t asset, afx_instance_t *out) {
+    HOST_GUARD(-AFX_BUSY);
+    if (!out) return -AFX_INVALID_HANDLE;
+    activation_plan_t plan;
+    int result = activation_reserve(asset, &plan);
+    return result ? result : activation_send(&plan, out);
+}
+static bool ended(const afx_instance_slot_t *slot) {
+    return slot->recycling || slot->status.state == AFX_DONE || slot->status.state == AFX_ERROR;
+}
+/* Queues the STOP or PAUSE asked for, behind whatever is already queued for
+ * the instance: the ARM7 takes commands in order. A queued STOP gives the
+ * channels back at once, since any activation that takes them is queued after
+ * it. The channel map stays reserved until RECYCLE: the ARM7 reads it until the
+ * STOP. */
+static int send_ending(uint32_t index) {
+    afx_instance_slot_t *slot = &g_instances[index];
+    uint32_t sequence = new_sequence();
+    int queued = queue_command(slot->ending, AFX_MAKE_HANDLE(index, slot->generation),
+                               sequence, 0, NULL, 0);
+    if (queued) return queued;
+    slot->ending_queued = true;
+    slot->pending = true;
+    slot->status.sequence = sequence;
+    if (slot->ending == AFX_CMD_STOP) {
+        g_available_channels |= slot->channel_mask;
+        slot->channel_mask = 0;
+    }
+    return AFX_OK;
+}
+void endings_send(void) {
+    for (uint32_t index = 0; g_endings_held && index < AFX_MAX_FLOW_SLOTS; ++index) {
+        afx_instance_slot_t *slot = &g_instances[index];
+        if (!slot->live || !slot->ending || slot->ending_queued) continue;
+        /* One that ended meanwhile needs it no more; recycling releases it. */
+        if (ended(slot)) slot->ending = 0;
+        else if (send_ending(index)) return; /* Still full. */
+        --g_endings_held;
+    }
+}
 static int lifecycle(afx_instance_t instance, uint32_t opcode) {
     uint32_t index;
     if (!resolve_instance(instance, &index)) return -AFX_STALE_GENERATION;
     afx_instance_slot_t *slot = &g_instances[index];
-    /* One lifecycle command at a time: a caller that repeats STOP until the
-     * instance is gone must not queue a new command, with a new sequence to
-     * wait for, on every attempt. */
-    if (slot->pending) return -AFX_BUSY;
-    uint32_t sequence = new_sequence();
-    int queued = enqueue(opcode, instance, sequence, 0, NULL, 0);
-    if (!queued) {
-        slot->pending = true;
-        slot->recycling = opcode == AFX_CMD_RECYCLE;
-        slot->status.sequence = sequence;
+    /* Asking again queues nothing, so a program may repeat STOP until the
+     * instance is gone. A STOP may follow a PAUSE; nothing follows a STOP. */
+    if (opcode == AFX_CMD_STOP && ended(slot)) return AFX_OK;
+    if (slot->ending == AFX_CMD_STOP) return opcode == AFX_CMD_STOP ? AFX_OK : -AFX_BUSY;
+    if (slot->ending == opcode) return AFX_OK;
+    uint8_t previous = slot->ending;
+    bool previous_queued = slot->ending_queued;
+    slot->ending = (uint8_t)opcode;
+    if (previous && !previous_queued) return AFX_OK; /* Held back already; it goes as this. */
+    slot->ending_queued = false;
+    if (g_endings_held) endings_send();
+    int result = send_ending(index);
+    if (result == -AFX_IPC_FULL) {
+        ++g_endings_held; /* Sent with the next event, or before the next command. */
+        return AFX_OK;
     }
-    return queued;
+    if (result) {
+        slot->ending = previous;
+        slot->ending_queued = previous_queued;
+    }
+    return result;
 }
 int afx_instance_stop(afx_instance_t instance) {
     HOST_GUARD(-AFX_BUSY); return lifecycle(instance, AFX_CMD_STOP); }
 int afx_instance_pause(afx_instance_t instance) {
     HOST_GUARD(-AFX_BUSY); return lifecycle(instance, AFX_CMD_PAUSE); }
+int afx_instance_replace(afx_instance_t old, afx_asset_t flow, afx_instance_t *out) {
+    HOST_GUARD(-AFX_BUSY);
+    if (!out) return -AFX_INVALID_HANDLE;
+    uint32_t index;
+    afx_instance_slot_t *slot = resolve_instance(old, &index) ? &g_instances[index] : NULL;
+    activation_plan_t plan;
+    /* An old instance that is gone, has ended or is stopping holds no channels. */
+    if (!slot || ended(slot) || (slot->ending == AFX_CMD_STOP && slot->ending_queued)) {
+        int result = activation_reserve(flow, &plan);
+        return result ? result : activation_send(&plan, out);
+    }
+    /* Check everything before the STOP, so that a refusal leaves old playing. */
+    if (g_endings_held) endings_send();
+    if (!queue_has_room(2)) return -AFX_IPC_FULL;
+    uint64_t channels = slot->channel_mask;
+    g_available_channels |= channels;
+    int result = activation_reserve(flow, &plan);
+    if (result) {
+        g_available_channels &= ~channels;
+        return result;
+    }
+    /* With room, nothing is held back: old's ending is none or a queued PAUSE. */
+    uint8_t previous = slot->ending;
+    slot->ending = AFX_CMD_STOP;
+    slot->ending_queued = false;
+    slot->channel_mask = 0;
+    result = send_ending(index);
+    if (result) {
+        activation_unreserve(&plan);
+        g_available_channels &= ~channels;
+        slot->channel_mask = channels;
+        slot->ending = previous;
+        slot->ending_queued = previous != 0;
+        return result;
+    }
+    return activation_send(&plan, out);
+}
 int afx_instance_rebuild(afx_instance_t instance, const afx_restore_channel_t *states,
                          uint32_t state_count, uint32_t stream_position,
                          uint32_t remaining_wait, uint32_t next_deadline, bool run) {
@@ -446,7 +549,17 @@ bool update_slot(uint32_t index) {
                 slot->staging_addr = 0;
             }
             slot->pending = false;
+            if (slot->ending_queued) {
+                slot->ending = 0;
+                slot->ending_queued = false;
+            }
         }
+    /* The ARM7 keeps no context for an instance that ended, so its channels
+     * can go to the next activation before RECYCLE comes back. */
+    if (observed.state == AFX_DONE || observed.state == AFX_ERROR) {
+        g_available_channels |= slot->channel_mask;
+        slot->channel_mask = 0;
+    }
     recycle_ended(index);
     return true;
 }

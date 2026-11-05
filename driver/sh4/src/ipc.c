@@ -15,6 +15,7 @@ uint16_t g_dsp_return_left, g_dsp_return_right;
 uint32_t g_next_sequence = 1;
 uint32_t g_queue_head; /* Only the SH-4 advances head, so it need not be read back. */
 uint32_t g_queue_tail_seen; /* The last tail read back; see enqueue(). */
+uint32_t g_endings_held;
 bool g_ready, g_lifecycle;
 volatile bool g_upload_dma_done;
 afx_asset_t g_upload_dma_asset;
@@ -83,6 +84,7 @@ static void host_events(uint32_t code, void *data) {
         for (uint32_t index = 0; index < AFX_MAX_FLOW_SLOTS; ++index)
             if (g_instances[index].live &&
                 ((changed >> index) & 1u || g_instances[index].recycle_wanted)) (void)update_slot(index);
+        if (g_endings_held) endings_send();
     }
     g_events_running = false;
     mutex_unlock(&g_host_mutex);
@@ -114,7 +116,20 @@ uint32_t new_sequence(void) {
     return g_next_sequence++;
 }
 int enqueue(uint32_t opcode, uint32_t reference, uint32_t sequence,
-                   uint32_t flags, const void *payload, uint32_t payload_size) {
+            uint32_t flags, const void *payload, uint32_t payload_size) {
+    /* A STOP or PAUSE that found the ring full was asked for before this. */
+    if (g_endings_held) endings_send();
+    return queue_command(opcode, reference, sequence, flags, payload, payload_size);
+}
+bool queue_has_room(uint32_t commands) {
+    if (commands > AFX_CMD_QUEUE_CAPACITY) return false;
+    g2_lock_scoped();
+    if (g_queue_head - g_queue_tail_seen > AFX_CMD_QUEUE_CAPACITY - commands)
+        g_queue_tail_seen = g2_read_32_raw(g_spu_base + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail));
+    return g_queue_head - g_queue_tail_seen <= AFX_CMD_QUEUE_CAPACITY - commands;
+}
+int queue_command(uint32_t opcode, uint32_t reference, uint32_t sequence,
+                  uint32_t flags, const void *payload, uint32_t payload_size) {
     if (!g_ready || !g_lifecycle || payload_size > 48) return -AFX_UNSUPPORTED;
     /* The AICA sees the command only after the G2 FIFO has drained. This is
      * the same payload-then-head discipline as KOS's sound command queue. */

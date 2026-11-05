@@ -34,6 +34,10 @@ static int8_t voice_lane_pan[AFX_AICA_CHANNEL_COUNT];
 static int8_t voice_lane_pitch[AFX_AICA_CHANNEL_COUNT];
 enum { VOICE_MUTED = 1u, VOICE_LATCHED = 2u, VOICE_RELEASED = 4u };
 static uint8_t voice_flags[AFX_AICA_CHANNEL_COUNT];
+/* Fields a PATCH command set on a channel that has not sounded since its
+ * instance started: the channel's first NOTE keeps them instead of its
+ * template's. The registers hold their values, the bases the projected ones. */
+static uint32_t voice_held[AFX_AICA_CHANNEL_COUNT];
 /* The AICA channel aperture is write-only for our purposes. These retain the
  * authored state before instance/lane projection and the words needed by KEYOFF. */
 static uint16_t voice_control[AFX_AICA_CHANNEL_COUNT];
@@ -195,6 +199,7 @@ static void keyoff(const volatile afx_runtime_slot_t *context) {
         regs[AFX_FIELD_ENV_DR] = 31;
         release_voice(physical);
         voice_flags[physical] &= VOICE_MUTED;
+        voice_held[physical] = 0;
     }
 }
 static uint8_t multiply_gain(uint8_t first, uint8_t second) {
@@ -297,20 +302,26 @@ static afx_result_t install_voice(const volatile afx_runtime_slot_t *context,
     afx_result_t result = resolve_sample_address(context, &words[AFX_FIELD_CONTROL],
                                                 &words[AFX_FIELD_SAMPLE_LOW]);
     if (result) return result;
+    uint32_t held = voice_held[physical];
+    voice_held[physical] = 0;
     voice_flags[physical] = (voice_flags[physical] & VOICE_MUTED) | VOICE_LATCHED;
-    voice_base_mix[physical] = words[AFX_FIELD_TOTAL_LEVEL];
-    voice_base_direct[physical] = words[AFX_FIELD_DIRECT];
-    voice_base_dsp_send[physical] = words[AFX_FIELD_DSP_SEND];
-    voice_base_pitch[physical] = words[AFX_FIELD_PITCH];
+    if (!(held & (1u << AFX_FIELD_TOTAL_LEVEL))) voice_base_mix[physical] = words[AFX_FIELD_TOTAL_LEVEL];
+    if (!(held & (1u << AFX_FIELD_DIRECT))) voice_base_direct[physical] = words[AFX_FIELD_DIRECT];
+    if (!(held & (1u << AFX_FIELD_DSP_SEND))) voice_base_dsp_send[physical] = words[AFX_FIELD_DSP_SEND];
+    if (!(held & (1u << AFX_FIELD_PITCH))) voice_base_pitch[physical] = words[AFX_FIELD_PITCH];
     words[AFX_FIELD_TOTAL_LEVEL] = projected_mix(physical, context->gain);
     words[AFX_FIELD_DIRECT] = projected_direct(physical);
     words[AFX_FIELD_PITCH] = projected_pitch(physical);
     words[AFX_FIELD_DSP_SEND] = projected_dsp_send(physical);
+    /* The projected words come from the bases; the other held ones are in the registers. */
+    held &= ~((1u << AFX_FIELD_TOTAL_LEVEL) | (1u << AFX_FIELD_DIRECT) |
+              (1u << AFX_FIELD_DSP_SEND) | (1u << AFX_FIELD_PITCH));
     volatile uint32_t *regs = (volatile uint32_t *)(AFX_AICA_REG_BASE +
         physical * AFX_AICA_CHANNEL_REG_STRIDE);
     uint16_t control = words[AFX_FIELD_CONTROL] & ~(AFX_KEYON | AFX_KEYON_EXECUTE);
     regs[AFX_FIELD_CONTROL] = control;
-    for (uint32_t field = 1; field < AFX_FIELD_COUNT; ++field) regs[field] = words[field];
+    for (uint32_t field = 1; field < AFX_FIELD_COUNT; ++field)
+        if (!(held & (1u << field))) regs[field] = words[field];
     if (run) control |= AFX_KEYON | AFX_KEYON_EXECUTE;
     voice_control[physical] = control;
     if (run) regs[AFX_FIELD_CONTROL] = control;
@@ -524,6 +535,7 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
         voice_lane_gain[physical] = voice_lane_dsp_send[physical] = 255;
         voice_lane_pan[physical] = voice_lane_pitch[physical] = 0;
         voice_flags[physical] = 0;
+        voice_held[physical] = 0;
     }
     context->flags = activate.flags;
     context->gain = 255;
@@ -684,10 +696,16 @@ static void patch(uint32_t reference, uint32_t sequence, const uint8_t payload[4
     event.wait = event.target = event.bytes = 0;
     event.mask = request.mask;
     event.values = (const uint8_t *)request.values;
+    /* A program may patch a channel right after activating its flow, before
+     * the flow's first NOTE there: that NOTE keeps what it set. */
+    uint32_t physical = 0;
+    int unsounded = physical_channel(context, request.local_channel, &physical) &&
+                    !(voice_flags[physical] & VOICE_LATCHED);
     afx_result_t result = write_patch(context, &event);
     if (result)
         publish(index, reference, state_word(context), sequence, result,
                 stream_position(context), context->deadline, request.local_channel);
+    else if (unsounded) voice_held[physical] |= request.mask;
 }
 static void set_instance_gain(uint32_t reference, const uint8_t payload[48]) {
     afx_gain_payload_t request;

@@ -42,7 +42,8 @@ int afx_bank_flow_upload(const afx_bank_t *bank, const void *data, uint32_t size
         return -AFX_BAD_SAMPLE;
     if (!(bank_low || bank_high) && (bank || relocation_count)) return -AFX_BAD_SAMPLE;
     if (bank && (!resolve_asset(bank->asset, &bank_index) || !g_assets[bank_index].sample_bank ||
-                 g_assets[bank_index].uploading)) return -AFX_INVALID_HANDLE;
+                 g_assets[bank_index].uploading || g_assets[bank_index].release_wanted))
+        return -AFX_INVALID_HANDLE;
     if (bank && (bank->bytes != g_assets[bank_index].size ||
                  (g_assets[bank_index].addr & 31u))) return -AFX_BAD_SAMPLE;
     image = file + header.image_offset;

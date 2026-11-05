@@ -114,10 +114,19 @@ slot after an overflow), reads those records and unmasks. A record published
 before the clear is visible to those reads; one published after it raises the
 interrupt again, which arrives on unmask.
 
-When a record shows an instance DONE or ERROR, the worker queues RECYCLE; when
-the FREE acknowledgement arrives, it frees the instance's channels, map and
-slot and calls the end callback, without the host lock held. While the worker
-holds the lock, other host calls wait for it instead of returning AFX_BUSY.
+When a record shows an instance DONE or ERROR, the worker frees its channels,
+as the ARM7 keeps no context for it, and queues RECYCLE; when the FREE
+acknowledgement arrives, it frees the instance's map and slot and calls the end
+callback, without the host lock held. While the worker holds the lock, other
+host calls wait for it instead of returning AFX_BUSY.
+
+STOP and PAUSE are queued behind whatever the instance already has in the
+queue, as the ARM7 takes commands in order; the host awaits only the latest
+command's sequence. A queued STOP frees the instance's channels at once: an
+ACTIVATE that takes them is queued after it. Its map stays reserved until
+RECYCLE, since the ARM7 reads it until the STOP. When the queue is full, the
+host holds a STOP or PAUSE back and queues it before the next command, or when
+the worker next runs.
 
 `afx_instance_status()` has state, sequence and result as last reported, but a
 RUNNING instance's position, deadline and detail only as of its last news.
@@ -136,6 +145,14 @@ instance's state, so firmware and host move together.
 ABI 10 changes no record: its firmware decodes the compact PATCH_ENV and
 PATCH_ENV_LEVEL forms, which ABI 9 firmware rejects, so a host whose
 validator accepts them requires it.
+
+ABI 12 changes no record either. A PATCH command on a channel that has not
+sounded since activation (or since a PAUSE or REBUILD) holds for that
+channel's first NOTE: the NOTE keeps the patched words instead of its
+template's, as if the PATCH had come just after it. The firmware records only
+which fields are held; the registers keep their values, and the voice's bases
+the projected ones (TOTAL_LEVEL, DIRECT, PITCH, DSP_SEND). A flow's own PATCH
+instructions hold nothing. ABI 11 firmware lets the NOTE overwrite the PATCH.
 
 Activation encodes the bank base as a 16-bit address in 32-byte units and its
 size as a 32-bit byte count. REBUILD sample address words are bank-relative,

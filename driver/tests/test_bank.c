@@ -343,21 +343,177 @@ static void test_coinciding_work(afx_asset_t flow) {
     afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
 }
 
-static void test_one_lifecycle_command(afx_asset_t flow) {
-    /* A second STOP while the first is unacknowledged queues nothing. */
+static void recycle(uint32_t index) {
+    afx_cmd_t command = queued(queue_head() - 1);
+    assert(command.opcode == AFX_CMD_RECYCLE);
+    drain_queue();
+    observed(index, 0, AFX_FREE, command.sequence, AFX_OK);
+    irq_run_worker();
+    assert(!g_instances[index].live);
+}
+static void maps_empty(void) {
+    for (unsigned arena = 0; arena < AFX_CHANNEL_MAP_ARENAS; ++arena) assert(!g_map_used[arena]);
+}
+
+static void test_stop_behind_activate(afx_asset_t flow) {
+    /* STOP waits for no acknowledgement: it is queued behind the ACTIVATE,
+     * and asking again queues nothing. It gives the channel back at once,
+     * while the map stays reserved for the ARM7 until RECYCLE. */
     afx_instance_t instance;
     assert(afx_instance_activate(flow, &instance) == AFX_OK);
     uint32_t index = AFX_HANDLE_INDEX(instance);
     uint32_t activation = g_instances[index].status.sequence, head = queue_head();
-    assert(afx_instance_stop(instance) == -AFX_BUSY && queue_head() == head);
+    uint64_t maps[AFX_CHANNEL_MAP_ARENAS];
+    memcpy(maps, g_map_used, sizeof(maps));
+    assert(g_available_channels != UINT64_MAX);
+    assert(afx_instance_stop(instance) == AFX_OK && queue_head() == head + 1u);
+    afx_cmd_t stop = queued(head);
+    assert(stop.opcode == AFX_CMD_STOP && stop.reference == instance && stop.sequence > activation);
+    assert(g_available_channels == UINT64_MAX && !memcmp(maps, g_map_used, sizeof(maps)));
+    assert(afx_instance_stop(instance) == AFX_OK && queue_head() == head + 1u);
+    assert(afx_instance_pause(instance) == -AFX_BUSY && queue_head() == head + 1u);
+    /* The ACTIVATE's report is older than the STOP: the STOP's is awaited. */
     observed(index, instance, AFX_RUNNING, activation, AFX_OK);
     irq_run_worker();
-    assert(!g_instances[index].pending);
-    assert(afx_instance_stop(instance) == AFX_OK && queue_head() == head + 1u);
-    assert(afx_instance_stop(instance) == -AFX_BUSY && queue_head() == head + 1u);
-    release_instance_preserving_generation(index);
+    assert(g_instances[index].pending && g_instances[index].status.state == AFX_FREE);
+    drain_queue();
+    observed(index, instance, AFX_DONE, stop.sequence, AFX_OK);
+    irq_run_worker();
+    assert(g_instances[index].recycling);
+    head = queue_head();
+    assert(afx_instance_stop(instance) == AFX_OK && queue_head() == head); /* It has ended. */
+    recycle(index);
+    assert(afx_instance_stop(instance) == -AFX_STALE_GENERATION);
+    maps_empty();
     assert(g_available_channels == UINT64_MAX);
-    afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
+    /* A PAUSE behind the ACTIVATE, then a STOP behind the PAUSE. */
+    assert(afx_instance_activate(flow, &instance) == AFX_OK);
+    index = AFX_HANDLE_INDEX(instance);
+    head = queue_head();
+    assert(afx_instance_pause(instance) == AFX_OK && afx_instance_pause(instance) == AFX_OK);
+    assert(g_available_channels != UINT64_MAX); /* A paused instance keeps its channel. */
+    assert(afx_instance_stop(instance) == AFX_OK && queue_head() == head + 2u);
+    assert(queued(head).opcode == AFX_CMD_PAUSE && queued(head + 1).opcode == AFX_CMD_STOP);
+    assert(g_available_channels == UINT64_MAX);
+    release_instance_preserving_generation(index);
+    drain_queue();
+    maps_empty();
+}
+
+static void test_stop_held_back(afx_asset_t flow) {
+    /* A full ring holds a STOP back, with its channel; it goes before the next
+     * command, or with the next report. */
+    afx_instance_t instance, other;
+    assert(afx_instance_activate(flow, &instance) == AFX_OK);
+    assert(afx_instance_activate(flow, &other) == AFX_OK);
+    uint32_t index = AFX_HANDLE_INDEX(instance), other_index = AFX_HANDLE_INDEX(other);
+    observed(index, instance, AFX_RUNNING, g_instances[index].status.sequence, AFX_OK);
+    observed(other_index, other, AFX_RUNNING, g_instances[other_index].status.sequence, AFX_OK);
+    irq_run_worker();
+    drain_queue();
+    uint32_t head = queue_head();
+    while (afx_instance_gain(other, 1) == AFX_OK) {}
+    assert(queue_head() == head + AFX_CMD_QUEUE_CAPACITY);
+    uint64_t available = g_available_channels, mask = g_instances[index].channel_mask;
+    assert(afx_instance_stop(instance) == AFX_OK && g_endings_held == 1);
+    assert(afx_instance_stop(instance) == AFX_OK && g_endings_held == 1);
+    assert(g_available_channels == available && queue_head() == head + AFX_CMD_QUEUE_CAPACITY);
+    /* The ARM7 takes eight: the STOP goes ahead of the next gain. */
+    afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), head + 8u);
+    assert(afx_instance_gain(other, 2) == AFX_OK && !g_endings_held);
+    afx_cmd_t stop = queued(head + AFX_CMD_QUEUE_CAPACITY);
+    assert(stop.opcode == AFX_CMD_STOP && stop.reference == instance);
+    assert(queued(head + AFX_CMD_QUEUE_CAPACITY + 1).opcode == AFX_CMD_INSTANCE_GAIN);
+    assert(g_available_channels == (available | mask));
+    /* Full again: this time a report from the ARM7 sends it. */
+    drain_queue();
+    observed(index, instance, AFX_DONE, stop.sequence, AFX_OK);
+    irq_run_worker();
+    recycle(index);
+    head = queue_head();
+    while (afx_instance_gain(other, 1) == AFX_OK) {}
+    assert(afx_instance_stop(other) == AFX_OK && g_endings_held == 1);
+    drain_queue();
+    /* The report of a refused PATCH, say. */
+    observed(other_index, other, AFX_RUNNING, g_instances[other_index].status.sequence,
+             AFX_BAD_COMMAND);
+    irq_run_worker();
+    assert(!g_endings_held && queued(queue_head() - 1).opcode == AFX_CMD_STOP);
+    assert(g_available_channels == UINT64_MAX);
+    release_instance_preserving_generation(other_index);
+    drain_queue();
+    maps_empty();
+}
+
+static void test_replace(afx_asset_t flow) {
+    /* A flow that needs every channel replaces one that holds them all. */
+    afx_asset_slot_t *asset = &g_assets[AFX_HANDLE_INDEX(flow)];
+    asset->required_channels = 64;
+    afx_instance_t old, next, refused = 0;
+    assert(afx_instance_activate(flow, &old) == AFX_OK);
+    uint32_t index = AFX_HANDLE_INDEX(old);
+    observed(index, old, AFX_RUNNING, g_instances[index].status.sequence, AFX_OK);
+    irq_run_worker();
+    drain_queue();
+    assert(afx_instance_activate(flow, &refused) == -AFX_NO_CHANNELS && !refused);
+    /* Without room for both commands, nothing happens: old keeps playing. */
+    uint32_t head = queue_head();
+    for (unsigned i = 0; i < AFX_CMD_QUEUE_CAPACITY - 1u; ++i)
+        assert(afx_instance_gain(old, 1) == AFX_OK);
+    assert(afx_instance_replace(old, flow, &refused) == -AFX_IPC_FULL && !refused);
+    assert(queue_head() == head + AFX_CMD_QUEUE_CAPACITY - 1u && !g_available_channels);
+    assert(g_instances[index].channel_mask == UINT64_MAX && !g_instances[index].ending);
+    drain_queue();
+    head = queue_head();
+    assert(afx_instance_replace(old, flow, &next) == AFX_OK);
+    assert(queued(head).opcode == AFX_CMD_STOP && queued(head).reference == old);
+    assert(queued(head + 1).opcode == AFX_CMD_ACTIVATE && queued(head + 1).reference == next);
+    assert(g_instances[AFX_HANDLE_INDEX(next)].channel_mask == UINT64_MAX);
+    assert(!g_instances[index].channel_mask && !g_available_channels);
+    /* old is stopping: replacing it again only activates, and next has the channels. */
+    assert(afx_instance_replace(old, flow, &refused) == -AFX_NO_CHANNELS && !refused);
+    assert(afx_instance_replace(0, flow, &refused) == -AFX_NO_CHANNELS && !refused);
+    release_instance_preserving_generation(index);
+    release_instance_preserving_generation(AFX_HANDLE_INDEX(next));
+    drain_queue();
+    asset->required_channels = 1;
+    assert(afx_instance_replace(0, flow, &next) == AFX_OK); /* Nothing to stop. */
+    assert(queued(queue_head() - 1).opcode == AFX_CMD_ACTIVATE);
+    release_instance_preserving_generation(AFX_HANDLE_INDEX(next));
+    drain_queue();
+    maps_empty();
+    assert(g_available_channels == UINT64_MAX);
+}
+
+static void test_release_when_idle(const uint8_t bank_data[96], const uint8_t flow_data[160]) {
+    /* A released flow is freed once its last instance is recycled, and a
+     * released bank once the last flow that retains it is freed. */
+    afx_bank_t bank = {0};
+    afx_asset_t flow, refused_flow = 0;
+    afx_instance_t instance, refused = 0;
+    assert(afx_bank_load_memory(&bank, bank_data, 96) == AFX_OK);
+    assert(afx_bank_flow_upload(&bank, flow_data, 160, &flow) == AFX_OK);
+    uint32_t flow_index = AFX_HANDLE_INDEX(flow), bank_index = AFX_HANDLE_INDEX(bank.asset);
+    assert(afx_instance_activate(flow, &instance) == AFX_OK);
+    uint32_t index = AFX_HANDLE_INDEX(instance);
+    assert(afx_asset_free(flow) == -AFX_ASSET_REFERENCED);
+    assert(afx_asset_release(flow) == AFX_OK && g_assets[flow_index].live);
+    assert(afx_asset_release(bank.asset) == AFX_OK && g_assets[bank_index].live);
+    assert(afx_instance_activate(flow, &refused) == -AFX_INVALID_HANDLE && !refused);
+    assert(afx_bank_flow_upload(&bank, flow_data, 160, &refused_flow) == -AFX_INVALID_HANDLE);
+    drain_queue();
+    observed(index, instance, AFX_DONE, g_instances[index].status.sequence, AFX_OK);
+    irq_run_worker();
+    assert(g_assets[flow_index].live);
+    recycle(index);
+    assert(!g_assets[flow_index].live && !g_assets[bank_index].live);
+    assert(afx_asset_addr(flow) == 0 && afx_asset_addr(bank.asset) == 0);
+    /* With nothing using it, release frees at once. */
+    bank = (afx_bank_t){0};
+    assert(afx_bank_load_memory(&bank, bank_data, 96) == AFX_OK);
+    assert(afx_asset_release(bank.asset) == AFX_OK && afx_asset_addr(bank.asset) == 0);
+    assert(g_available_channels == UINT64_MAX);
+    maps_empty();
 }
 
 static void test_enqueue_tail_cache(afx_asset_t flow) {
@@ -699,8 +855,11 @@ int main(int argc, char **argv) {
     assert(afx_asset_free(raw) == AFX_OK && g_assets[bank_index].references == 1);
     test_channel_maps(flow);
     test_coinciding_work(flow);
-    test_one_lifecycle_command(flow);
+    test_stop_behind_activate(flow);
+    test_stop_held_back(flow);
+    test_replace(flow);
     test_enqueue_tail_cache(flow);
+    test_release_when_idle(bank_data, flow_data);
     memset(seek_data, 0, sizeof(seek_data));
     afx_write32(seek_data, AFX_SEEK_MAGIC); afx_write32(seek_data + 4, AFX_SEEK_VERSION);
     afx_write32(seek_data + 8, 1); afx_write32(seek_data + 12, 0x12345678u);
