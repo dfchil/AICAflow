@@ -32,7 +32,16 @@ application code must not hard-code it. The asset ceiling is `0x1fcec0`.
 A DSP scene owns a contiguous, 2 KiB-aligned allocation within that arena:
 16, 32, 64 or 128 KiB according to RBL. Assets can occupy space on either
 side of it. A program with no external delay RAM allocates nothing.
-Install memory-using scenes before loading assets to avoid fragmentation.
+Install memory-using scenes before loading assets to avoid fragmentation,
+or plan the ring in a permanent AFS scene: the DSP scene calls use a loaded
+scene's ring entry instead of allocating one.
+
+An AFS scene is one allocation of the size the authoring tool planned, with
+every bank, flow, slot and ring at a fixed offset inside it. Nothing in it
+moves, and it is freed whole, so a permanent scene plus one level scene (two
+during a transition that loads the next level first) never fragments the
+arena. A scene with a ring is allocated on a 2 KiB boundary. The SH-4 keeps
+about 40 bytes per entry for a loaded scene, plus its names.
 
 Fixed regions are adjacent, with the 32-byte-aligned command queue at the top
 of RAM. Status occupies 80 bytes. Private state currently occupies 5,392 bytes, which

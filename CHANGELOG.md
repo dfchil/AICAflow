@@ -7,6 +7,23 @@ the commit history.
 
 ### Added
 
+- AFS scene files and their loader, `<aicaflow/scene.h>`. An AFS holds the
+  banks and flows of one scene with the AICA layout the authoring tool
+  planned; `afx_scene_load()` allocates one block and places each entry at its
+  offset, so scenes loaded and released in turn do not fragment the arena. A
+  flow's bank slots bind by identity, in the scene or in parent scenes such as
+  a permanent one with the core bank. `afx_scene_find()` and
+  `afx_scene_entry()` give flows by name and list the entries with their
+  lengths, for a Music Test. A slot entry reserves room for a bank and a flow
+  that `afx_scene_slot_load()` replaces in place once its song is idle, and a
+  ring entry places the DSP delay ring, which the DSP scene calls then use.
+  `afx_scene_release()` frees the block once nothing plays from it; a scene's
+  assets cannot be freed on their own. `afx_scene_validate()` in the format
+  codec checks the layout. Format API 5; no firmware change. Checked on
+  hardware with `make -C driver scenes-check` (tests/check_scenes.c): a level
+  scene and its song slot loaded, played and released 8 × 3 times beside a
+  permanent scene with the core bank and the DSP ring, the largest free block
+  restored every time.
 - Flows that play from several banks (firmware ABI 13). A flow with
   `AFX_FLAG_BANKS` takes samples from up to four banks, so a scene bank no
   longer copies the samples a core bank already holds. Bits 21–22 of a

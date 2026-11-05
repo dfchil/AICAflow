@@ -111,19 +111,27 @@ done:
     return result;
 }
 
-int afx_bank_load_memory(afx_bank_t *bank, const void *data, uint32_t size) {
+int bank_upload(afx_bank_t *bank, const void *data, uint32_t size, uint32_t place,
+                uint32_t place_bytes) {
     bank_header_t header;
     if (!bank || bank->asset) return -AFX_BAD_BOUNDS;
     int result = decode_header(data, size, &header);
     if (result) return result;
+    if (header.data_size > g_asset_limit) return -AFX_BAD_BOUNDS;
+    if (place && align_up(header.data_size, AFX_UPLOAD_ALIGN) > place_bytes) return -AFX_NO_AICA_RAM;
     afx_asset_t asset = AFX_ASSET_INVALID;
-    result = afx_sample_bank_upload((const uint8_t *)data + header.data_offset,
-                                    header.data_size, &asset);
+    result = sample_bank_upload((const uint8_t *)data + header.data_offset, header.data_size,
+                                place, &asset);
     if (result) return result;
     bank->asset = asset;
     bank->id = header.id;
     bank->bytes = header.data_size;
     return AFX_OK;
+}
+
+int afx_bank_load_memory(afx_bank_t *bank, const void *data, uint32_t size) {
+    HOST_GUARD(-AFX_BUSY);
+    return bank_upload(bank, data, size, 0, 0);
 }
 
 int afx_bank_load_file(afx_bank_t *bank, const char *path) {

@@ -19,6 +19,7 @@ the required bank-relative address and AICA register values.
 | `.afx` | Timed control stream and AICA setup templates | SH-4 loader, ARM7 executor |
 | `.afc` | Optional seek checkpoints for one exact AFX/AFB pair | SH-4 only |
 | `.afi` | Optional binary AFB sample catalog | SH4-side one-shot code |
+| `.afs` | Optional scene: banks and flows with their planned AICA layout | SH-4 loader |
 
 These are the public runtime formats. Binary files use little-endian fields
 and fixed headers.
@@ -154,6 +155,57 @@ operation can use temporary AICA staging memory; it does **not** load the AFC
 table into AICA or make ARM7 interpret it. Checkpoints describe register/timeline
 state, not a saved PCM decoder cursor, sample waveform or DSP delay-ring image;
 seeking is musical reconstruction, not bit-exact sample-phase restoration.
+
+## AFS — scene
+
+An AFS holds the banks and flows of one scene and says where each goes in the
+one AICA block that holds them all. The authoring tool plans that layout; the
+loader allocates the block once and places every entry at its offset, so
+nothing in a scene moves and the block is freed whole.
+
+An AFS begins with exactly 32 bytes:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 4 | magic `AFS\0` |
+| 4 | 4 | version (`1`) |
+| 8 | 8 | scene identity: low then high word, nonzero |
+| 16 | 4 | total file bytes |
+| 20 | 4 | block bytes, a multiple of 32 |
+| 24 | 4 | entry count, at least 1 |
+| 28 | 4 | reserved, zero |
+
+The entries follow at offset 32, 32 bytes each:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 4 | kind: `1` bank, `2` flow, `3` slot, `4` DSP ring |
+| 4 | 4 | file offset of the entry's zero-terminated name, or zero for none |
+| 8 | 4 | file offset of its AFB or AFX file; zero for a slot or ring |
+| 12 | 4 | that file's bytes |
+| 16 | 4 | block offset: 32-byte aligned, a ring's 2 KiB aligned |
+| 20 | 4 | block bytes, a multiple of 32 |
+| 24 | 4 | a flow's authored length in ticks; zero for other kinds |
+| 28 | 4 | reserved, zero |
+
+- A **bank** entry holds a whole AFB file. Its payload goes at the block
+  offset, and its block bytes are at least the payload rounded up to 32.
+  No two banks of a scene have the same identity.
+- A **flow** entry holds an AFX file, whose image goes at the block offset.
+  Each of its bank slots takes the bank with that identity in the scene, or
+  else in one of the parent scenes the program names when it loads the scene.
+- A **slot** entry reserves a range for a bank and a flow loaded later: the
+  bank's payload at its start, the flow's image at the next 32-byte boundary.
+- A **ring** entry reserves the DSP delay ring, 16 KiB << RBL (RBL 0–3), on a
+  2 KiB boundary in AICA RAM; a scene with one is allocated on a 2 KiB
+  boundary. A scene has at most one.
+- Names come after the entries. A name is nonempty and unique in its scene.
+  The files come after the names, at 32-byte boundaries so that a bank's
+  payload can go to AICA by DMA straight from the loaded file.
+
+`afx_scene_validate()` checks the layout, including that the block ranges lie
+in the block and do not overlap. The AFB and AFX files are checked as they
+load. A scene needs no firmware support beyond what its flows need.
 
 ## AFI — SH4 sample catalog
 

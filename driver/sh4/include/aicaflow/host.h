@@ -101,7 +101,9 @@ int afx_asset_free(afx_asset_t asset);
 /* Frees asset now, or once nothing uses it: a flow when its last instance has
  * been recycled, a bank when the last flow that retains it is freed. The
  * program gives the handle up either way: activating a released flow, or
- * uploading a flow against a released bank, is refused. */
+ * uploading a flow against a released bank, is refused. The assets of a scene
+ * go with the scene (afx_scene_release in <aicaflow/scene.h>): this call and
+ * afx_asset_free() refuse them with -AFX_ASSET_REFERENCED. */
 int afx_asset_release(afx_asset_t asset);
 uint32_t afx_asset_addr(afx_asset_t asset);
 uint32_t afx_asset_size(afx_asset_t asset);
@@ -175,7 +177,9 @@ int afx_instance_lanes_set(afx_instance_t instance, uint32_t modifier,
  *
  * SH4 owns the shared AICA asset arena. Programs with no MRD/MWT instructions
  * allocate no delay RAM. Programs with delay RAM allocate 128 KiB by default;
- * install the scene before loading assets to avoid fragmentation. A timeout
+ * install the scene before loading assets to avoid fragmentation. A loaded
+ * AFS scene's ring entry (<aicaflow/scene.h>) is used instead of an
+ * allocation when it is large enough. A timeout
  * keeps the ring allocated: retry disable or shut down before reusing it. */
 int afx_dsp_scene_program(const void *program, uint32_t bytes);
 /* As afx_dsp_scene_program(), but selects the AICA delay-ring RBL value

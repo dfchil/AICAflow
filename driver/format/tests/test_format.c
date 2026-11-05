@@ -6,7 +6,7 @@
 #if defined(AFX_ABI_VERSION) || defined(AFX_CONTROL_BASE) || defined(AFX_CMD_QUEUE_CAPACITY)
 #error "The public asset format must not expose firmware or IPC internals"
 #endif
-#if AFX_FORMAT_API_VERSION != 4 || AFX_FILE_MAGIC != 0x32584641
+#if AFX_FORMAT_API_VERSION != 5 || AFX_FILE_MAGIC != 0x32584641
 #error "Unexpected public format API or AFX magic"
 #endif
 
@@ -41,6 +41,11 @@ int main(void) {
     assert(AFX_MAX_FLOW_BANKS == 4 && AFX_BANK_SLOT_SHIFT == 21 && AFX_BANK_TABLE_BYTES == 16);
     assert(AFX_BANK_TABLE_OFFSET(37u) == 40 && AFX_BANK_TABLE_OFFSET(40u) == 40);
     assert(AFX_PCM16 == 0 && AFX_PCM8 == 1 && AFX_ADPCM == 2);
+    assert(AFX_SCENE_MAGIC == 0x00534641u && AFX_SCENE_VERSION == 1);
+    assert(sizeof(afx_scene_header_t) == 32 && sizeof(afx_scene_entry_t) == 32);
+    assert(offsetof(afx_scene_header_t, block_bytes) == 20 && offsetof(afx_scene_entry_t, ticks) == 24);
+    assert(AFX_SCENE_BANK == 1 && AFX_SCENE_FLOW == 2 && AFX_SCENE_SLOT == 3 && AFX_SCENE_RING == 4);
+    assert(AFX_SCENE_RING_ALIGN == 2048 && AFX_SCENE_RING_MIN_BYTES == 0x4000);
     assert(AFX_WORK_PROFILE_COMMANDS(AFX_WORK_PROFILE(38, 171)) == 38);
     assert(AFX_WORK_PROFILE_WRITES(AFX_WORK_PROFILE(38, 171)) == 171);
     return 0;

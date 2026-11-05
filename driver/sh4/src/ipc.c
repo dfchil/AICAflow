@@ -12,7 +12,8 @@ afx_instance_slot_t g_instances[AFX_MAX_FLOW_SLOTS];
 uint64_t g_available_channels = UINT64_MAX;
 uint64_t g_map_used[AFX_CHANNEL_MAP_ARENAS];
 bool g_dsp_scene;
-uint32_t g_dsp_ring;
+uint32_t g_dsp_ring, g_dsp_ring_bytes;
+bool g_dsp_ring_placed;
 uint16_t g_dsp_return_left, g_dsp_return_right;
 uint32_t g_next_sequence = 1;
 uint32_t g_queue_head; /* Only the SH-4 advances head, so it need not be read back. */

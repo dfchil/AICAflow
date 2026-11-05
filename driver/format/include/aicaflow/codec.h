@@ -155,4 +155,11 @@ uint32_t afx_control_id(const void *image, uint32_t size);
 afx_result_t afx_flow_duration(const void *data, uint32_t size, uint64_t *out_ticks,
                                uint32_t *out_tick_rate_num, uint32_t *out_tick_rate_den);
 void afx_encode_header(uint8_t out[AFX_FILE_HEADER_BYTES], const afx_file_header_t *header);
+/* Validates the layout of an AFS scene file: its header, its entries, their
+ * names (unique when present), and block ranges that lie in the block without
+ * overlapping. The AFB and AFX files it holds are checked when they load. */
+afx_result_t afx_scene_validate(const void *data, uint32_t size, afx_scene_header_t *out);
+/* Entry i of a validated AFS file, and its name ("" for none). */
+afx_scene_entry_t afx_scene_entry_at(const void *data, uint32_t i);
+const char *afx_scene_entry_name(const void *data, const afx_scene_entry_t *entry);
 #endif

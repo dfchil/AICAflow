@@ -56,7 +56,7 @@ void upload_words(uint32_t address, const void *data, uint32_t size) {
         size -= count;
     }
 }
-static int upload_sample_data(const void *data, uint32_t bytes, afx_asset_t *out) {
+int sample_bank_upload(const void *data, uint32_t bytes, uint32_t place, afx_asset_t *out) {
     if (g_upload_dma_asset) return -AFX_BUSY;
     /* Aligned input goes straight to DMA; only an incomplete final cache line
      * needs staging. Unaligned inputs retain the bounded bounce path. */
@@ -66,7 +66,10 @@ static int upload_sample_data(const void *data, uint32_t bytes, afx_asset_t *out
     void *staging = staging_bytes ? upload_image_alloc(staging_bytes) : NULL;
     if (staging_bytes && !staging) return -AFX_NO_HOST_RAM;
     afx_asset_t asset = AFX_ASSET_INVALID;
-    int result = afx_sample_bank_stream_begin(bytes, &asset);
+    int result = AFX_OK;
+    if (!place) result = afx_sample_bank_stream_begin(bytes, &asset);
+    else if (!(asset = place_asset(place, bytes, false))) result = -AFX_NO_HOST_RAM;
+    else g_assets[AFX_HANDLE_INDEX(asset)].sample_bank = true;
     for (uint32_t offset = 0; !result && offset < bytes;) {
         uint32_t count = bytes - offset;
         if (count > capacity) count = capacity;
@@ -89,7 +92,7 @@ static int upload_sample_data(const void *data, uint32_t bytes, afx_asset_t *out
         offset += count;
     }
     if (!result) result = afx_sample_bank_stream_finish(asset);
-    if (result && asset) (void)afx_asset_free(asset);
+    if (result && asset) discard_asset(asset);
     free(staging);
     if (!result) *out = asset;
     return result;
@@ -101,13 +104,7 @@ int afx_sample_bank_upload(const void *data, uint32_t bytes, afx_asset_t *out) {
     if (!out) return -AFX_BAD_BOUNDS;
     *out = AFX_ASSET_INVALID;
     if (!data || !bytes || bytes > g_asset_limit) return -AFX_BAD_BOUNDS;
-    int result = upload_sample_data(data, bytes, out);
-    if (!result) {
-        uint32_t index;
-        (void)resolve_asset(*out, &index);
-        g_assets[index].sample_bank = true;
-    }
-    return result;
+    return sample_bank_upload(data, bytes, 0, out);
 }
 
 
@@ -136,10 +133,12 @@ int afx_sample_bank_stream_dma_begin(afx_asset_t asset, uint32_t byte_offset,
         return -AFX_BAD_BOUNDS;
     afx_asset_slot_t *bank = &g_assets[index];
     padded = align_up(bytes, AFX_UPLOAD_ALIGN);
+    /* A bank placed in a scene's block has its size rounded up to 32 there. */
+    uint32_t room = bank->allocation_size ? bank->allocation_size : align_up(bank->size, AFX_UPLOAD_ALIGN);
     /* G2 DMA needs a 32-byte-aligned destination, so only the last chunk of a
      * bank may have a length that is not a multiple of 32. */
     if (!padded || byte_offset != bank->upload_cursor || bytes > bank->size - byte_offset ||
-        padded > bank->allocation_size - byte_offset ||
+        padded > room - byte_offset ||
         ((bytes & (AFX_UPLOAD_ALIGN - 1u)) && byte_offset + bytes != bank->size)) return -AFX_BAD_BOUNDS;
     if (g_upload_dma_asset) return -AFX_BUSY;
     dcache_wback_range((uintptr_t)data, padded);

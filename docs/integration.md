@@ -151,6 +151,42 @@ Runtime lane modifiers are persistent SH4-controlled grouping modifiers
 (gain/mute/pan/send/pitch) on authored lane maps. These are distinct from ordinary
 timed PATCH operations in the control stream.
 
+## Scenes
+
+An AFS scene file (see [Runtime asset formats](../driver/format/docs/assets.md#afs--scene))
+holds the banks and flows of one scene with a layout the authoring tool
+planned. `afx_scene_load(data, size, parents, count, &scene)` in
+`<aicaflow/scene.h>` allocates one block of the scene's size and places every
+bank and flow at its offset, banks by DMA. A flow's bank slots take the banks
+with their identities in the scene, or else in the parents, typically a
+permanent scene that holds the core bank. A failure loads nothing.
+
+```c
+afx_scene_t core, level;
+afx_asset_t song;
+afx_scene_load(core_afs, core_bytes, NULL, 0, &core);
+afx_scene_load(level_afs, level_bytes, &core, 1, &level);
+afx_scene_find(level, "theme", &song); /* a flow, by name */
+```
+
+`afx_scene_entry(scene, i, &info)` lists the entries with their names, kinds,
+addresses and, for flows, the authored length and whether they loop: enough
+for a Music Test row. A **slot** is a range reserved for content loaded later:
+`afx_scene_slot_load(scene, "song", bank, bank_bytes, flow, flow_bytes, &asset)`
+puts a bank and a flow there, never through the free list. What the slot held
+must be idle, by the rule `afx_asset_release()` frees by; otherwise the call
+returns `AFX_ASSET_REFERENCED` and the slot keeps it. A per-level song sized
+for the largest one no longer fragments the arena.
+
+`afx_scene_release(scene)` gives a scene up. Its flows and banks are released
+as by `afx_asset_release()`, and the block is freed once no instance plays its
+flows and no flow of another scene binds its banks. Until then a scene's
+assets belong to it: `afx_asset_free()` and `afx_asset_release()` refuse them.
+A scene's **ring** entry is the DSP ring the DSP scene calls use while the
+scene is loaded and the ring is large enough; such a scene cannot be released
+until the DSP is disabled. Plain bank and flow uploads keep working beside
+scenes.
+
 ## Looping flows
 
 A flow whose stream ends with `LOOP` (header flag `AFX_FLAG_LOOP`;
