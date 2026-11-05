@@ -154,6 +154,15 @@ which fields are held; the registers keep their values, and the voice's bases
 the projected ones (TOTAL_LEVEL, DIRECT, PITCH, DSP_SEND). A flow's own PATCH
 instructions hold nothing. ABI 11 firmware lets the NOTE overwrite the PATCH.
 
+ABI 13 changes no record. ACTIVATE accepts `AFX_FLAG_BANKS`, which ABI 12
+firmware refuses as a bad command. With it, the payload's bank is slot 0, and
+the bank table at the end of the image gives slots 1–3. Activation checks that
+the table lies in the image and that every slot it fills lies in the asset
+arena. A NOTE or REBUILD state whose address bits 21–22 name slot 1–3 reads
+that slot's entry and fails with `AFX_BAD_SAMPLE` when the slot is empty or the
+offset lies past its bank. Without the flag, those bits stay part of a slot 0
+offset, as before.
+
 Activation encodes the bank base as a 16-bit address in 32-byte units and its
 size as a 32-bit byte count. REBUILD sample address words are bank-relative,
 not absolute AICA addresses. PATCH rejects CONTROL and SAMPLE_LOW. Firmware and host must be upgraded

@@ -58,6 +58,12 @@ typedef struct {
 #if defined(__sh__)
 _Static_assert(sizeof(afx_asset_slot_t) == 84, "SH-4 asset bookkeeping size");
 #endif
+/* The banks of slots 1 and up of one AFX_FLAG_BANKS flow; slot 0 is the
+ * asset's bank. Only such flows have a record, so asset slots keep their size. */
+typedef struct {
+    uint32_t flow; /* Index of the flow in g_assets. */
+    afx_asset_t banks[AFX_MAX_FLOW_BANKS - 1u]; /* Retained bank handles; invalid past the flow's count. */
+} afx_flow_banks_t;
 typedef struct {
     bool live; /* Instance handle is allocated. */
     bool retired; /* Slot is permanently retired to prevent generation wrap. */
@@ -86,6 +92,8 @@ extern afx_block_t *g_free_blocks, *g_allocs;
 extern uint32_t g_free_count, g_free_capacity, g_alloc_count, g_alloc_capacity;
 extern afx_asset_slot_t *g_assets;
 extern uint32_t g_asset_capacity;
+extern afx_flow_banks_t *g_flow_banks;
+extern uint32_t g_flow_bank_count, g_flow_bank_capacity;
 extern afx_instance_slot_t g_instances[AFX_MAX_FLOW_SLOTS];
 extern uint64_t g_available_channels, g_map_used[AFX_CHANNEL_MAP_ARENAS];
 extern uint32_t g_next_sequence, g_queue_head, g_queue_tail_seen;
@@ -125,6 +133,10 @@ afx_asset_t reserve_asset(uint32_t size, uint32_t align, bool live);
 int free_asset_slot(uint32_t index);
 /* Drops one reference, and frees an asset the program released once it has none. */
 void asset_unreference(uint32_t index);
+/* Records the banks of slots 1 and up of a flow; false without host RAM. */
+bool flow_banks_add(uint32_t flow, const afx_asset_t banks[AFX_MAX_FLOW_BANKS - 1u]);
+/* The bank a flow plays from in a slot, or AFX_ASSET_INVALID. */
+afx_asset_t flow_bank(uint32_t flow, uint32_t slot);
 
 void upload_dma_wait(void);
 void upload_dma_complete(void *ignored);

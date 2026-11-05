@@ -7,6 +7,21 @@ the commit history.
 
 ### Added
 
+- Flows that play from several banks (firmware ABI 13). A flow with
+  `AFX_FLAG_BANKS` takes samples from up to four banks, so a scene bank no
+  longer copies the samples a core bank already holds. Bits 21–22 of a
+  bank-relative sample address select the bank slot; header field 60, formerly
+  `reserved1`, is now `banks_offset` and points at the identities of slots 1–3,
+  and a 16-byte bank table at the end of the image gives the ARM7 their
+  addresses. `afx_flow_upload(banks, count, ...)` uploads such a flow;
+  `afx_file_bank_count()` and `afx_file_bank_identity()` read its list. The flow
+  retains every bank, and releasing one waits for the last flow that plays from
+  it. Flows without the flag, AFB and AFC files are unchanged and play as
+  before. ABI 12 firmware refuses a flagged flow at activation. Format API 4;
+  the AFX file version is unchanged (older validators reject the flag and
+  field). The firmware image is 300 bytes larger. Checked on hardware with
+  `make -C driver banks-check` (tests/check_banks.c): a setup in slot 1 reads
+  back the scene bank's address, an unchanged flow beside it the core bank's.
 - `afx_instance_replace(old, flow, &out)` stops one instance and activates a
   flow in its place, which may take the old instance's channels. A refusal
   (no slot, no channels, no room in the queue) leaves the old instance as it

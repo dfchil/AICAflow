@@ -145,7 +145,8 @@ static int activation_send(const activation_plan_t *plan, afx_instance_t *out) {
         .setups_offset = 0, .setup_count = flow->setup_count,
         .channel_map = plan->map_address, .required_channels = plan->count,
         .flags = flow->flags & (AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC |
-                                       AFX_FLAG_MUSIC_CHORUS | AFX_FLAG_LANES | AFX_FLAG_LOOP),
+                                       AFX_FLAG_MUSIC_CHORUS | AFX_FLAG_LANES | AFX_FLAG_LOOP |
+                                       AFX_FLAG_BANKS),
         .start_tick = start_tick, .bank_base_units = (uint16_t)(plan->bank_base >> 5),
         .bank_bytes = plan->bank_bytes
     };
@@ -360,10 +361,17 @@ static int checkpoint_states(const afx_asset_slot_t *flow, uint32_t tick,
         if (!(out[i].fields[AFX_FIELD_CONTROL] & 0x400u)) {
             uint32_t relative = ((out[i].fields[AFX_FIELD_CONTROL] & 0x7fu) << 16) |
                                 out[i].fields[AFX_FIELD_SAMPLE_LOW];
+            uint32_t slot = 0;
+            if (flow->flags & AFX_FLAG_BANKS) {
+                slot = relative >> AFX_BANK_SLOT_SHIFT;
+                relative &= AFX_BANK_SLOT_OFFSET_MASK;
+            }
+            afx_asset_t bank = flow_bank((uint32_t)(flow - g_assets), slot);
             const afx_asset_slot_t *samples = flow;
-            if (flow->bank) {
+            if (slot && !bank) { free(out); return -AFX_BAD_FORMAT; }
+            if (bank) {
                 uint32_t dependency;
-                if (!resolve_asset(flow->bank, &dependency) ||
+                if (!resolve_asset(bank, &dependency) ||
                     !g_assets[dependency].sample_bank) { free(out); return -AFX_BAD_FORMAT; }
                 samples = &g_assets[dependency];
             }

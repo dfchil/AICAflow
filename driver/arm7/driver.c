@@ -473,6 +473,21 @@ static void service(uint32_t index) {
     publish(index, context->reference, state_word(context), context->sequence, AFX_OK,
             stream_position(context), context->deadline, context->max_lateness);
 }
+/* An AFX_FLAG_BANKS flow's bank table: inside the image, and every slot it
+ * fills a bank in the asset arena. Slot 0 comes from the activation. */
+static int bank_table_valid(const afx_activation_t *activate) {
+    uint32_t table = AFX_BANK_TABLE_OFFSET(activate->stream_offset + activate->stream_size);
+    if ((activate->image_base & 3u) || !range(table, AFX_BANK_TABLE_BYTES, activate->image_size))
+        return 0;
+    for (uint32_t slot = 1; slot < AFX_MAX_FLOW_BANKS; ++slot) {
+        uint32_t entry = *(volatile uint32_t *)(activate->image_base + table + slot * 4u);
+        uint32_t base = (entry & 0xffffu) << AFX_BANK_ADDRESS_UNIT_SHIFT;
+        uint32_t bytes = (entry >> 16) << AFX_BANK_ADDRESS_UNIT_SHIFT;
+        if (bytes ? base < (uint32_t)(uintptr_t)__asset_base || !asset_range(base, bytes) : base)
+            return 0;
+    }
+    return 1;
+}
 static void activation(uint32_t reference, uint32_t sequence, const uint8_t payload[48]) {
     STATUS->reserved = 0xa1010000u;
     afx_activation_t activate;
@@ -501,7 +516,8 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
               (activate.setups_offset + activate.setup_count * AFX_SETUP_BYTES))) ||
         !map_valid(activate.channel_map, activate.required_channels) ||
         (activate.flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
-                            AFX_FLAG_LANES | AFX_FLAG_LOOP))) {
+                            AFX_FLAG_LANES | AFX_FLAG_LOOP | AFX_FLAG_BANKS)) ||
+        ((activate.flags & AFX_FLAG_BANKS) && !bank_table_valid(&activate))) {
         publish(index, reference, AFX_ERROR, sequence, AFX_BAD_COMMAND, 0, 0, 0);
         return;
     }

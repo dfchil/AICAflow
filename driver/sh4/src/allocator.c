@@ -64,6 +64,7 @@ bool allocator_reset(uint32_t dynamic_base) {
     g_dynamic_base = 0;
     g_asset_limit = AFX_ASSET_MAX;
     g_free_count = g_alloc_count = 0;
+    g_flow_bank_count = 0;
     for (uint32_t i = 0; i < g_asset_capacity; ++i) {
         free(g_assets[i].checkpoints);
         g_assets[i].bank = AFX_ASSET_INVALID;
@@ -301,10 +302,32 @@ void asset_unreference(uint32_t index) {
     if (!--g_assets[index].references && g_assets[index].release_wanted && g_assets[index].live)
         (void)free_asset_slot(index);
 }
+bool flow_banks_add(uint32_t flow, const afx_asset_t banks[AFX_MAX_FLOW_BANKS - 1u]) {
+    if (!grow((void **)&g_flow_banks, &g_flow_bank_capacity, g_flow_bank_count + 1u,
+              sizeof(*g_flow_banks))) return false;
+    afx_flow_banks_t *record = &g_flow_banks[g_flow_bank_count++];
+    record->flow = flow;
+    memcpy(record->banks, banks, sizeof(record->banks));
+    return true;
+}
+afx_asset_t flow_bank(uint32_t flow, uint32_t slot) {
+    if (!slot) return g_assets[flow].bank;
+    if (slot >= AFX_MAX_FLOW_BANKS || !(g_assets[flow].flags & AFX_FLAG_BANKS))
+        return AFX_ASSET_INVALID;
+    for (uint32_t i = 0; i < g_flow_bank_count; ++i)
+        if (g_flow_banks[i].flow == flow) return g_flow_banks[i].banks[slot - 1u];
+    return AFX_ASSET_INVALID;
+}
 int free_asset_slot(uint32_t index) {
     afx_asset_slot_t *slot = &g_assets[index];
     if (!free_allocation(slot->addr)) return -AFX_BAD_BOUNDS;
-    afx_asset_t bank = slot->bank;
+    afx_asset_t banks[AFX_MAX_FLOW_BANKS] = {slot->bank};
+    for (uint32_t i = 0; i < g_flow_bank_count; ++i) {
+        if (g_flow_banks[i].flow != index) continue;
+        memcpy(banks + 1, g_flow_banks[i].banks, sizeof(g_flow_banks[i].banks));
+        g_flow_banks[i] = g_flow_banks[--g_flow_bank_count];
+        break;
+    }
     slot->bank = AFX_ASSET_INVALID;
     slot->sample_bank = false;
     slot->release_wanted = false;
@@ -319,9 +342,11 @@ int free_asset_slot(uint32_t index) {
     slot->peak_commands = slot->peak_register_writes = 0;
     if (slot->generation == UINT16_MAX) slot->retired = true;
     else ++slot->generation;
-    /* A flow retains its bank; the last flow freed may free a released bank. */
-    uint32_t bank_index;
-    if (bank && resolve_asset(bank, &bank_index)) asset_unreference(bank_index);
+    /* A flow retains its banks; the last flow freed may free a released bank. */
+    for (uint32_t i = 0; i < AFX_MAX_FLOW_BANKS; ++i) {
+        uint32_t bank_index;
+        if (banks[i] && resolve_asset(banks[i], &bank_index)) asset_unreference(bank_index);
+    }
     return AFX_OK;
 }
 uint32_t afx_asset_addr(afx_asset_t asset) {

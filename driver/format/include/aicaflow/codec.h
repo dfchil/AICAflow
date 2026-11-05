@@ -142,6 +142,11 @@ afx_result_t afx_file_validate_layout(const void *data, uint32_t size, afx_file_
 typedef struct { uint32_t peak_commands, peak_register_writes; } afx_validation_profile_t;
 afx_result_t afx_file_validate_profile(const void *data, uint32_t size,
                                        afx_file_header_t *out, afx_validation_profile_t *profile);
+/* The bank slots of a validated AFX header (0 for a bankless flow, 1 without
+ * AFX_FLAG_BANKS) and the identity a slot below that count requires. */
+uint32_t afx_file_bank_count(const void *data, const afx_file_header_t *header);
+void afx_file_bank_identity(const void *data, const afx_file_header_t *header, uint32_t slot,
+                            uint32_t *out_low, uint32_t *out_high);
 /* Stable non-zero identity of an AFX control image. Authors use this after
  * assembling the image; the runtime only compares the stored value. */
 uint32_t afx_control_id(const void *image, uint32_t size);

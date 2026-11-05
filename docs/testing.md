@@ -33,7 +33,11 @@ Record source, KOS and firmware revisions with the result.
 which checks the command semantics on the console and prints `AFX_CMD PASS`:
 STOP right behind ACTIVATE, channels back at STOP with all 64 in use,
 `afx_instance_replace()`, `afx_asset_release()`, and a PATCH sent before a
-channel's first NOTE, read back from the channel's DIRECT register. The classical
+channel's first NOTE, read back from the channel's DIRECT register.
+`make -C driver banks-check` builds `driver/build/check_banks.elf`, which
+prints `AFX_BANKS PASS` when a flow whose setup is in bank slot 1 sounds from
+that bank (its sample address read back beside a one-bank instance) and both
+banks are freed with the last flow that plays from them. The classical
 player's `make frame-test` exercises its real loader and exits after all three
 pieces; its [README](../examples/music_player/README.md#hardware-frame-test)
 also explains how to restore an interactive build afterwards.

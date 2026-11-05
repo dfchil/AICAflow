@@ -101,12 +101,29 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
         !h->required_channels || h->required_channels > AFX_MAX_FLOW_CHANNELS ||
         !h->tick_rate_num || !h->tick_rate_den ||
         !table(h->relocations_offset, h->relocation_count, 12, h->image_offset) ||
-        (h->loop_tick && !(h->flags & AFX_FLAG_LOOP)) || h->reserved1 ||
+        (h->loop_tick && !(h->flags & AFX_FLAG_LOOP)) ||
         h->relocation_count != h->setup_count ||
         (h->flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
-                      AFX_FLAG_LANES | AFX_FLAG_LOOP))) return AFX_BAD_BOUNDS;
+                      AFX_FLAG_LANES | AFX_FLAG_LOOP | AFX_FLAG_BANKS))) return AFX_BAD_BOUNDS;
     if (!(h->bank_id_low || h->bank_id_high) && h->relocation_count) return AFX_BAD_SAMPLE;
     image = file + h->image_offset;
+    uint32_t slots = 1;
+    if (h->flags & AFX_FLAG_BANKS) {
+        /* The bank list lies with the relocations before the image; the bank
+         * table ends the image, zero until the loader fills it. */
+        uint32_t bank_table = AFX_BANK_TABLE_OFFSET(h->stream_offset + h->stream_size);
+        if (!(h->bank_id_low || h->bank_id_high) ||
+            !table(h->banks_offset, 1, 4, h->image_offset)) return AFX_BAD_BOUNDS;
+        slots = 1u + afx_read32(file + h->banks_offset);
+        if (slots < 2 || slots > AFX_MAX_FLOW_BANKS ||
+            !table(h->banks_offset + 4u, slots - 1u, 8, h->image_offset) ||
+            bank_table + AFX_BANK_TABLE_BYTES != h->image_size) return AFX_BAD_BOUNDS;
+        for (uint32_t slot = 1; slot < slots; ++slot)
+            if (!(afx_read32(file + h->banks_offset + slot * 8u - 4u) ||
+                  afx_read32(file + h->banks_offset + slot * 8u))) return AFX_BAD_SAMPLE;
+        for (uint32_t i = 0; i < AFX_BANK_TABLE_BYTES; ++i)
+            if (image[bank_table + i]) return AFX_BAD_FORMAT;
+    } else if (h->banks_offset) return AFX_BAD_BOUNDS;
     for (uint32_t i = 0; i < h->relocation_count; ++i) {
         afx_relocation_t r = relocation_at(file, h, i);
         uint16_t control;
@@ -115,6 +132,8 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
         control = afx_read16(image + r.pair_offset);
         address = ((uint32_t)(control & 0x7fu) << 16) | afx_read16(image + r.pair_offset + 2);
         if ((control & 0x400u) || address != r.sample_index) return AFX_BAD_RELOCATION;
+        if ((h->flags & AFX_FLAG_BANKS) && (address >> AFX_BANK_SLOT_SHIFT) >= slots)
+            return AFX_BAD_RELOCATION;
     }
     if (h->flags & AFX_FLAG_LANES) {
         const uint8_t *lanes = image + h->setup_count * AFX_SETUP_BYTES;
@@ -226,6 +245,18 @@ afx_result_t afx_file_validate_layout(const void *data, uint32_t size, afx_file_
     afx_result_t result = bank_file_validate(file, size, &h);
     if (!result && out) *out = h;
     return result;
+}
+
+uint32_t afx_file_bank_count(const void *data, const afx_file_header_t *header) {
+    if (!(header->flags & AFX_FLAG_BANKS)) return header->bank_id_low || header->bank_id_high;
+    return 1u + afx_read32((const uint8_t *)data + header->banks_offset);
+}
+
+void afx_file_bank_identity(const void *data, const afx_file_header_t *header, uint32_t slot,
+                            uint32_t *out_low, uint32_t *out_high) {
+    const uint8_t *entry = (const uint8_t *)data + header->banks_offset + slot * 8u - 4u;
+    *out_low = slot ? afx_read32(entry) : header->bank_id_low;
+    *out_high = slot ? afx_read32(entry + 4) : header->bank_id_high;
 }
 
 afx_result_t afx_file_validate_profile(const void *data, uint32_t size,

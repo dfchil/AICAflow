@@ -38,6 +38,9 @@ At upload, the SH-4 validates the AFX and every relocation against the bound
 AFB payload and uploads the image unchanged. Activation supplies the bank base
 in 32-byte units and the bank size. ARM7 adds that base when applying sample
 addresses and rejects starts outside the bank. Noise bypasses address resolution.
+A flow with `AFX_FLAG_BANKS` plays from up to four banks: the SH-4 checks each
+relocation against the bank of its slot and fills the bank table at the end of
+the image, and the ARM7 takes slots 1–3 from that table.
 NOTE and reconstructed seek state use bank-relative addresses; there is no
 sample-table lookup on ARM7. PATCH rejects CONTROL and SAMPLE_LOW; sample
 binding, format, loop mode and source are set by NOTE, and KEYOFF stops a voice.
@@ -56,7 +59,7 @@ described in [Memory layout](../memory.md).
 
 ## Lifetime rule
 
-Load an AFB, then upload each AFX bound to it. A flow retains its bank, so a
+Load an AFB, then upload each AFX bound to it. A flow retains its banks, so a
 bank release fails while a dependent flow exists. Stop/free flows before
 releasing their bank. More operational detail is in
 [lifetime](../lifetime.md) and the public C API comments in

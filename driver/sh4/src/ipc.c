@@ -6,6 +6,8 @@ afx_block_t *g_free_blocks, *g_allocs;
 uint32_t g_free_count, g_free_capacity, g_alloc_count, g_alloc_capacity;
 afx_asset_slot_t *g_assets;
 uint32_t g_asset_capacity;
+afx_flow_banks_t *g_flow_banks;
+uint32_t g_flow_bank_count, g_flow_bank_capacity;
 afx_instance_slot_t g_instances[AFX_MAX_FLOW_SLOTS];
 uint64_t g_available_channels = UINT64_MAX;
 uint64_t g_map_used[AFX_CHANNEL_MAP_ARENAS];

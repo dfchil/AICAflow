@@ -4,9 +4,9 @@
 
 ## One playback model
 
-Every sampled flow is one **AFB** sample bank plus one **AFX** control flow.
-Several AFX files may bind to the same AFB, but an individual AFX never binds
-to more than one bank.
+Every sampled flow is one **AFX** control flow bound to **AFB** sample banks:
+one bank, or up to four with `AFX_FLAG_BANKS` (see
+[Several banks](#several-banks)). Several AFX files may bind to the same AFB.
 
 At runtime the SH-4 loads the AFB payload as one contiguous AICA allocation,
 then validates and uploads AFX images that carry the bank's identity. The AFB
@@ -62,11 +62,11 @@ All fields are unsigned 32-bit little-endian words:
 | 28 | stream_size | Bytecode bytes, including final END/PARK |
 | 32 | control_id | Nonzero identity of the exact control image |
 | 36 | setup_count | Number of 36-byte register setups |
-| 40, 44 | bank_id_low, bank_id_high | Identity of the sole bound AFB |
+| 40, 44 | bank_id_low, bank_id_high | Identity of the bound AFB (bank slot 0) |
 | 48 | relocations_offset | File-relative relocation-table start |
 | 52 | relocation_count | Number of 12-byte relocation records |
 | 56 | loop_tick | With AFX_FLAG_LOOP, the authored tick of the final LOOP's target; otherwise zero |
-| 60 | reserved1 | Zero |
+| 60 | banks_offset | With `AFX_FLAG_BANKS`, file-relative start of the bank list; otherwise zero |
 | 64 | required_channels | Local voice count required by this flow |
 | 68, 72 | tick_rate_num, tick_rate_den | Authored ticks per second = numerator / denominator |
 | 76 | work_profile | Peak burst commands in high 16 bits, register writes in low 16 bits |
@@ -85,6 +85,31 @@ not a sample index or a file offset. The validator in `driver/format/src/codec.c
 is authoritative for ranges, flags and work-profile constraints.
 
 `control_id` identifies the exact control image and binds its AFC sidecar.
+
+### Several banks
+
+A flow with `AFX_FLAG_BANKS` (64) plays samples from up to four banks, so a
+scene bank and a core bank can serve one flow without copying samples. The
+bank-relative sample address has 23 bits, and AICA RAM needs only 21, so bits
+21–22 select the **bank slot** and the bits below are the offset in that bank.
+The slot travels with the address: in setups, in NOTE values that set CONTROL,
+in AFC checkpoint states and in each relocation's `sample_offset`, which still
+equals its setup's address. Without the flag, every address is in slot 0, as
+in any earlier file.
+
+- Slot 0 is the bank of `bank_id_low/high`.
+- `banks_offset` points at the bank list, which lies with the relocations
+  before the image: a u32 count of further slots (1 to 3), then a low and a
+  high u32 identity word per slot. Every identity is nonzero.
+- The image ends with a 16-byte bank table at the first 4-byte boundary after
+  the stream (`AFX_BANK_TABLE_OFFSET`). The file carries zeros; the loader
+  writes one u32 per slot, the bank's AICA address and its payload length
+  rounded up to 32 bytes, both in 32-byte units (low and high half). Entry 0
+  stays zero, since activation carries slot 0's bank.
+
+The file version stays 7: older validators reject the flag and a nonzero
+`banks_offset`. An AFC binds slot 0's identity; its `control_id` pins the
+rest. Playing such a flow needs firmware ABI 13.
 
 ## AFC — seek sidecar
 
