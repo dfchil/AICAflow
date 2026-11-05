@@ -28,7 +28,12 @@ with `firmware/manifest.json`; this requires the ARM toolchain.
 Host checks prove asset/command properties, not audible equality on hardware.
 Hardware smoke testing is manual: run quickstart, the DSP demo and tuner,
 verify playback, bank replacement, STOP/recycle, seek and a runtime DSP program.
-Record source, KOS and firmware revisions with the result. The classical
+Record source, KOS and firmware revisions with the result.
+`make -C driver commands-check` builds `driver/build/check_commands.elf`,
+which checks the command semantics on the console and prints `AFX_CMD PASS`:
+STOP right behind ACTIVATE, channels back at STOP with all 64 in use,
+`afx_instance_replace()`, `afx_asset_release()`, and a PATCH sent before a
+channel's first NOTE, read back from the channel's DIRECT register. The classical
 player's `make frame-test` exercises its real loader and exits after all three
 pieces; its [README](../examples/music_player/README.md#hardware-frame-test)
 also explains how to restore an interactive build afterwards.

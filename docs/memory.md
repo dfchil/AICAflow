@@ -35,8 +35,8 @@ side of it. A program with no external delay RAM allocates nothing.
 Install memory-using scenes before loading assets to avoid fragmentation.
 
 Fixed regions are adjacent, with the 32-byte-aligned command queue at the top
-of RAM. Status occupies 80 bytes. Private state currently occupies 5,136 bytes, which
-leaves 928 bytes below the stacks; the linker rejects growth that would overlap
+of RAM. Status occupies 80 bytes. Private state currently occupies 5,392 bytes, which
+leaves 672 bytes below the stacks; the linker rejects growth that would overlap
 them. The main stack starts on a multiple of its size.
 
 SH-4 retains a ring until ARM7 acknowledges DSP disable. An enable/disable
