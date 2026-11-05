@@ -42,13 +42,18 @@ application steps:
    AICA RAM. A zero return from a lifecycle call means queued, not "ARM7
    finished": the result arrives later in the status.
 7. An instance that ends, by itself or after `afx_instance_stop()`, is
-   recycled by that thread: its channels and slot are freed and its handle goes
-   stale. `afx_set_end_callback()` reports each one with the status it ended
+   recycled by that thread: its slot is freed and its handle goes stale. Its
+   channels are free sooner, as soon as the STOP is queued or the end is
+   reported, so an activation right after a stop can have them;
+   `afx_instance_replace()` stops one instance and activates a flow in its
+   place, or, if it cannot, leaves the old one playing. STOP and PAUSE never
+   return `AFX_BUSY` for an earlier command: the program need not retry them. `afx_set_end_callback()` reports each one with the status it ended
    with, from the event thread. The callback must not wait for a lock that the
    program holds while waiting for an instance to end: the event thread would
    stop. Hand the report to the program's own thread instead, as DKR does with a
    small queue. Once the handle is stale, its flow can be freed and its bank
-   released.
+   released; `afx_asset_release()` frees them as soon as nothing uses them,
+   without waiting.
 
 Integer APIs generally return zero on success and a negative `afx_result_t`
 on failure. Handle/address getters use zero for invalid results. Do not spin

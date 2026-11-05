@@ -54,12 +54,21 @@ loop-check:
 	python3 tests/make_loop_fixture.py build
 	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_loop.c sh4/libaicaflow_host.a -o build/check_loop.elf
 
+# Command semantics on the console (tests/check_commands.c): STOP behind
+# ACTIVATE, channels back at STOP, replace, release when idle, held PATCH.
+commands-check:
+	$(MAKE) -C arm7
+	$(MAKE) -C sh4
+	mkdir -p build
+	python3 tests/make_loop_fixture.py build
+	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_commands.c sh4/libaicaflow_host.a -o build/check_commands.elf
+
 upload-bench:
 	$(MAKE) -C arm7
 	$(MAKE) -C sh4
 	mkdir -p build
 	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/bench_upload.c sh4/libaicaflow_host.a -o build/bench_upload.elf
 
-.PHONY: smoke check layout timer-check loop-check upload-bench
+.PHONY: smoke check layout timer-check loop-check commands-check upload-bench
 
 build/test_protocol build/test_bank build/test_bank_trusted build/test_dsp build/afx_validate: $(wildcard format/include/aicaflow/*.h) include/aicaflow/firmware.h

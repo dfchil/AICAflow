@@ -7,6 +7,15 @@ the commit history.
 
 ### Added
 
+- `afx_instance_replace(old, flow, &out)` stops one instance and activates a
+  flow in its place, which may take the old instance's channels. A refusal
+  (no slot, no channels, no room in the queue) leaves the old instance as it
+  was. An old handle that has ended, is stopping, is stale or is zero only
+  activates.
+- `afx_asset_release()` frees an asset at once if nothing uses it, and
+  otherwise as soon as nothing does: a flow when its last instance has been
+  recycled, a bank when the last flow that retains it is freed. A program no
+  longer polls for `AFX_ASSET_REFERENCED` or a stale handle before freeing.
 - Pitch lanes (firmware ABI 11). `AFX_LANE_PITCH` multiplies the pitch of a
   lane's voices by 1 + value / 256 (value signed), from 0.5 to about 1.5, for a
   sound that follows a game value, such as a source's distance. It applies to
@@ -40,6 +49,28 @@ the commit history.
 
 ### Changed
 
+- STOP and PAUSE never return `AFX_BUSY` for an earlier command that is not
+  yet acknowledged: they are queued behind it, as the ARM7 takes commands in
+  order. Asking again queues nothing, so a program may repeat STOP until the
+  handle is stale; PAUSE after STOP returns `AFX_BUSY`. A full queue holds them
+  back and sends them before the next command, or when the next report
+  arrives, and they still return 0.
+- A stopped or ended instance gives its channels back at once: when the STOP
+  is queued, or when the end is reported, not after RECYCLE. An activation
+  right after a stop no longer fails with `AFX_NO_CHANNELS`. The channel map
+  stays reserved until RECYCLE.
+- Firmware ABI 12: a PATCH command on a channel before that channel's first
+  NOTE holds for that NOTE, which keeps the patched words instead of its
+  template's, as if the PATCH had come just after it. A program can activate a
+  flow and set its level, pan or pitch at once; before, the first NOTE
+  overwrote them (a silent engine with DIRECT 0, for one). Gain and lane
+  commands were never affected. A flow's own PATCH instructions are unchanged.
+  The firmware keeps one 32-bit field mask per channel: private state has 672
+  bytes left. Checked on hardware with `make -C driver commands-check`
+  (tests/check_commands.c), together with the STOP, channel, replace and
+  release changes above: a DIRECT patched right after ACTIVATE still reads
+  back 3 ticks after the channel's first NOTE, while an unpatched instance
+  shows the authored word.
 - Firmware ABI 8: the ARM7 reports back to the SH4 by interrupt, and the
   program no longer polls. When an instance's state, sequence or result
   changes, the firmware puts its slot in an event ring in the queue header and

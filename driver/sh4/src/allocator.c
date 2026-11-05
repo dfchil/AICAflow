@@ -68,6 +68,7 @@ bool allocator_reset(uint32_t dynamic_base) {
         free(g_assets[i].checkpoints);
         g_assets[i].bank = AFX_ASSET_INVALID;
         g_assets[i].sample_bank = false;
+        g_assets[i].release_wanted = false;
         g_assets[i].checkpoints = NULL;
         g_assets[i].checkpoints_size = 0;
         /* A handle to an asset still being uploaded must go stale as well. */
@@ -94,6 +95,7 @@ bool allocator_reset(uint32_t dynamic_base) {
         g_instances[i].retired = retired;
     }
     g_available_channels = UINT64_MAX;
+    g_endings_held = 0;
     g_dsp_scene = false;
     g_dsp_ring = 0;
     g_dsp_return_left = g_dsp_return_right = 0;
@@ -280,13 +282,32 @@ int afx_asset_free(afx_asset_t asset) {
     afx_asset_slot_t *slot = &g_assets[index];
     if (g_upload_dma_asset == asset) upload_dma_wait();
     if (slot->references) return -AFX_ASSET_REFERENCED;
-    if (!free_allocation(slot->addr)) return -AFX_BAD_BOUNDS;
-    if (slot->bank) {
-        uint32_t bank_index;
-        if (resolve_asset(slot->bank, &bank_index)) --g_assets[bank_index].references;
+    return free_asset_slot(index);
+}
+int afx_asset_release(afx_asset_t asset) {
+    HOST_GUARD(-AFX_BUSY);
+    uint32_t index;
+    if (!resolve_asset(asset, &index)) return -AFX_INVALID_HANDLE;
+    afx_asset_slot_t *slot = &g_assets[index];
+    if (g_upload_dma_asset == asset) upload_dma_wait();
+    if (slot->references) {
+        slot->release_wanted = true;
+        return AFX_OK;
     }
+    return free_asset_slot(index);
+}
+void asset_unreference(uint32_t index) {
+    if (index >= g_asset_capacity || !g_assets[index].references) return;
+    if (!--g_assets[index].references && g_assets[index].release_wanted && g_assets[index].live)
+        (void)free_asset_slot(index);
+}
+int free_asset_slot(uint32_t index) {
+    afx_asset_slot_t *slot = &g_assets[index];
+    if (!free_allocation(slot->addr)) return -AFX_BAD_BOUNDS;
+    afx_asset_t bank = slot->bank;
     slot->bank = AFX_ASSET_INVALID;
     slot->sample_bank = false;
+    slot->release_wanted = false;
     free(slot->checkpoints);
     slot->checkpoints = NULL;
     slot->checkpoints_size = 0;
@@ -298,6 +319,9 @@ int afx_asset_free(afx_asset_t asset) {
     slot->peak_commands = slot->peak_register_writes = 0;
     if (slot->generation == UINT16_MAX) slot->retired = true;
     else ++slot->generation;
+    /* A flow retains its bank; the last flow freed may free a released bank. */
+    uint32_t bank_index;
+    if (bank && resolve_asset(bank, &bank_index)) asset_unreference(bank_index);
     return AFX_OK;
 }
 uint32_t afx_asset_addr(afx_asset_t asset) {
