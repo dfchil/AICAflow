@@ -143,6 +143,12 @@ the commit history.
 - The pinned AICAforge moves work beyond one tick's limit into the next tick
   instead of failing the flow.
 - The pinned AICAforge has its review fixes and `afx_n64 --sfx-adpcm`.
+- The pinned AICAforge is its main at d7a0a56. It adds `afx_bank --merge
+  --shared` for flows that play from shared banks, `afx_scene` for AFS scene
+  files, looping songs (`afx_compile --loop-tick`), compact envelope patches,
+  and thinning of recorded register traces. `afx_c_optimize_events` now sizes
+  its templates by variant count, so a song with more templates than zones no
+  longer overflows.
 
 ### Fixed
 
