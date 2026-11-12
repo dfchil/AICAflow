@@ -149,6 +149,9 @@ the commit history.
   and thinning of recorded register traces. `afx_c_optimize_events` now sizes
   its templates by variant count, so a song with more templates than zones no
   longer overflows.
+- The pinned AICAforge is its main at 1b4cf8b. `afx_n64` now sends CC 91 on
+  libultra's equal-power wet curve instead of mapping it linearly onto IMXL's
+  3 dB steps, which put N64 reverb sends 15–25 dB too low.
 
 ### Fixed
 
