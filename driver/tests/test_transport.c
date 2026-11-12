@@ -156,8 +156,10 @@ static void complete_dma(void) {
     dma_callback(dma_callback_data);
     dma_callback = NULL;
 }
+static void (*thd_pass_hook)(void);
 void thd_pass(void) {
     if (dma_source) complete_dma();
+    if (thd_pass_hook) thd_pass_hook();
 }
 uint32_t g2_read_32(uintptr_t address) {
     if (address == AICA_REG(AFX_AICA_MCIPD)) return mcipd;

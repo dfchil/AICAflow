@@ -77,36 +77,35 @@ static int stream_file_payload(FILE *file, const bank_header_t *header, afx_asse
     uint32_t offset = 0;
     int result = -AFX_NO_HOST_RAM;
     if (!buffer || fseek(file, (long)header->data_offset, SEEK_SET)) goto done;
-    do {
-        result = afx_sample_bank_stream_begin(header->data_size, &asset);
-        if (result == -AFX_BUSY) thd_pass();
-    } while (result == -AFX_BUSY);
+    /* Each call below takes the driver lock, which another thread's AICAflow
+     * call may hold for a moment, so a busy lock is waited out and does not end
+     * the load: a load that gave up with its DMA in flight, and then found the
+     * lock busy when freeing the asset, kept the upload DMA claimed for good. */
+    while ((result = afx_sample_bank_stream_begin(header->data_size, &asset)) == -AFX_BUSY)
+        thd_pass();
     if (result) goto done;
     while (offset < header->data_size) {
         uint32_t bytes = header->data_size - offset;
         if (bytes > BANK_DMA_CHUNK) bytes = BANK_DMA_CHUNK;
         if (fread(buffer, 1, bytes, file) != bytes) { result = -AFX_BAD_FORMAT; goto done; }
         memset(buffer + bytes, 0, align_up(bytes, AFX_UPLOAD_ALIGN) - bytes);
-        do {
-            result = afx_sample_bank_stream_dma_begin(asset, offset, buffer, bytes);
-            if (result == -AFX_BUSY) thd_pass();
-        } while (result == -AFX_BUSY);
+        while ((result = afx_sample_bank_stream_dma_begin(asset, offset, buffer, bytes)) == -AFX_BUSY)
+            thd_pass();
         if (result) goto done;
         /* The DMA poll distinguishes queued from completed only through its
-         * out parameter; wait locally so the stack buffer cannot be reused. */
-        for (;;) {
-            bool complete = false;
+         * out parameter; wait locally so the buffer cannot be reused. */
+        for (bool complete = false; !complete;) {
             result = afx_sample_bank_stream_dma_poll(asset, &complete);
-            if (result || complete) break;
-            thd_pass();
+            if (result && result != -AFX_BUSY) goto done;
+            if (!complete) thd_pass();
         }
-        if (result) goto done;
         offset += bytes;
     }
-    result = afx_sample_bank_stream_finish(asset);
+    while ((result = afx_sample_bank_stream_finish(asset)) == -AFX_BUSY) thd_pass();
     if (!result) *out = asset;
 done:
-    if (result && asset) (void)afx_asset_free(asset);
+    if (result && asset)
+        while (afx_asset_free(asset) == -AFX_BUSY) thd_pass();
     free(buffer);
     return result;
 }

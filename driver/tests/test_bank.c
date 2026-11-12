@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* Supplies the simulated SPU transport used by the real allocator and loader. */
 #include "test_transport.c"
@@ -560,6 +561,64 @@ static void bank_file(uint8_t data[96], uint32_t low, uint32_t high) {
     afx_write32(data + 8, low); afx_write32(data + 12, high);
     afx_write32(data + 16, AFX_BANK_HEADER_BYTES); afx_write32(data + 20, 64);
     afx_write32(data + 24, 96);
+}
+
+/* Another thread holding the driver lock, as an AICAflow call from an audio
+ * thread does for a moment while the game thread loads a bank file. */
+static pthread_mutex_t holder_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t holder_condition = PTHREAD_COND_INITIALIZER;
+static pthread_t holder;
+static int holder_holds, holder_release;
+static unsigned holder_passes;
+static void *hold_driver_lock(void *ignored) {
+    (void)ignored;
+    pthread_mutex_lock(&g_host_mutex);
+    pthread_mutex_lock(&holder_mutex);
+    holder_holds = 1;
+    pthread_cond_broadcast(&holder_condition);
+    while (!holder_release) pthread_cond_wait(&holder_condition, &holder_mutex);
+    pthread_mutex_unlock(&holder_mutex);
+    pthread_mutex_unlock(&g_host_mutex);
+    return NULL;
+}
+/* The first pass is the DMA poll's wait: the chunk completes and the lock is
+ * taken, so the polls that follow find it busy until the third pass. */
+static void hold_lock_hook(void) {
+    if (++holder_passes == 1) {
+        holder_holds = holder_release = 0;
+        assert(!pthread_create(&holder, NULL, hold_driver_lock, NULL));
+        pthread_mutex_lock(&holder_mutex);
+        while (!holder_holds) pthread_cond_wait(&holder_condition, &holder_mutex);
+        pthread_mutex_unlock(&holder_mutex);
+    } else if (holder_passes == 3) {
+        pthread_mutex_lock(&holder_mutex);
+        holder_release = 1;
+        pthread_cond_broadcast(&holder_condition);
+        pthread_mutex_unlock(&holder_mutex);
+        assert(!pthread_join(holder, NULL));
+    }
+}
+static void test_bank_load_busy_lock(const uint8_t bank_data[96]) {
+    char path[] = "/tmp/afx_test_bank_XXXXXX";
+    int descriptor = mkstemp(path);
+    assert(descriptor >= 0);
+    FILE *file = fdopen(descriptor, "wb");
+    assert(file && fwrite(bank_data, 1, 96, file) == 96 && !fclose(file));
+    afx_mem_stats_t before, after;
+    assert(afx_mem_stats(&before) == AFX_OK);
+    afx_bank_t bank = {0};
+    holder_passes = 0;
+    thd_pass_hook = hold_lock_hook;
+    /* A busy lock during the load is waited out; giving up there left the
+     * upload DMA claimed and the next load spinning on AFX_BUSY. */
+    assert(afx_bank_load_file(&bank, path) == AFX_OK);
+    thd_pass_hook = NULL;
+    assert(holder_passes == 3 && !g_upload_dma_asset && bank.asset && bank.bytes == 64);
+    assert(!memcmp(ram + afx_asset_addr(bank.asset), bank_data + AFX_BANK_HEADER_BYTES, 64));
+    assert(afx_bank_release(&bank) == AFX_OK);
+    assert(afx_bank_load_file(&bank, path) == AFX_OK && afx_bank_release(&bank) == AFX_OK);
+    assert(afx_mem_stats(&after) == AFX_OK && after.free_bytes == before.free_bytes);
+    assert(!unlink(path));
 }
 
 static void flow_file(uint8_t data[160], uint32_t low, uint32_t high) {
@@ -1136,6 +1195,7 @@ int main(int argc, char **argv) {
     assert(afx_dsp_scene_disable() == AFX_OK);
     assert(afx_mem_stats(&memory) == AFX_OK && memory.asset_limit == AFX_ASSET_MAX);
     bank_file(bank_data, 0x12345678u, 0x9abcdef0u);
+    test_bank_load_busy_lock(bank_data);
     test_dsp_allocations();
     flow_file(flow_data, 0x12345678u, 0x9abcdef0u);
     assert(afx_file_validate(flow_data, sizeof(flow_data), NULL) == AFX_OK);

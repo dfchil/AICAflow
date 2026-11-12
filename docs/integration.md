@@ -62,8 +62,8 @@ state and the observed ARM7 result. Preserve successfully
 created handles until their normal cleanup has completed, including on partial
 startup failure. `afx_shutdown()` requires flows, instances and banks released.
 
-Bank loading is not thread-safe. Load banks from one thread at a time, and make
-no other AICAflow call from another thread while `afx_bank_load_file()` runs.
+Load banks from one thread at a time. Other threads may make other AICAflow
+calls while `afx_bank_load_file()` runs; it waits out the driver lock they take.
 
 ## AFX validation
 
