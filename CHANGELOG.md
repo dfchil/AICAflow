@@ -171,6 +171,11 @@ the commit history.
   flight, instead of leaking it and blocking later loads.
 - Bank upload and the tuner's TCP transfers use bounded memory.
 - Checkpoint generation is deterministic.
+- `afx_bank_load_file()` no longer fails, and then hangs the next load, when
+  another thread's AICAflow call holds the driver lock while a chunk's DMA is
+  polled. The load gave up with the DMA in flight; if the lock was still busy
+  when it freed the asset, the upload DMA stayed claimed, and the next load
+  waited for it forever. Every step of the load now waits out a busy lock.
 
 ### Removed
 
@@ -179,7 +184,7 @@ the commit history.
 
 ### Known limitations
 
-- Bank loading is not thread-safe; see [Integration](docs/integration.md).
+- Banks load from one thread at a time; see [Integration](docs/integration.md).
 
 ## 0.2.0-rc1 — 2026-10-05
 
