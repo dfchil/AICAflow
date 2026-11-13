@@ -26,8 +26,8 @@ CI checks both repositories together.
 with `firmware/manifest.json`; this requires the ARM toolchain.
 
 `make check` also builds the host backend (`driver/host`) and runs its
-checks: the ARM7 interpreter, the software AICA's voices and DSP, and the
-console checks (`driver/tests/check_*.c`) unchanged against the real firmware
+checks: the software AICA's voices and DSP, and the
+console checks (`driver/tests/check_*.c`) unchanged against the firmware's executor
 on the software AICA. `make -C driver/host web-check` runs the same checks
 from an Emscripten build under Node; it needs `emcc` and `node`. To hear a
 flow without a console:

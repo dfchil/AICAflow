@@ -1,5 +1,5 @@
-# AICAflow for a PC or a browser: the SH4 library and the real ARM7 firmware on
-# a software AICA. See docs/design/host-backend.md.
+# AICAflow for a PC or a browser: the SH4 library and the firmware's executor
+# (driver/arm7/driver.c, compiled natively) on a software AICA. See docs/design/host-backend.md.
 #
 #   make -C driver/host           libaicaflow_pc.a
 #   make -C driver/host web       libaicaflow_web.a (needs emcc)
@@ -16,14 +16,17 @@ WARNINGS := -Wall -Wextra -Werror
 CFLAGS ?= -O2 -g
 SANITIZE ?= -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 INCLUDES := -Ishim -Iinclude -I../sh4/include -I../include -I../format/include
-DEFS := -D_GNU_SOURCE -DAFX_VALIDATE_ASSETS=$(AFX_VALIDATE_ASSETS)
+# The firmware source copies payloads through word pointers, as its ARM build
+# allows; the host must not reorder those copies.
+DEFS := -D_GNU_SOURCE -DAFX_VALIDATE_ASSETS=$(AFX_VALIDATE_ASSETS) -fno-strict-aliasing
 
-LIB_SRCS := emu/arm7.c emu/aica.c src/platform.c \
+LIB_SRCS := emu/aica.c src/firmware.c src/platform.c \
 	../sh4/src/allocator.c ../sh4/src/bank.c ../sh4/src/dma.c ../sh4/src/dsp.c \
 	../sh4/src/dsp_prefabs.c ../sh4/src/dsp_scene.c ../sh4/src/flow.c \
 	../sh4/src/instance.c ../sh4/src/ipc.c ../sh4/src/scene.c \
 	../common/firmware.c ../format/src/codec.c
-LIB_HEADERS := $(wildcard emu/*.h shim/*.h shim/*/*.h include/aicaflow/*.h ../sh4/src/*.h \
+LIB_HEADERS := $(wildcard emu/*.h src/*.h shim/*.h shim/*/*.h include/aicaflow/*.h ../sh4/src/*.h \
+	../arm7/driver.c ../arm7/*.h \
 	../sh4/include/aicaflow/*.h ../include/aicaflow/*.h ../format/include/aicaflow/*.h)
 
 PC_BUILD := build/pc
@@ -61,14 +64,14 @@ $(WEB_BUILD)/%.o: %.c $(LIB_HEADERS)
 
 # Tests build the library sources directly, with the sanitizers.
 TEST_BUILD := build/test
-TEST_CFLAGS := -std=gnu2x -O1 -g $(WARNINGS) $(SANITIZE) $(DEFS) -pthread
+TEST_CFLAGS := -std=gnu2x -O2 -g $(WARNINGS) $(SANITIZE) $(DEFS) -pthread
 EXPAND := python3 tests/expand_embed.py
 CHECKS := check_loop check_commands check_banks check_scenes check_timer
 
 $(TEST_BUILD)/libaicaflow_test.a: $(LIB_SRCS) $(LIB_HEADERS)
 	@mkdir -p $(TEST_BUILD)/lib
 	cd $(TEST_BUILD)/lib && rm -f *.o && for src in $(LIB_SRCS); do \
-		$(CC) -std=gnu11 -O1 -g $(WARNINGS) $(SANITIZE) $(DEFS) -pthread \
+		$(CC) -std=gnu11 -O2 -g $(WARNINGS) $(SANITIZE) $(DEFS) -pthread \
 			$(addprefix -I$(CURDIR)/,$(patsubst -I%,%,$(INCLUDES))) \
 			-c $(CURDIR)/$$src -o $$(echo $$src | tr '/.' '__').o || exit 1; done
 	ar rcs $@ $(TEST_BUILD)/lib/*.o
@@ -76,10 +79,6 @@ $(TEST_BUILD)/libaicaflow_test.a: $(LIB_SRCS) $(LIB_HEADERS)
 ../build/loop.afx ../build/loop.afb: ../tests/make_loop_fixture.py ../tests/fixtures/quickstart.afx.hex ../tests/fixtures/quickstart.afb.hex
 	mkdir -p ../build
 	python3 ../tests/make_loop_fixture.py ../build
-
-$(TEST_BUILD)/test_arm7: tests/test_arm7.c emu/arm7.c emu/arm7.h
-	@mkdir -p $(TEST_BUILD)
-	$(CC) $(TEST_CFLAGS) -Iemu tests/test_arm7.c emu/arm7.c -o $@
 
 $(TEST_BUILD)/test_aica: tests/test_aica.c $(TEST_BUILD)/libaicaflow_test.a
 	$(CC) $(TEST_CFLAGS) -Iemu -I../sh4/include -I../include -I../format/include \
@@ -99,8 +98,7 @@ $(TEST_BUILD)/check_%: $(TEST_BUILD)/src/check_%.c tests/host_clock.c tests/kos.
 	$(CC) $(TEST_CFLAGS) -Wno-unused-parameter -Itests -Iinclude -I../sh4/include -I../include -I../format/include \
 		$< tests/host_clock.c $(TEST_BUILD)/libaicaflow_test.a -lm -o $@
 
-check: $(TEST_BUILD)/test_arm7 $(TEST_BUILD)/test_aica $(TEST_BUILD)/test_host $(addprefix $(TEST_BUILD)/,$(CHECKS))
-	$(TEST_BUILD)/test_arm7
+check: $(TEST_BUILD)/test_aica $(TEST_BUILD)/test_host $(addprefix $(TEST_BUILD)/,$(CHECKS))
 	$(TEST_BUILD)/test_aica
 	$(TEST_BUILD)/test_host
 	@for check in $(CHECKS); do echo "== $$check"; $(TEST_BUILD)/$$check || exit 1; done

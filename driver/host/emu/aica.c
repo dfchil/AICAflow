@@ -122,71 +122,14 @@ static void tables_init(void) {
     tables.ready = true;
 }
 
-/* The ARM7's view of the bus: RAM mirrored below 8 MiB, registers above. */
-static uint32_t bus_read32(void *bus, uint32_t address) {
-    aica_t *chip = bus;
-    if (address < 0x800000u) {
-        const uint8_t *p = chip->ram + (address & (AICA_RAM_BYTES - 4u));
-        return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-    }
-    if (address - 0x800000u < AICA_REG_BYTES) return aica_reg_read(chip, address - 0x800000u);
-    return 0;
-}
-static uint8_t bus_read8(void *bus, uint32_t address) {
-    aica_t *chip = bus;
-    if (address < 0x800000u) return chip->ram[address & (AICA_RAM_BYTES - 1u)];
-    if (address - 0x800000u < AICA_REG_BYTES)
-        return (uint8_t)(aica_reg_read(chip, (address - 0x800000u) & ~3u) >> ((address & 3u) * 8u));
-    return 0;
-}
-static void bus_write32(void *bus, uint32_t address, uint32_t value) {
-    aica_t *chip = bus;
-    if (address < 0x800000u) {
-        uint8_t *p = chip->ram + (address & (AICA_RAM_BYTES - 4u));
-        p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8);
-        p[2] = (uint8_t)(value >> 16); p[3] = (uint8_t)(value >> 24);
-    } else if (address - 0x800000u < AICA_REG_BYTES) {
-        aica_reg_write(chip, address - 0x800000u, value);
-    }
-}
-static void bus_write8(void *bus, uint32_t address, uint8_t value) {
-    aica_t *chip = bus;
-    if (address < 0x800000u) {
-        chip->ram[address & (AICA_RAM_BYTES - 1u)] = value;
-    } else if (address - 0x800000u < AICA_REG_BYTES) {
-        uint32_t offset = (address - 0x800000u) & ~3u, shift = (address & 3u) * 8u;
-        uint32_t word = chip->reg[REG(offset)];
-        aica_reg_write(chip, offset, (word & ~(0xffu << shift)) | ((uint32_t)value << shift));
-    }
-}
-
-static void update_fiq(aica_t *chip) {
-    chip->arm.fiq_line = (chip->scipd & chip->reg[REG(R_SCIEB)] & 0x7ffu) != 0;
-}
 
 void aica_init(aica_t *chip) {
     tables_init();
     memset(chip, 0, sizeof(*chip));
-    chip->arm.bus = chip;
-    chip->arm.read32 = bus_read32;
-    chip->arm.read8 = bus_read8;
-    chip->arm.write32 = bus_write32;
-    chip->arm.write8 = bus_write8;
-    arm7_reset(&chip->arm);
-    chip->arm_reset = true;
     chip->reg[REG(R_ARMRST)] = 1;
     for (int t = 0; t < 3; ++t) { chip->timer_count[t] = 0xffffu; chip->timer_expired[t] = true; }
-    chip->cycles_per_sample = 128;
     chip->lfo_noise = 1;
     chip->dsp.program_dirty = true;
-}
-
-void aica_arm_reset(aica_t *chip, bool held) {
-    if (held == chip->arm_reset) return;
-    chip->arm_reset = held;
-    chip->reg[REG(R_ARMRST)] = held ? 1 : 0;
-    if (!held) arm7_reset(&chip->arm);
-    update_fiq(chip);
 }
 
 static int8_t signed4(uint32_t value) { return (int8_t)(value > 7 ? (int)value - 16 : (int)value); }
@@ -314,27 +257,18 @@ void aica_reg_write(aica_t *chip, uint32_t offset, uint32_t value) {
     }
     case R_SCIPD:
         if (word & 0x20u) chip->scipd |= 0x20u;
-        update_fiq(chip);
         return;
     case R_SCIRE:
         chip->scipd &= ~(uint32_t)word;
         /* As on the SCSP: resetting an expired timer's bit raises it again. */
         for (int t = 0; t < 3; ++t)
             if (chip->timer_expired[t]) chip->scipd |= 0x40u << t;
-        update_fiq(chip);
-        return;
-    case R_SCIEB:
-        chip->reg[REG(offset)] = word;
-        update_fiq(chip);
         return;
     case R_MCIPD:
         if (word & 0x20u) chip->mcipd |= 0x20u;
         return;
     case R_MCIRE:
         chip->mcipd &= ~(uint32_t)word;
-        return;
-    case R_ARMRST:
-        aica_arm_reset(chip, word & 1u);
         return;
     case R_INTCLEAR:
     case R_INTREQ:
@@ -360,10 +294,6 @@ void aica_reg_write(aica_t *chip, uint32_t offset, uint32_t value) {
     chip->reg[REG(offset)] = word;
 }
 
-void aica_run_cpu(aica_t *chip, uint32_t instructions) {
-    if (!chip->arm_reset) arm7_run(&chip->arm, instructions);
-}
-
 bool aica_main_irq(const aica_t *chip) {
     return (chip->mcipd & chip->reg[REG(R_MCIEB)]) != 0;
 }
@@ -380,7 +310,7 @@ static void timers_tick(aica_t *chip) {
             chip->mcipd |= 0x40u << t;
         }
     }
-    update_fiq(chip);
+    if (chip->fiq && (chip->scipd & chip->reg[REG(R_SCIEB)] & 0x7ffu)) chip->fiq(chip, chip->fiq_user);
 }
 
 /* ---- DSP, after MAME's aicadsp.cpp ---- */
@@ -682,7 +612,6 @@ void aica_render(aica_t *chip, int16_t *stereo, uint32_t frames) {
     float master = tables.level_gain[chip->reg[REG(R_COMMON)] & 15];
     for (uint32_t frame = 0; frame < frames; ++frame) {
         timers_tick(chip);
-        aica_run_cpu(chip, chip->cycles_per_sample);
         float left = 0.0f, right = 0.0f;
         for (uint32_t ch = 0; ch < AICA_VOICES; ++ch) {
             if (!chip->voice[ch].active) continue;

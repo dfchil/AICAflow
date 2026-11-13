@@ -1,13 +1,12 @@
-/* A software model of the Dreamcast's AICA sound chip with its ARM7: RAM,
- * registers, timers, interrupts, 64 voices, the DSP and the mixer. One
- * instance is the whole chip. Not thread-safe; callers serialise access. */
+/* A software model of the Dreamcast's AICA sound chip: RAM, registers,
+ * timers, interrupts, 64 voices, the DSP and the mixer. One instance is the
+ * whole chip. The ARM7's work is the caller's: an interrupt it would take
+ * calls the fiq hook. Not thread-safe; callers serialise access. */
 #ifndef AICAFLOW_HOST_AICA_H
 #define AICAFLOW_HOST_AICA_H
 
 #include <stdbool.h>
 #include <stdint.h>
-
-#include "arm7.h"
 
 #define AICA_RAM_BYTES 0x200000u
 #define AICA_REG_BYTES 0x8000u
@@ -45,29 +44,26 @@ typedef struct aica {
     uint16_t reg[AICA_REG_BYTES / 4]; /* Register words at offset / 4, low 16 bits. */
     aica_voice_t voice[AICA_VOICES];
     aica_dsp_t dsp;
-    arm7_t arm;
-    bool arm_reset;            /* Held in reset, as after power-on. */
+    /* Called when an enabled ARM7 interrupt is pending (SCIPD & SCIEB), once
+     * per sample until it is reset. */
+    void (*fiq)(struct aica *chip, void *user);
+    void *fiq_user;
     uint32_t timer_count[3];   /* 8.8: counter in the high byte. */
     bool timer_expired[3];
     uint32_t scipd, mcipd;
     uint32_t lfo_noise;
-    uint32_t cycles_per_sample;
     uint64_t samples;
 } aica_t;
 
 void aica_init(aica_t *chip);
-/* Holds the ARM7 in reset, or releases it to boot from address 0. */
-void aica_arm_reset(aica_t *chip, bool held);
 /* Keys every voice off, as KOS's spu_disable does. */
 void aica_key_off_all(aica_t *chip);
 /* Register access at chip offsets 0x0000-0x7fff (SH4 0xa0700000 + offset,
  * ARM7 0x800000 + offset). Only the low 16 bits of a register are kept. */
 uint32_t aica_reg_read(aica_t *chip, uint32_t offset);
 void aica_reg_write(aica_t *chip, uint32_t offset, uint32_t value);
-/* Runs the ARM7 without advancing time. */
-void aica_run_cpu(aica_t *chip, uint32_t instructions);
-/* Produces interleaved stereo at 44.1 kHz, running the ARM7, the timers, the
- * voices and the DSP one sample at a time. */
+/* Produces interleaved stereo at 44.1 kHz, running the timers (and the fiq
+ * hook), the voices and the DSP one sample at a time. */
 void aica_render(aica_t *chip, int16_t *stereo, uint32_t frames);
 /* The SH4 interrupt line: MCIPD & MCIEB. */
 bool aica_main_irq(const aica_t *chip);

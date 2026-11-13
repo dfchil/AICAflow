@@ -23,6 +23,11 @@ make -C driver/arm7
 make -C driver layout
 ```
 
+`driver.c` reaches AICA RAM and the registers only through the macros in
+`aica_access.h`. The host backend (`driver/host`) compiles it natively with
+them mapped onto its software AICA; keep new accesses behind them, and add a
+new static to the reset in `driver/host/src/firmware.c`.
+
 The layout check validates the built firmware manifest against the headers.
 `make check` runs the same validation on the checked-in image.
 Hardware checks must also exercise timed playback, PATCH, PARK/STOP and

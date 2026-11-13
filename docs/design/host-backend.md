@@ -1,6 +1,6 @@
 # Host backend design: AICAflow on PC and in the browser
 
-Status: built on 2026-11-13; [As built](#as-built) lists where it differs
+Status: built on 2026-11-13, executor native since the same day; [As built](#as-built) lists where it differs
 from the proposal. Daniel asked for an AICAflow backend for
 enDjinn's pc (Vulkan) and web targets, so that the PC builds of DKR, SM64 and
 the examples play the same AFB, AFX and AFS files as the console.
@@ -21,23 +21,23 @@ command results and the same register writes as on hardware.
 
 ## Decisions
 
-### The real firmware image runs on an ARM7 interpreter
+### The firmware's executor is compiled natively
 
-The firmware is not compiled for the host. It reaches the AICA through fixed
-addresses, and several register writes act at once: KYONEX keys channels on
-and off, MCIPD raises the SH4 interrupt, and the timer and its reset drive the
-FIQ. An interpreter sees each write as it happens, as the chip does, and needs
-no host-only fork of `driver.c`. Flycast already runs this image.
+The host runs the firmware's own C source, `driver/arm7/driver.c`, compiled
+for the host. The ARM7 image is not interpreted; that costs about four times
+as much and needs an ARM CPU model. `driver/arm7/aica_access.h` names every
+way the executor reaches the chip: AICA RAM by address (`AICA_RAM`), register
+writes (`AICA_REG_WRITE`, `AICA_CHANNEL`), the linker's layout symbols and
+the main loop. Its defaults are the ARM7's, and the console image built from
+the changed source is byte-identical to the one before (SHA-256 7ca4f28f…).
+`driver/host/src/firmware.c` defines them onto the software AICA and includes
+`driver.c`. It also does what `crt0.s` does: clears the executor's state at
+every boot, and on each Timer A interrupt advances the clock and rearms the
+timer. Every register write still reaches the chip one at a time and in
+order, so KYONEX, MCIPD and the timer act as they do on hardware.
 
-The firmware targets `-mcpu=arm7di`, so the interpreter needs the ARM
-instruction set without Thumb: data processing, multiply, single and block
-transfers, SWP, MRS/MSR, branches and the FIQ. Coprocessor instructions and
-SWI take the undefined and SWI vectors.
-
-The interpreter runs a fixed number of instructions per output sample,
-`AFX_HOST_ARM_CYCLES_PER_SAMPLE` (default 128, about 5.6 million a second).
-The firmware's clock is Timer A, which counts samples, so flow timing does not
-depend on this budget. Only lateness does, as on hardware.
+The firmware image uploaded by `afx_init()` still decides the layout: the
+executor reports the `asset_base` and `private_end` of its info block.
 
 ### A software AICA
 
@@ -56,7 +56,8 @@ depend on this budget. Only lateness does, as on hardware.
   it encodes a cutoff, a coefficient of 2·sin(π·f/44100);
 - the DSP, ported from MAME's `aicadsp.cpp` (BSD-3-Clause), with its ring in
   AICA RAM at RBP;
-- the mixer: direct outputs, EFREG through EFSDL/EFPAN, and MVOL, at 44.1 kHz.
+- the mixer: direct outputs, EFREG through EFSDL/EFPAN, and MVOL, at 44.1 kHz;
+- the ARM7's interrupt line, as a hook the host's executor serves.
 
 MAME's `aica.cpp` (BSD-3-Clause) is the reference for the voice engine, the
 envelope rate tables and the LFO tables. MAME does not implement the filter.
@@ -87,16 +88,19 @@ links next to enDjinn's KOS shim without a clash.
 
 The AICA keeps time whether or not anyone listens:
 
-- **Rendering.** `afx_host_audio_render()` produces samples and runs the ARM7,
-  the timers, the voices and the DSP sample by sample. While a renderer runs
-  (it rendered in the last 50 ms), only rendering advances time.
-- **The wall clock.** Otherwise, each SH4-side access first advances the chip
+- **Rendering.** `afx_host_audio_render()` produces samples and runs the
+  timers, the voices and the DSP sample by sample. Each Timer A tick (1002 Hz)
+  runs the executor's timer interrupt and four passes of its main loop. While
+  a renderer runs (it rendered in the last 50 ms), only rendering advances
+  time.
+- **The wall clock.** Otherwise each SH4-side access first advances the chip
   by the time that has passed, at most 100 ms at once, and discards the sound.
   A program with no audio device, or one blocked in a loop that polls
   `afx_status_timer_ticks()`, still sees its flows advance.
-- **Waits.** `thd_pass` and `thd_sleep` inside the library always run the ARM7
-  for a few hundred instructions, so a wait that cannot sleep (a browser)
-  still sees the firmware acknowledge `afx_dsp_scene_program()`.
+- **Commands.** A write of the queue head runs one pass at once, so a command
+  is taken as the console's main loop takes it, within microseconds. Library
+  waits (`thd_pass`, `thd_sleep`) also run a pass, so a wait that cannot sleep
+  (a browser) still sees the firmware answer.
 
 Tests render explicitly and so control time exactly.
 
@@ -143,14 +147,12 @@ share that code, since the web build uses Emscripten's SDL2.
 
 ## Tests
 
-- `test_arm7`: the interpreter against hand-written instruction cases,
-  including modes, banked registers and the FIQ.
 - `test_aica`: voices programmed through the registers. Pitch over three
   octaves and a fractional FNS, 8-bit PCM, pan, a one-shot's end, release
   time against MAME's table, ADPCM sample by sample against AICAforge's
   decoder, and a DSP delay's echo to the sample.
-- `test_host`: the real firmware and SH4 library play the loop fixture
-  through the public API.
+- `test_host`: the firmware's executor and the SH4 library play the loop
+  fixture through the public API.
 - The console checks, unchanged: `check_loop`, `check_commands`,
   `check_banks`, `check_scenes` and `check_timer`. They cover gapless loops,
   STOP behind ACTIVATE, replace, release when idle, held PATCH read back from
@@ -163,6 +165,12 @@ the same flow rendered on the host.
 
 ## As built
 
+- **Executor.** The proposal ran the ARM7 image on an interpreter. Daniel
+  asked for the cheaper route: `driver.c` compiled natively behind
+  `aica_access.h`. A 20 s DKR song renders in 0.4 s instead of 1.7 s.
+  The executor copies payloads through word pointers, as its ARM build
+  allows, so the host library builds with `-fno-strict-aliasing`; without it,
+  clang -O2 dropped PATCH values and the dynamic SFX engine stayed muted.
 - **Clock.** The proposal let only rendering advance time. A loop that polls
   the timer, such as `check_commands`, then never ended without a renderer,
   so the chip now keeps wall-clock time when nothing renders.

@@ -1,10 +1,10 @@
 /* AICAflow on a PC or in a browser: the software AICA's output.
  *
- * The host build runs the same SH4 library and the same ARM7 firmware as the
- * Dreamcast, with a software AICA in place of the chip. Programs use the
- * ordinary API (<aicaflow/host.h> and the rest); this header adds the audio
- * output, which is also the AICA's only clock: flows advance as samples are
- * rendered. See docs/design/host-backend.md. */
+ * The host build runs the Dreamcast's SH4 library and the firmware's executor
+ * from the same sources, with a software AICA in place of the chip. Programs
+ * use the ordinary API (<aicaflow/host.h> and the rest); this header adds the
+ * audio output. While something renders it is the AICA's clock; otherwise the
+ * chip follows the wall clock. See docs/design/host-backend.md. */
 #ifndef AICAFLOW_HOST_AUDIO_H
 #define AICAFLOW_HOST_AUDIO_H
 

@@ -8,8 +8,9 @@ the commit history.
 ### Added
 
 - A host backend for PCs and browsers (`driver/host`). The SH4 library and
-  the real firmware image run on a software AICA: an ARM7 interpreter, 64
-  voices (16-bit and 8-bit PCM, ADPCM, noise, loops, the envelopes, LFOs and
+  the firmware's executor (`driver/arm7/driver.c`, compiled natively behind
+  the new `driver/arm7/aica_access.h`; the console image is unchanged) run
+  on a software AICA: 64 voices (16-bit and 8-bit PCM, ADPCM, noise, loops, the envelopes, LFOs and
   filter), the DSP after MAME's and the mixer, at 44.1 kHz.
   `<aicaflow/host_audio.h>` gives the output. `libaicaflow_pc.a` uses threads;
   `libaicaflow_web.a` is built with Emscripten and runs without them.

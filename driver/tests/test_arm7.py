@@ -81,14 +81,14 @@ names = ("range", "asset_range", "clear_words", "dsp_returns", "dsp_disable", "d
          "write_patch", "patch", "service", "bank_table_valid")
 body = "\n".join(function(name) for name in names)
 # Keep production validation/installation intact; only translate staging pointers.
-assert body.count("(request.states_address +") == 2
-body = body.replace("(request.states_address +", "((uintptr_t)restore_states +")
-assert body.count("(const uint8_t *)context->pc,") == 1
-body = body.replace("(const uint8_t *)context->pc,", "stream_bytes + (context->pc - STREAM_BASE),")
-assert body.count("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)") == 1
-body = body.replace("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)", "setup_bytes")
-assert body.count("(activate->image_base + table + slot * 4u)") == 1
-body = body.replace("(activate->image_base + table + slot * 4u)",
+assert body.count("AICA_RAM(request.states_address +") == 2
+body = body.replace("AICA_RAM(request.states_address +", "((uintptr_t)restore_states +")
+assert body.count("(const uint8_t *)AICA_RAM(context->pc),") == 1
+body = body.replace("(const uint8_t *)AICA_RAM(context->pc),", "stream_bytes + (context->pc - STREAM_BASE),")
+assert body.count("(const uint8_t *)AICA_RAM(context->setups + event->setup * AFX_SETUP_BYTES)") == 1
+body = body.replace("(const uint8_t *)AICA_RAM(context->setups + event->setup * AFX_SETUP_BYTES)", "setup_bytes")
+assert body.count("AICA_RAM(activate->image_base + table + slot * 4u)") == 1
+body = body.replace("AICA_RAM(activate->image_base + table + slot * 4u)",
                     "((uintptr_t)image_bytes + activate->image_base - STREAM_BASE + table + slot * 4u)")
 checks = r'''
 int main(void) {
