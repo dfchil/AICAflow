@@ -7,6 +7,16 @@ the commit history.
 
 ### Added
 
+- A host backend for PCs and browsers (`driver/host`). The SH4 library and
+  the real firmware image run on a software AICA: an ARM7 interpreter, 64
+  voices (16-bit and 8-bit PCM, ADPCM, noise, loops, the envelopes, LFOs and
+  filter), the DSP after MAME's and the mixer, at 44.1 kHz.
+  `<aicaflow/host_audio.h>` gives the output. `libaicaflow_pc.a` uses threads;
+  `libaicaflow_web.a` is built with Emscripten and runs without them.
+  `driver/host/host.mk` attaches it to enDjinn's pc-enDjinn (Vulkan) and
+  web-enDjinn targets, and the quickstart and dynamic SFX examples build for
+  both. `afx_render` plays a flow and bank into a WAV. The console checks run
+  unchanged on the host in `make check`. Design: docs/design/host-backend.md.
 - AFS scene files and their loader, `<aicaflow/scene.h>`. An AFS holds the
   banks and flows of one scene with the AICA layout the authoring tool
   planned; `afx_scene_load()` allocates one block and places each entry at its

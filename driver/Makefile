@@ -10,6 +10,7 @@ smoke: build/test_protocol build/test_bank build/test_bank_trusted build/test_ds
 	./build/test_dsp
 
 check: smoke
+	$(MAKE) -C host check
 	python3 tests/test_arm7.py
 	cd .. && python3 tools/test/test_dynamic_sfx.py
 	cd .. && python3 tools/test/test_afx_tuner_properties.py

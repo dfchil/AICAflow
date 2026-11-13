@@ -25,6 +25,18 @@ CI checks both repositories together.
 `make firmware-check` rebuilds the ARM7 firmware and compares its SHA-256
 with `firmware/manifest.json`; this requires the ARM toolchain.
 
+`make check` also builds the host backend (`driver/host`) and runs its
+checks: the ARM7 interpreter, the software AICA's voices and DSP, and the
+console checks (`driver/tests/check_*.c`) unchanged against the real firmware
+on the software AICA. `make -C driver/host web-check` runs the same checks
+from an Emscripten build under Node; it needs `emcc` and `node`. To hear a
+flow without a console:
+
+```sh
+make -C driver/host afx_render
+driver/host/afx_render -s 30 bank.afb flow.afx out.wav
+```
+
 Host checks prove asset/command properties, not audible equality on hardware.
 Hardware smoke testing is manual: run quickstart, the DSP demo and tuner,
 verify playback, bank replacement, STOP/recycle, seek and a runtime DSP program.
