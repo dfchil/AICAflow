@@ -74,9 +74,11 @@ static uint64_t events_take(void) {
 static void host_events(uint32_t code, void *data) {
     (void)code; (void)data;
     /* Blocking: an upload may hold the lock for a while, and this thread can
-     * wait it out where the program's calls cannot. */
-    mutex_lock(&g_host_mutex);
+     * wait it out where the program's calls cannot. The flag goes up before
+     * the lock is taken and down after it is given back: a call that found
+     * the lock held between the two used to report busy for no reason. */
     g_events_running = true;
+    mutex_lock(&g_host_mutex);
     /* Clear before reading, and read the register back so the clear has landed:
      * news published before it is then visible to the reads that follow, and
      * news published after it raises the interrupt again. */
@@ -89,8 +91,8 @@ static void host_events(uint32_t code, void *data) {
                 ((changed >> index) & 1u || g_instances[index].recycle_wanted)) (void)update_slot(index);
         if (g_endings_held) endings_send();
     }
-    g_events_running = false;
     mutex_unlock(&g_host_mutex);
+    g_events_running = false;
     events_report_ended();
 }
 static void host_irq_stop(void) {

@@ -111,9 +111,9 @@ extern bool g_upload_dma_stream;
 extern mutex_t g_host_mutex;
 extern uint32_t const g_spu_base;
 
-/* Set while the event thread holds the host lock, which it does only briefly:
- * a call that finds the lock held waits for it then, and reports busy
- * otherwise, as when an upload holds it. */
+/* Set while the event thread holds the host lock or is about to take it,
+ * which it does only briefly: a call that finds the lock held waits for it
+ * then, and reports busy otherwise, as when an upload holds it. */
 extern volatile bool g_events_running;
 static inline bool host_lock(void) {
     return !mutex_trylock(&g_host_mutex) || (g_events_running && !mutex_lock(&g_host_mutex));

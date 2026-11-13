@@ -165,6 +165,11 @@ the commit history.
 
 ### Fixed
 
+- A call that found the driver lock held in the moment the event thread took
+  or gave it back returned `AFX_BUSY` instead of waiting. The event thread
+  now marks itself before it takes the lock and after it gives it back. Seen
+  on the host backend, where the event thread runs in parallel: a STOP was
+  refused and its instance never ended.
 - Firmware: a gain change kept only four bits of the mix word's low byte, so
   it cleared the low-pass bypass and voice-off flags and cut the filter Q.
   Only the attenuation byte is scaled now.
