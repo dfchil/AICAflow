@@ -313,6 +313,17 @@ int main(void) {
     assert(song->loops == 2 && song->deadline == 11);
     /* The position: order position 1, offset 4 in the body's stream. */
     assert(stream_position(2, song) == AFX_SONG_POSITION(1, 4));
+    /* A song's bank table follows its last stream, wherever the section playing
+     * ends: the intro resolves a slot 1 sample through it. */
+    song->flags = AFX_FLAG_SONG | AFX_FLAG_BANKS; song_enter(song, SONG_BASE, 0);
+    afx_write32(image + AFX_BANK_TABLE_OFFSET(0x60 + sizeof(intro) + sizeof(body)) + 4,
+                (0x10u << 16) | 0x100u); /* 512 bytes at 0x2000 */
+    {
+        uint32_t slot1 = (1u << AFX_BANK_SLOT_SHIFT) + 0x40u;
+        uint16_t word = (uint16_t)(slot1 >> AFX_SAMPLE_ADDRESS_LOW_BITS), low = (uint16_t)slot1;
+        assert(resolve_sample_address(song, &word, &low) == AFX_OK);
+        assert(((uint32_t)(word & AFX_SAMPLE_ADDRESS_HIGH_MASK) << 16 | low) == 0x2040u);
+    }
     /* NEXT in a flow, or a new-play join in a song without a pool, is refused. */
     song->flags = AFX_FLAG_SONG; song_enter(song, SONG_BASE, 0);
     image[0x60 + 5] = AFX_JOIN_NEW;
