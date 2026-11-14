@@ -259,18 +259,11 @@ int afx_scene_entry(afx_scene_t scene, uint32_t index, afx_scene_info_t *out) {
     return AFX_OK;
 }
 
-int afx_scene_slot_load(afx_scene_t scene, const char *slot, const void *bank, uint32_t bank_size,
-                        const void *flow, uint32_t flow_size, afx_asset_t *out) {
-    HOST_GUARD(-AFX_BUSY);
-    if (!out) return -AFX_BAD_BOUNDS;
-    *out = AFX_ASSET_INVALID;
-    scene_slot_t *s = resolve_scene(scene);
-    scene_entry_t *entry = s ? entry_named(s, slot) : NULL;
-    if (!entry || entry->kind != AFX_SCENE_SLOT) return -AFX_INVALID_HANDLE;
-    if (!flow) return -AFX_BAD_BOUNDS;
-
-    /* What the slot holds must be idle: no instance of its flow, and no flow
-     * but its own bound to its bank. */
+/* Empties a slot whose contents are idle, as afx_asset_release() would free
+ * them at once: no instance plays its flow and no flow but its own binds its
+ * bank. A DMA still writing the slot's bank must finish first. A refusal
+ * leaves the slot as it was. */
+static int slot_empty(scene_entry_t *entry) {
     uint32_t flow_index = 0, bank_index = 0, binds = 0;
     bool old_flow = entry->flow && resolve_asset(entry->flow, &flow_index);
     bool old_bank = entry->bank.asset && resolve_asset(entry->bank.asset, &bank_index);
@@ -278,33 +271,108 @@ int afx_scene_slot_load(afx_scene_t scene, const char *slot, const void *bank, u
     for (uint32_t i = 0; old_flow && old_bank && i < AFX_MAX_FLOW_BANKS; ++i)
         binds += flow_bank(flow_index, i) == entry->bank.asset;
     if (old_bank && g_assets[bank_index].references != binds) return -AFX_ASSET_REFERENCED;
+    if (old_bank && g_upload_dma_asset == entry->bank.asset) {
+        if (!g_upload_dma_done) return -AFX_BUSY;
+        upload_dma_wait();
+    }
     if (old_flow) (void)free_asset_slot(flow_index);
     if (old_bank) (void)free_asset_slot(bank_index);
     entry->flow = AFX_ASSET_INVALID;
     entry->bank = (afx_bank_t){0};
-
-    /* The bank's payload at the slot's start, the flow's image after it. */
-    uint32_t place = s->block + entry->offset, at = 0;
-    int result = AFX_OK;
-    if (bank) {
-        result = bank_upload(&entry->bank, bank, bank_size, place, entry->bytes);
-        if (!result) {
-            ++s->assets;
-            at = align_up(entry->bank.bytes, AFX_UPLOAD_ALIGN);
-        }
-    }
+    return AFX_OK;
+}
+static scene_entry_t *slot_named(afx_scene_t scene, const char *slot, scene_slot_t **out) {
+    scene_slot_t *s = resolve_scene(scene);
+    scene_entry_t *entry = s ? entry_named(s, slot) : NULL;
+    *out = s;
+    return entry && entry->kind == AFX_SCENE_SLOT ? entry : NULL;
+}
+/* Uploads flow into the slot after its bank, binding the slot's bank by its
+ * identity or else the scene's banks and its parents'. */
+static int slot_flow_upload(scene_slot_t *s, scene_entry_t *entry, const void *flow,
+                            uint32_t flow_size) {
+    uint32_t at = entry->bank.asset ? align_up(entry->bank.bytes, AFX_UPLOAD_ALIGN) : 0;
     const afx_bank_t *banks[AFX_MAX_FLOW_BANKS];
     uint32_t count = 0;
-    if (!result) result = flow_banks(s, &entry->bank, flow, flow_size, banks, &count);
+    int result = flow_banks(s, &entry->bank, flow, flow_size, banks, &count);
     if (!result)
-        result = flow_upload(banks, count, flow, flow_size, place + at, entry->bytes - at, &entry->flow);
+        result = flow_upload(banks, count, flow, flow_size, s->block + entry->offset + at,
+                             entry->bytes - at, &entry->flow);
+    if (!result) ++s->assets;
+    return result;
+}
+
+int afx_scene_slot_load(afx_scene_t scene, const char *slot, const void *bank, uint32_t bank_size,
+                        const void *flow, uint32_t flow_size, afx_asset_t *out) {
+    HOST_GUARD(-AFX_BUSY);
+    if (!out) return -AFX_BAD_BOUNDS;
+    *out = AFX_ASSET_INVALID;
+    scene_slot_t *s;
+    scene_entry_t *entry = slot_named(scene, slot, &s);
+    if (!entry) return -AFX_INVALID_HANDLE;
+    if (!flow) return -AFX_BAD_BOUNDS;
+    int result = slot_empty(entry);
+    if (result) return result;
+
+    /* The bank's payload at the slot's start, the flow's image after it. */
+    if (bank) {
+        result = bank_upload(&entry->bank, bank, bank_size, s->block + entry->offset, entry->bytes);
+        if (!result) ++s->assets;
+    }
+    if (!result) result = slot_flow_upload(s, entry, flow, flow_size);
     if (!result) {
-        ++s->assets;
         *out = entry->flow;
         return AFX_OK;
     }
     if (entry->bank.asset) discard_asset(entry->bank.asset);
     entry->bank = (afx_bank_t){0};
+    return result;
+}
+
+int afx_scene_slot_stream_begin(afx_scene_t scene, const char *slot, uint32_t bank_bytes,
+                                afx_bank_id_t bank_id, afx_asset_t *out) {
+    HOST_GUARD(-AFX_BUSY);
+    if (!out) return -AFX_BAD_BOUNDS;
+    *out = AFX_ASSET_INVALID;
+    scene_slot_t *s;
+    scene_entry_t *entry = slot_named(scene, slot, &s);
+    if (!entry) return -AFX_INVALID_HANDLE;
+    if (!bank_bytes || bank_bytes > g_asset_limit || (!bank_id.low && !bank_id.high))
+        return -AFX_BAD_BOUNDS;
+    /* The flow goes after the bank, so the bank must leave room for one. */
+    if (align_up(bank_bytes, AFX_UPLOAD_ALIGN) >= entry->bytes) return -AFX_NO_AICA_RAM;
+    int result = slot_empty(entry);
+    if (result) return result;
+    afx_asset_t asset = place_asset(s->block + entry->offset, bank_bytes, false);
+    if (!asset) return -AFX_NO_HOST_RAM;
+    g_assets[AFX_HANDLE_INDEX(asset)].sample_bank = true;
+    entry->bank = (afx_bank_t){.asset = asset, .id = bank_id, .bytes = bank_bytes};
+    ++s->assets;
+    *out = asset;
+    return AFX_OK;
+}
+
+int afx_scene_slot_flow(afx_scene_t scene, const char *slot, const void *flow, uint32_t flow_size,
+                        afx_asset_t *out) {
+    HOST_GUARD(-AFX_BUSY);
+    if (!out) return -AFX_BAD_BOUNDS;
+    *out = AFX_ASSET_INVALID;
+    scene_slot_t *s;
+    scene_entry_t *entry = slot_named(scene, slot, &s);
+    if (!entry) return -AFX_INVALID_HANDLE;
+    if (!flow) return -AFX_BAD_BOUNDS;
+    /* A bank freed while it streamed (a cancelled stream) leaves the slot empty. */
+    uint32_t bank_index = 0, flow_index = 0;
+    if (entry->bank.asset && !resolve_asset(entry->bank.asset, &bank_index))
+        entry->bank = (afx_bank_t){0};
+    if (entry->bank.asset && !g_assets[bank_index].live) return -AFX_BAD_BOUNDS;
+    if (entry->flow && resolve_asset(entry->flow, &flow_index)) {
+        if (g_assets[flow_index].references) return -AFX_ASSET_REFERENCED;
+        (void)free_asset_slot(flow_index);
+    }
+    entry->flow = AFX_ASSET_INVALID;
+    int result = slot_flow_upload(s, entry, flow, flow_size);
+    if (!result) *out = entry->flow;
     return result;
 }
 

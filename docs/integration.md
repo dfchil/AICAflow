@@ -178,6 +178,32 @@ must be idle, by the rule `afx_asset_release()` frees by; otherwise the call
 returns `AFX_ASSET_REFERENCED` and the slot keeps it. A per-level song sized
 for the largest one no longer fragments the arena.
 
+`afx_scene_slot_load()` holds AICAflow's lock while the whole bank goes over by
+DMA, about 6 ms for 32 KiB, and other threads' calls get `AFX_BUSY` meanwhile.
+A game that fills a slot during play, such as an announcer slot taking one
+phrase after another, fills it in steps instead, each step a short call:
+
+```c
+afx_asset_t bank, flow;
+afx_scene_slot_stream_begin(scene, "announcer", payload_bytes, bank_id, &bank);
+/* For each chunk, a multiple of 32 bytes except the last, from a 32-byte
+ * aligned buffer: */
+afx_sample_bank_stream_dma_begin(bank, offset, chunk, chunk_bytes);
+/* ... once per frame, until complete: */
+afx_sample_bank_stream_dma_poll(bank, &complete);
+afx_sample_bank_stream_finish(bank);
+afx_scene_slot_flow(scene, "announcer", afx, afx_bytes, &flow);
+```
+
+`payload_bytes` and `bank_id` are the AFB file's payload length and identity
+(header fields 20, 8 and 12), and the chunks are its payload. The begin call
+empties the slot by the same idle rule, and `afx_scene_slot_flow()` places the
+flow after the finished bank. A step that returns `AFX_BUSY` changed nothing
+and can be tried again on the next frame. `afx_asset_free(bank)` before the
+bank is finished cancels the stream and leaves the slot empty. On the console
+no stream call held the lock for more than 54 µs, and instances activated
+beside every chunk's DMA (`make -C driver scenes-check`).
+
 `afx_scene_release(scene)` gives a scene up. Its flows and banks are released
 as by `afx_asset_release()`, and the block is freed once no instance plays its
 flows and no flow of another scene binds its banks. Until then a scene's

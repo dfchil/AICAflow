@@ -7,6 +7,17 @@ the commit history.
 
 ### Added
 
+- A scene slot filled in steps: `afx_scene_slot_stream_begin()` places an
+  uploading bank at the slot's start, the existing
+  `afx_sample_bank_stream_dma_begin()`, `_poll()` and `_finish()` upload it a
+  chunk at a time, and `afx_scene_slot_flow()` puts the flow after it.
+  `afx_scene_slot_load()` holds the lock for the whole bank's DMA (5.9 ms for
+  32 KiB on the console), so other threads' calls got `AFX_BUSY`; no stream
+  call held it for more than 54 µs. `afx_asset_free()` on the unfinished bank
+  cancels the stream. `afx_scene_slot_flow()` also replaces an idle flow over
+  the slot's bank. No firmware change; ABI 13. Checked on hardware by
+  `make -C driver scenes-check`, which streams a 32 KiB phrase while instances
+  activate beside each chunk.
 - AFS scene files and their loader, `<aicaflow/scene.h>`. An AFS holds the
   banks and flows of one scene with the AICA layout the authoring tool
   planned; `afx_scene_load()` allocates one block and places each entry at its
