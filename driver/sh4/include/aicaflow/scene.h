@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <aicaflow/bank.h>
 #include <aicaflow/host.h>
 
 #ifdef __cplusplus
@@ -52,6 +53,35 @@ int afx_scene_entry(afx_scene_t scene, uint32_t index, afx_scene_info_t *out_inf
  * leaves the slot empty. */
 int afx_scene_slot_load(afx_scene_t scene, const char *slot, const void *bank, uint32_t bank_size,
                         const void *flow, uint32_t flow_size, afx_asset_t *out_flow);
+/* Fills a slot in steps, so that no call holds AICAflow's lock for a whole
+ * bank's DMA: afx_scene_slot_load() does, and other threads' calls get
+ * AFX_BUSY meanwhile.
+ *
+ * 1. afx_scene_slot_stream_begin() empties the slot under the rule of
+ *    afx_scene_slot_load(), then places an uploading bank of bank_bytes with
+ *    identity bank_id at the slot's start, never through the free list.
+ * 2. afx_sample_bank_stream_dma_begin(), _poll() and _finish() (<aicaflow/host.h>)
+ *    upload the AFB file's payload into that bank, a chunk at a time.
+ * 3. afx_scene_slot_flow() puts the flow after the finished bank.
+ *
+ * afx_asset_free() on the bank before it is finished cancels the stream and
+ * leaves the slot empty, as releasing the scene does.
+ *
+ * The bank must leave room in the slot for a flow (-AFX_NO_AICA_RAM). If the
+ * slot's contents are not idle, -AFX_ASSET_REFERENCED keeps them; a DMA that
+ * still writes the slot's bank gives -AFX_BUSY until it is done. Either
+ * leaves the slot as it was, and so does any refusal before the slot is
+ * emptied. */
+int afx_scene_slot_stream_begin(afx_scene_t scene, const char *slot, uint32_t bank_bytes,
+                                afx_bank_id_t bank_id, afx_asset_t *out_bank);
+/* Uploads an AFX flow into the slot after its bank, which must be finished
+ * (-AFX_BAD_BOUNDS while it streams), and binds its bank slots as
+ * afx_scene_slot_load() does. A slot without a bank takes the flow at its
+ * start. A flow the slot already holds is replaced if it is idle, and kept
+ * with -AFX_ASSET_REFERENCED if not. A failure leaves the slot with its bank
+ * and no flow. */
+int afx_scene_slot_flow(afx_scene_t scene, const char *slot, const void *flow, uint32_t flow_size,
+                        afx_asset_t *out_flow);
 /* Gives the scene up: its flows and banks are released as by
  * afx_asset_release(), and its block is freed once no instance plays any of
  * its flows and no flow of another scene binds any of its banks. The scene's

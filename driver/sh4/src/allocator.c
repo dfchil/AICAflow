@@ -300,7 +300,10 @@ int afx_asset_free(afx_asset_t asset) {
     if (!resolve_asset(asset, &index)) return -AFX_INVALID_HANDLE;
     afx_asset_slot_t *slot = &g_assets[index];
     if (g_upload_dma_asset == asset) upload_dma_wait();
-    if (slot->references || !slot->allocation_size) return -AFX_ASSET_REFERENCED;
+    /* A scene's assets go with the scene, except a bank still streaming into
+     * a slot: freeing it cancels the stream and leaves the slot empty. */
+    bool streaming = slot->uploading && slot->sample_bank;
+    if (slot->references || (!slot->allocation_size && !streaming)) return -AFX_ASSET_REFERENCED;
     return free_asset_slot(index);
 }
 int afx_asset_release(afx_asset_t asset) {
