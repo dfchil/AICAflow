@@ -207,6 +207,11 @@ the commit history.
 
 ### Fixed
 
+- A `NOTE` on a voice still keyed on starts the note again. The AICA ignores
+  a key-on on a keyed-on voice, so the firmware left such a voice playing its
+  old note with the new note's registers. It now keys the voice off first, then
+  writes the note and keys it on, as MultiPCM and MIDI expect. Daytona's t03
+  had 20 such notes in its B part. ABI stays 14; the firmware is rebuilt.
 - A song with `AFX_FLAG_BANKS` played its slot 1 to 3 samples silent in every
   section but the last: the firmware looked for the bank table after the
   section playing instead of after the song's last stream. Found by SM64,

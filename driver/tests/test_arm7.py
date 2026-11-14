@@ -37,6 +37,11 @@ static uintptr_t aica_ptr(uint32_t address) {
     return (uintptr_t)(stream_bytes + (address - STREAM_BASE));
 }
 #define AICA_RAM(address) aica_ptr(address)
+/* Counts the key-offs: a control write executing key-on with KYONB clear. */
+static uint32_t keyoff_writes;
+#define AICA_REG_WRITE(offset, value) \
+    (keyoff_writes += ((value) & (AFX_KEYON | AFX_KEYON_EXECUTE)) == AFX_KEYON_EXECUTE, \
+     *(volatile uint32_t *)(AFX_AICA_REG_BASE + (offset)) = (value))
 static uint16_t song_position[AFX_MAX_FLOW_SLOTS];
 #include "sample_address.h"
 static volatile uint32_t registers[64][32];
@@ -434,7 +439,15 @@ int main(void) {
     assert(registers[0][AFX_FIELD_ENV_AD] == 0x0005 && registers[0][AFX_FIELD_DIRECT] == 0x0f00);
     assert(registers[0][AFX_FIELD_PITCH] == 0x100 && voice_base_direct[0] == 0x0f00);
     assert(!voice_held[0] && voice_flags[0] == VOICE_LATCHED);
-    assert(write_note(fresh, &note) == AFX_OK);
+    /* A NOTE on a voice still keyed on keys it off first, so it starts again
+     * (the AICA ignores a key-on on a keyed-on voice); a released one is not. */
+    uint32_t keyoffs = keyoff_writes;
+    assert(write_note(fresh, &note) == AFX_OK && keyoff_writes == keyoffs + 1);
+    assert((registers[0][AFX_FIELD_CONTROL] & (AFX_KEYON | AFX_KEYON_EXECUTE)) ==
+           (AFX_KEYON | AFX_KEYON_EXECUTE));
+    release_voice(0);
+    keyoffs = keyoff_writes;
+    assert(write_note(fresh, &note) == AFX_OK && keyoff_writes == keyoffs);
     assert(registers[0][AFX_FIELD_ENV_AD] == 0x001f && registers[0][AFX_FIELD_DIRECT] == 0);
     /* A sounding channel is patched as before, and nothing is held. */
     patch(4, 8, (const uint8_t *)&set);
