@@ -166,6 +166,11 @@ static void test_song(void) {
     uint32_t size = song_file(file, sizeof(file), one, 1, twice, 2, 0, 1, 2, NULL);
     assert(afx_song_validate_profile(file, size, &header, &work) == AFX_OK);
     assert(header.voices == 2 && header.channels == 1);
+    uint32_t measured_channels = 0, measured_voices = 0;
+    afx_write32(file + 48, 7); /* A wrong pool: measured, not compared. */
+    assert(afx_song_measure(file, size, NULL, &measured_channels, &measured_voices) == AFX_OK);
+    assert(measured_channels == 1 && measured_voices == 2);
+    afx_write32(file + 48, 2);
     /* At a join the tail's KEYOFF and the new play's NOTE share a tick. */
     assert(work.peak_commands == 2 && work.peak_register_writes == 20);
     afx_write32(file + 48, 1);

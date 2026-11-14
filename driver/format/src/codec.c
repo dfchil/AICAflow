@@ -524,6 +524,23 @@ static afx_result_t song_play(const uint8_t *image, const afx_song_image_header_
     return AFX_OK;
 }
 
+afx_result_t afx_song_measure(const void *data, uint32_t size, afx_validation_profile_t *profile,
+                              uint32_t *out_channels, uint32_t *out_voices) {
+    afx_song_header_t h;
+    afx_song_image_header_t ih;
+    afx_result_t result = afx_song_validate_layout(data, size, &h, &ih);
+    if (result) return result;
+    const uint8_t *image = (const uint8_t *)data + h.image_offset;
+    uint32_t channels, voices;
+    int pool;
+    afx_validation_profile_t work;
+    if ((result = song_sections_validate(image, &h, &ih, &channels, &pool))) return result;
+    if ((result = song_play(image, &ih, pool, &work, &voices))) return result;
+    if (profile) *profile = work;
+    if (out_channels) *out_channels = channels;
+    if (out_voices) *out_voices = voices;
+    return AFX_OK;
+}
 afx_result_t afx_song_validate_profile(const void *data, uint32_t size, afx_song_header_t *out,
                                        afx_validation_profile_t *profile) {
     afx_song_header_t h;

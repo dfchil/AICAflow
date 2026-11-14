@@ -170,6 +170,11 @@ afx_result_t afx_song_validate_layout(const void *data, uint32_t size, afx_song_
 afx_result_t afx_song_validate(const void *data, uint32_t size, afx_song_header_t *out);
 afx_result_t afx_song_validate_profile(const void *data, uint32_t size, afx_song_header_t *out,
                                        afx_validation_profile_t *profile);
+/* For an authoring tool: as afx_song_validate, but reports the channels the
+ * sections use and the pool the song needs instead of comparing them with the
+ * header's (whose channels must still match the image header's). */
+afx_result_t afx_song_measure(const void *data, uint32_t size, afx_validation_profile_t *profile,
+                              uint32_t *out_channels, uint32_t *out_voices);
 /* Entry i of the section table and the section index at an order position, read
  * from an image whose header is ih. */
 afx_song_section_t afx_song_section(const void *image, const afx_song_image_header_t *ih, uint32_t i);
