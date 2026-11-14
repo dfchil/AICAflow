@@ -11,6 +11,8 @@
 - [Testing](testing.md) — host checks and hardware verification.
 - [Host backend](design/host-backend.md) — AICAflow on a PC or in a browser,
   with a software AICA.
+- [Song sample streaming](design/song-sample-streaming.md) — an idea for later:
+  stream a song's samples by an offline plan instead of keeping them all resident.
 - [Release verification](release-check.md) — candidate checks and remaining work.
 
 ## Reference
