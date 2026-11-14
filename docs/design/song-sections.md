@@ -1,227 +1,171 @@
 # Design: songs made of sections
 
-Status: proposal, 2026-11-14. Nothing is built yet. Daniel decided the
-direction on 14 Nov (relayed by daytona-arcade-recomp-d2): the ARM7 firmware
-plays a song as a sequence of sections, and `REPEAT` (AICAflow #24) is
-dropped. This note gives the shape for review before building. The open
-questions are at the end; one of them is whether `LOOP` goes, since SM64's
-continuous sounds depend on it.
+Status: decided 2026-11-14, being built (firmware ABI 14, format API 6).
+Daniel decided the direction (relayed by daytona-arcade-recomp-d2) and
+answered the open questions of the first draft; SM64 (sm64-dc-f9) and Daytona
+reviewed it. `REPEAT` (AICAflow #24) is dropped, and so is `LOOP`: sections
+with a "continue" join replace it.
 
 ## Why sections
 
 A song such as Daytona's t03 is intro, A, A, B, then back to the first A.
 Daytona's arcade board allocates voices dynamically, so the second A cannot
 reuse the first A's channels at the join: the first A's last notes are still
-ringing when the second A starts. Each play of a section therefore runs as
-its own executor with its own voices, and its ending rings out while the next
-section starts. A section is stored once however often the order plays it.
+ringing when the second A starts. Such a join starts the next section on a
+second executor with fresh voices while the old play rings out. SM64's looping
+songs and continuous sounds (engines, wind) need the opposite: a voice that
+crosses the loop without a new key-on. That join continues on the same
+executor and channels, as `LOOP` did. A song may use both kinds.
+
+## Instructions
+
+- `NEXT mode` (0x19, 2 bytes) ends a section's body. In the tick it runs, the
+  song moves to the next order position:
+  - `AFX_JOIN_NEW` (0): the next section starts on the song's other executor,
+    in the same tick, with voices of its own; this executor goes on with its
+    tail until `END`.
+  - `AFX_JOIN_CONTINUE` (1): this executor jumps to the start of the next
+    section in the same tick and keeps its voices, as `LOOP` did. Only `END`
+    may follow it: there is no tail.
+
+  At the end of the order the song goes on at its loop index, and that wrap
+  is reported as a loop. A song without a loop index plays no further
+  section; the `NEXT` then only marks the body's end.
+- `FREE channel` (0x1a, 2 bytes) gives the voice of a local channel back to
+  the song's pool, keying it off if it still sounds. The importer puts it
+  after the channel's last release. In a song without a pool it does nothing.
+- `LOOP` (0x16) and `AFX_FLAG_LOOP` are gone; an AFX header's former
+  `loop_tick` word must be zero. Plain flows end with `END` or `PARK`.
+
+A section's events after `NEXT` are its tail: its own voices' key-offs, level
+patches and releases, which run past the start of the next section.
 
 ## The song file (AFM)
 
-An AICAforge tool writes one AFM file per song next to its AFB bank. It holds
-what a flow holds today, once for the whole song, plus the sections and the
-order:
+One AFM per song, next to its AFB. It holds what a flow holds, once for the
+whole song: one setup table and its relocations, the bank identities (with
+`AFX_FLAG_BANKS`, slots 1 to 3 as in a flow), the lane map. Then each
+section's stream, and the order with its loop index.
 
-- a header: magic, version, bank identities (slot 0 and, with
-  `AFX_FLAG_BANKS`, slots 1 to 3), tick rate, the song's flags (`LANES`,
-  `BANKS`), the section count, the order count, the loop index, the largest
-  local channel count of any section, and the voice pool the song needs;
-- one setup table and its relocations, shared by every section (SM64's
-  template dictionary saves about 14% on songs; it is not duplicated per
-  section);
-- the lane map, if the song has lanes;
-- the sections: each a stream and its authored body length in ticks;
-- the order: section indices, and the loop index (the order position the song
-  continues at after the last one; none for a song that ends). A section may
-  follow itself, and a song needs no intro: SM64's seq0B is the order [body]
-  with loop index 0.
+Header (96 bytes, little-endian words):
 
-A section's stream is today's bytecode with two additions and one rule:
+| Offset | Field |
+|---|---|
+| 0 | magic `AFM1` (0x314d4641) |
+| 4 | version 1 |
+| 8 | total size |
+| 12 | flags: `AFX_FLAG_MUSIC`, and `LANES`, `BANKS` as in a flow |
+| 16, 20 | image offset (32-aligned), image size |
+| 24 | setup count |
+| 28 | relocations offset (count = setup count, 12 bytes each, as in AFX) |
+| 32 | banks offset (as in AFX), or 0 |
+| 36, 40 | bank identity, low and high |
+| 44 | channels: local channels used, the largest of all sections |
+| 48 | voices: the pool a song with a new-play join needs, else 0 |
+| 52, 56 | tick rate numerator and denominator |
+| 60 | work profile |
+| 64 | control id (hash of the image) |
+| 68..95 | zero |
 
-- `NEXT` (no operands) marks the end of the section's body: in the tick it
-  runs, the next section in the order starts on the song's other executor.
-  It sits at the body length, so tempo scaling moves the join exactly as it
-  moves every other event.
-- `FREE channel` gives a local channel's voice back to the song's pool. The
-  importer puts it after the channel's last release; a channel without one is
-  given back when the section ends.
-- The stream ends with `END`. The events between `NEXT` and `END` are the
-  section's tail: its own voices' key-offs, level patches and releases,
-  running past the start of the next section.
+The image is uploaded unchanged (bank table filled in by the loader):
 
-## A loaded song in AICA RAM
+| Image offset | Contents |
+|---|---|
+| 0 | image header (32 bytes): section count, order count, loop index (0xffffffff for none), section table offset, order offset, streams offset, streams size, 0 |
+| 32 | setups (setup count × 40 bytes) |
+| … | lane map (`channels` bytes, with `LANES`), padded to 4 |
+| … | section table: per section its stream offset, stream size and body ticks (12 bytes) |
+| … | order: section indices, 16 bits each, padded to 4 |
+| … | streams |
+| end | bank table (with `BANKS`), zero in the file |
 
-The song is one arena allocation (a scene can place it, as it places flows):
+Setups at 32 and the lane map right after them are where a flow keeps them, so
+the firmware's activation finds them the same way; the bank table follows the
+streams, so `AFX_BANK_TABLE_OFFSET(streams end)` finds it as in a flow.
 
-| Part | Written by | Contents |
-|---|---|---|
-| header, section table, order | SH-4, at load | offsets of the setups, lane map, bank table and each stream, relative to the allocation |
-| setups, lane map, bank table, streams | SH-4, at load | as in a flow image |
-| two executor blocks (128 B each) | SH-4 zeroes them before activation; then only the ARM7 | an `afx_runtime_slot_t` (pc, deadline, remaining wait, tempo carry, state) and the channel map, local to physical |
-| control block (32 B) | ARM7 | order position, plays of the loop, the pool (granted voices and free voices) |
+## Two kinds of song at run time
 
-The split is that of `afx_observed_t`: after activation only the ARM7 writes
-running state, and the SH-4 reads it for status. The ARM7 checks every offset
-it follows against the song's allocation. The SH-4 frees the allocation only
-after the song's end report, so the handle stays valid until every ringing
-tail has ended.
+- **Continue-only songs** (no `AFX_JOIN_NEW`): one executor, the instance's
+  runtime slot, exactly like a flow. A `NEXT` continue is a jump; voices are
+  the instance's channels, local channel i on map entry i. Any number of
+  instances of one song may play at once, as with a flow. SM64's looping
+  songs and its 114 continuous sounds are of this kind.
+- **Songs with a pool** (at least one `AFX_JOIN_NEW`): at activation the SH-4
+  grants the pool (`voices` channels, through the instance's channel map) and
+  allocates a 288-byte runtime block for this instance: a control word block
+  and two executors, each a runtime slot and a 64-entry local-to-physical map.
+  The ARM7 maps a local channel onto a free pool voice at its first event in a
+  play and gives it back at `FREE` or `END`; a continued executor keeps its
+  mapping. The SH-4 frees the block when it recycles the instance. Restarting
+  a song while its previous instance still stops therefore works for both
+  kinds.
 
-The firmware's private memory gains nothing. A song takes one of the 64
-instance slots, its handle; that slot's context holds the instance fields it
-holds today (reference, state, sequence, gain, tempo, lanes) and the song's
-address. Its two executors live in the song's allocation, not in the 64
-runtime slots. (On main, 672 bytes of private memory are free.)
+The instance's own runtime slot holds what applies to the whole song: handle,
+state, gain, tempo, lane count, loop count, lateness. Gain, tempo, lanes,
+pause and stop act on both executors. The firmware's private memory grows by
+one 16-bit order position per instance slot (128 bytes).
 
-## The firmware
+## Positions, pause and resume
 
-- **Executors.** The executor already works on a context pointer; a song's
-  pass runs it on each of the song's two executor blocks, with the song's
-  gain, tempo and lane gains, which therefore reach a ringing tail too.
-- **A join.** At `NEXT` the control block advances the order position (to
-  the loop index after the last, counting a loop; or nowhere, for a song that
-  ends). The next section starts on the other block with the outgoing
-  executor's deadline: the same tick, gapless, with no drift. Its local
-  channels are mapped onto free pool voices at that moment. The outgoing
-  executor keeps running its tail until `END`.
-- **Voices.** The SH-4 grants the pool at activation, from the voices it
-  hands out today, as many as the AFM header says the song needs. The ARM7
-  never takes a voice outside it. `FREE` and `END` give voices back to the
-  pool. Because the loader computes the pool exactly, a join never finds the
-  pool short. Giving voices back to the SH-4 while the song plays, and asking
-  for more ahead of dense passages, are later steps.
-- **End.** A song without a loop index ends when its last section's executor
-  ends; the end report then gives the whole pool back, as an ending flow does
-  today.
-- **Commands.** Gain, tempo, lanes, pause and stop take the song's handle and
-  act on both executors. Pause keys off both and keeps the order position
-  and the incoming section's executor, so a resume continues it; the tail
-  that was ringing is not resumed.
-- **Reports.** Each loop is reported as a `LOOP` is today (loop count in the
-  state word, the loop callback). A song's `afx_instance_status` keeps
-  `state` and `next_deadline` as a flow's does; its `position` packs the
-  order position of the newest section (high 12 bits) and that executor's
-  stream offset (low 20 bits). `afx_instance_rebuild` on a song takes that
-  value back, so a program that pauses, reads the status and rebuilds at the
-  reported position with the remaining wait carried over (SM64's resume)
-  works unchanged.
+`afx_instance_status` on a song reports `state` and `next_deadline` as for a
+flow. `position` packs the order position of the newest section (high 12
+bits) and that executor's offset in its section's stream (low 20 bits).
+`afx_instance_rebuild` on a song takes that value back and resumes the newest
+section there, with the remaining wait carried over; a tail that was ringing
+at the pause is not resumed. `afx_song_seek(instance, position)` restarts at
+the start of an order position. Seeking inside a section is a later step.
 
-## Load-time checks
+## Load-time checks and the compiler
 
-The SH-4 validates the AFM before it uploads it, with the format codec:
+`afx_song_validate()` in the format codec checks the AFM and then plays its
+order through, from the start through one wrap of the loop, as the firmware
+would:
 
-- each stream decodes, has exactly one `NEXT` (none in the last section of a
-  song that ends) at its body length, and ends with `END`;
-- setup indices, channels and relocations as for a flow;
-- **two executors suffice:** at every join in the order, the loop's included,
-  the outgoing section's tail must end before the incoming section's own
-  `NEXT`;
-- **the work budget at a join:** the outgoing section's events in the join
-  tick plus the incoming section's first burst stay within the per-tick
-  budget (38 commands, 171 register writes), and the header's work profile
-  covers it. The compiler makes this hold (below); the loader only checks;
-- **the pool:** the most voices held at any tick of any join (the tail's
-  voices not yet given back, plus all of the incoming section's local
-  channels) must equal the header's pool. For Daytona's t03 that is about 44
-  (28 local channels plus about 16 still ringing).
+- every stream decodes; setups, channels, relocations and lanes as in a flow;
+  each stream has one `NEXT`, at its body length, then (for a new-play join)
+  its tail, then `END`;
+- at a new-play join the other executor must have ended its previous tail;
+- the per-tick work of both executors together stays within the budget (38
+  commands, 171 writes), and the header's work profile is its peak;
+- the pool is the most voices held at once, and must equal the header's.
+
+AICAforge's `afx_c_compile_song()` writes the AFM. Where a join tick would go
+over budget it moves the outgoing tail's events later by whole ticks, keeping
+their order, and reports what it moved; it refuses only a join that moving
+cannot fit.
 
 ## API
 
-### AICAflow (SH-4)
-
 ```c
-#include <aicaflow/song.h>
+/* AICAflow, <aicaflow/song.h> */
 int afx_song_load(const afx_bank_t *const banks[], uint32_t bank_count,
                   const void *afm, uint32_t afm_size, afx_asset_t *out_song);
-/* The pool this song needs; afx_instance_activate() grants it or returns
- * -AFX_NO_CHANNELS. */
-uint32_t afx_song_voices(afx_asset_t song);
-/* Restart at the start of the section at order position `position`. */
-int afx_song_seek(afx_instance_t instance, uint32_t position);
-typedef struct {
-    uint32_t position;      /* order position of the newest section */
-    uint32_t section;       /* its section index */
-    uint32_t offset;        /* its stream offset */
-    uint32_t loops;         /* times the order looped */
-} afx_song_status_t;
-int afx_song_status(afx_instance_t instance, afx_song_status_t *out);
-```
+int afx_song_seek(afx_instance_t instance, uint32_t order_position);
+/* afx_instance_activate/stop/pause/rebuild/status, gain, tempo, lanes and the
+ * end and loop callbacks take a song's instance like a flow's. */
 
-`afx_instance_activate`, `_stop`, `_pause`, `_gain_set`, `_tempo_set`,
-`afx_instance_lanes_set` and the end and loop callbacks take a song's
-instance like a flow's. `afx_instance_rebuild` on a song takes the position its
-`afx_instance_status` reports (order position and stream offset, packed) and
-resumes there, which is how SM64 resumes after a pause today. AFS scenes gain a song entry,
-so a scene places songs as it places flows.
-
-### AICAforge
-
-```c
+/* AICAforge */
 typedef struct {
     const afx_c_event_t *events; /* section-relative ticks, local channels */
     uint32_t count;
-    uint32_t body_ticks;         /* where NEXT goes: the next section starts */
-    uint32_t end_ticks;          /* END, after the tail; >= body_ticks */
+    uint32_t body_ticks;         /* NEXT */
+    uint32_t end_ticks;          /* END; equal to body_ticks for a continue join */
+    uint32_t join;               /* AFX_JOIN_NEW or AFX_JOIN_CONTINUE */
 } afx_c_section_t;
-#define AFX_C_SONG_ENDS UINT32_MAX
 int afx_c_compile_song(const afx_c_section_t *sections, uint32_t section_count,
                        const uint16_t *order, uint32_t order_count,
-                       uint32_t loop_index, uint32_t tick_rate,
+                       uint32_t loop_index /* AFX_C_SONG_ENDS */, uint32_t tick_rate,
                        const afx_c_zone_t *zones, uint32_t zone_count,
                        afx_c_output_t *out); /* AFB, AFM and AFV */
 ```
 
-The events may include `AFX_OP_FREE` per channel; the compiler places
-`NEXT` and `END`. It schedules joins as it schedules a flow's crowded ticks
-today: where a join tick holds more than the budget (an incoming downbeat on
-top of the outgoing tail's key-offs and level patches), it moves the
-outgoing tail's events later by whole ticks, keeping their order, and reports
-how many it moved and how far; it refuses only a join that moving cannot
-fit. It also builds the shared setup dictionary
-(`afx_c_optimize_events`) across all sections, computes the pool and the work
-profile, and refuses a song the loader would refuse. `afx_vgm` splits a
-recording into sections, keeps the arcade's voice allocation within each, and
-emits the order (Daytona's side).
-
-## Open questions for Daniel
-
-SM64 (sm64-dc-f9) answered from its side: (a) for question 1, the opcode for
-2, yes to `FREE` (it already lost a jingle 12 times to `-AFX_NO_CHANNELS`
-with songs holding up to 31 voices), pause dropping the tail is fine, and it
-never seeks. Its shortest looping body is about 14 s and its tails are
-release lengths under 4 s, so two executors suffice by a wide margin.
-
-1. **Does `LOOP` really go?** SM64 has 114 continuous sounds (engines, wind,
-   slides) that loop a stretch whose end has the same notes sounding as its
-   start; the voice crosses `LOOP` without a new key-on. Sections cannot do
-   that: each play starts new voices, so a held engine note would restart on
-   every repeat. The options:
-   - **(a) keep `LOOP` for plain flows** and use sections for songs. Nothing
-     changes for continuous sounds, and there is no ABI cost, since it
-     exists. This is my recommendation.
-   - (b) remove `LOOP` and give sections a mode that continues on the same
-     executor and channels. That is `LOOP` again under another name, inside
-     a song, with more machinery.
-   SM64's looping songs move to sections either way; the converter drops its
-   cut-and-link workaround and emits the recorded tail after `NEXT`.
-2. **`NEXT` in the stream, or only a body length in the table?** I propose
-   the opcode: the join then follows tempo changes exactly, with no arithmetic
-   in the firmware. The table keeps the body length for tools and checks.
-3. **`FREE`, an opcode for early voice return.** Without it voices only come
-   back at a section's `END`, and t03's pool grows from about 44 towards 56.
-4. **Pause drops the ringing tail.** Resuming continues the newest section
-   only. Fine for SM64's pause, as far as I can tell.
-5. **Seek** goes to the start of an order position. Seeking inside a section
-   would need a per-section AFC later.
+AFS scenes gain a song entry kind, so a scene places songs as it places flows.
 
 ## Plan
 
-1. AICAflow, ABI 14 and format API 6: the AFM format and validator, `NEXT`
-   and `FREE`, the song executor in the firmware, the SH-4 API, the host
-   backend (#22) and `afx_render`, host tests, and a console check: a song of
-   intro, A, A, B that loops into A, checking that each join is in the same
-   tick, that tails ring past it, and that the pool comes back whole.
-2. AICAforge: `afx_c_compile_song`, `afx_scene` song entries, and, depending
-   on question 1, the `LOOP` compile entries.
-3. Daytona: `afx_vgm` sections; SM64: the converter.
-
-Each is its own PR. The console A/B for Daytona follows step 1.
+1. AICAflow: the format and validator, the firmware, the SH-4 song API, AFS
+   song entries, `LOOP` removed; host and console checks.
+2. AICAforge: `afx_c_compile_song`, `afx_compile --loop-tick` writing a
+   continue-only song, `afx_scene` song entries, the loop entries removed.
+3. The host backend (#22) follows main; Daytona's `afx_vgm` and SM64's
+   converter target step 2.
