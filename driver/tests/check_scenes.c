@@ -342,7 +342,8 @@ int main(void) {
     check("a streamed phrase plays from the slot", !stream_result && streamed);
     check("instances activate beside every chunk's DMA",
           chunks == PHRASE_BYTES / PHRASE_CHUNK && activated == chunks);
-    check("no stream call holds the lock for a DMA", load_us && longest * 4u < load_us);
+    /* A host's DMA is a copy that takes no time; there only the console's matters. */
+    check("no stream call holds the lock for a DMA", !load_us ? !longest : longest * 4u < load_us);
 
     /* The permanent scene keeps its ring while the DSP uses it. */
     int held = afx_scene_release(p) == -AFX_ASSET_REFERENCED;

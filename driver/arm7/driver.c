@@ -1,9 +1,14 @@
 #include <aicaflow/protocol.h>
 #include <aicaflow/codec.h>
+#include "aica_access.h"
 #include "sample_address.h"
 #include "aica_access.h"
 
-/* The timer FIQ only advances AFX_AICA_TIMER_TICK_ADDR. Stream work stays in
+/* The host backend compiles this file natively (driver/host/src/firmware.c):
+ * aica_access.h maps AICA RAM and registers, and the host clears the state
+ * below at every boot as crt0.s does. A new static needs adding there.
+ *
+ * The timer FIQ only advances AFX_AICA_TIMER_TICK_ADDR. Stream work stays in
  * this normal ARM context, which keeps the explicitly reserved FIQ stack free
  * of decoder and register-write pressure. */
 static volatile afx_runtime_slot_t contexts[AFX_MAX_FLOW_SLOTS];
@@ -50,26 +55,25 @@ static uint16_t voice_base_direct[AFX_AICA_CHANNEL_COUNT];
 static uint16_t voice_base_dsp_send[AFX_AICA_CHANNEL_COUNT];
 static uint32_t dsp_owner;
 static uint32_t dsp_delay_base, dsp_delay_bytes;
-extern uint8_t __asset_base[], __private_end[];
 extern void arm_fiq_enable(void);
 
-#define STATUS ((volatile afx_status_t *)AFX_STATUS_ADDR)
-#define QUEUE ((volatile afx_cmd_queue_t *)AFX_QUEUE_ADDR)
-#define OBSERVED ((volatile afx_observed_t *)AFX_OBSERVED_ADDR)
-#define CLOCK ((volatile uint32_t *)AFX_AICA_TIMER_TICK_ADDR)
+#define STATUS ((volatile afx_status_t *)AICA_RAM(AFX_STATUS_ADDR))
+#define QUEUE ((volatile afx_cmd_queue_t *)AICA_RAM(AFX_QUEUE_ADDR))
+#define OBSERVED ((volatile afx_observed_t *)AICA_RAM(AFX_OBSERVED_ADDR))
+#define CLOCK ((volatile uint32_t *)AICA_RAM(AFX_AICA_TIMER_TICK_ADDR))
 
 /* Original bus-0 DSP programs; no extracted commercial payloads. */
 static void dsp_write(uint32_t offset, uint16_t value) {
     /* AFX stores the meaningful low 16 bits; AICA's register aperture is
      * 32-bit word addressed, as are the per-channel registers below. */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + offset) = value;
+    AICA_REG_WRITE(offset, value);
 }
 static void dsp_returns(int enabled) {
     dsp_write(0x2000u, enabled ? 0x0f1fu : 0);
     dsp_write(0x2004u, enabled ? 0x0f0fu : 0);
 }
 static void dsp_clear_delay(void) {
-    volatile uint32_t *delay = (volatile uint32_t *)dsp_delay_base;
+    volatile uint32_t *delay = (volatile uint32_t *)AICA_RAM(dsp_delay_base);
     for (uint32_t word = 0; word < dsp_delay_bytes / sizeof(*delay); ++word) delay[word] = 0;
 }
 static void dsp_disable(void) {
@@ -94,7 +98,7 @@ static void dsp_nop(void) {
 }
 static uint32_t stack_free(uint32_t low, uint32_t high) {
     uint32_t current = low;
-    while (current < high && *(volatile uint32_t *)current == AFX_STACK_PATTERN)
+    while (current < high && *(volatile uint32_t *)AICA_RAM(current) == AFX_STACK_PATTERN)
         current += 4;
     return current - low;
 }
@@ -160,7 +164,7 @@ static void publish(uint32_t index, uint32_t reference, uint32_t state, uint32_t
         } else {
             QUEUE->event_overflows = QUEUE->event_overflows + 1u;
         }
-        *(volatile uint32_t *)(AFX_AICA_REG_BASE + AFX_AICA_MCIPD) = AFX_AICA_MCI_SCPU;
+        AICA_REG_WRITE(AFX_AICA_MCIPD, AFX_AICA_MCI_SCPU);
     }
 }
 static int physical_channel(const volatile afx_runtime_slot_t *context,
@@ -177,7 +181,7 @@ static int map_valid(uint32_t address, uint32_t count) {
         return 0;
     uint32_t used_low = 0, used_high = 0;
     for (uint32_t i = 0; i < count; ++i) {
-        uint32_t physical = *(volatile uint8_t *)(address + i * AFX_CHANNEL_MAP_ENTRY_BYTES);
+        uint32_t physical = *(volatile uint8_t *)AICA_RAM(address + i * AFX_CHANNEL_MAP_ENTRY_BYTES);
         uint32_t *used = physical < 32 ? &used_low : &used_high;
         uint32_t bit = 1u << (physical & 31u);
         if (physical >= AFX_AICA_CHANNEL_COUNT || (*used & bit)) return 0;
@@ -188,18 +192,16 @@ static int map_valid(uint32_t address, uint32_t count) {
 }
 static void release_voice(uint32_t physical) {
     voice_control[physical] = (voice_control[physical] & ~AFX_KEYON) | AFX_KEYON_EXECUTE;
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + physical * AFX_AICA_CHANNEL_REG_STRIDE) =
-        voice_control[physical];
+    AICA_REG_WRITE(physical * AFX_AICA_CHANNEL_REG_STRIDE, voice_control[physical]);
 }
 static void keyoff(const volatile afx_runtime_slot_t *context) {
     for (uint32_t local = 0; local < context->channels; ++local) {
         uint32_t physical;
         if (!physical_channel(context, local, &physical)) continue;
         /* Retirement/pause must not leave an authored release tail playing. */
-        volatile uint32_t *regs = (volatile uint32_t *)(AFX_AICA_REG_BASE +
-            physical * AFX_AICA_CHANNEL_REG_STRIDE);
-        regs[AFX_FIELD_TOTAL_LEVEL] = 0xff00u | (voice_base_mix[physical] & 0xffu);
-        regs[AFX_FIELD_ENV_DR] = 31;
+        AICA_CHANNEL(regs, physical);
+        AICA_CHANNEL_SET(regs, AFX_FIELD_TOTAL_LEVEL, 0xff00u | (voice_base_mix[physical] & 0xffu));
+        AICA_CHANNEL_SET(regs, AFX_FIELD_ENV_DR, 31);
         release_voice(physical);
         voice_flags[physical] &= VOICE_MUTED;
         voice_held[physical] = 0;
@@ -261,20 +263,19 @@ static uint16_t projected_dsp_send(uint32_t physical) {
     return (uint16_t)((voice_base_dsp_send[physical] & ~0xf0u) | (level << 4));
 }
 static void write_projection(uint32_t physical, uint32_t fields, uint8_t instance_gain) {
-    volatile uint32_t *regs = (volatile uint32_t *)(AFX_AICA_REG_BASE +
-        physical * AFX_AICA_CHANNEL_REG_STRIDE);
+    AICA_CHANNEL(regs, physical);
     if (fields & (1u << AFX_FIELD_TOTAL_LEVEL))
-        regs[AFX_FIELD_TOTAL_LEVEL] = projected_mix(physical, instance_gain);
-    if (fields & (1u << AFX_FIELD_DIRECT)) regs[AFX_FIELD_DIRECT] = projected_direct(physical);
-    if (fields & (1u << AFX_FIELD_PITCH)) regs[AFX_FIELD_PITCH] = projected_pitch(physical);
+        AICA_CHANNEL_SET(regs, AFX_FIELD_TOTAL_LEVEL, projected_mix(physical, instance_gain));
+    if (fields & (1u << AFX_FIELD_DIRECT)) AICA_CHANNEL_SET(regs, AFX_FIELD_DIRECT, projected_direct(physical));
+    if (fields & (1u << AFX_FIELD_PITCH)) AICA_CHANNEL_SET(regs, AFX_FIELD_PITCH, projected_pitch(physical));
     if (fields & (1u << AFX_FIELD_DSP_SEND))
-        regs[AFX_FIELD_DSP_SEND] = projected_dsp_send(physical);
+        AICA_CHANNEL_SET(regs, AFX_FIELD_DSP_SEND, projected_dsp_send(physical));
 }
 static int physical_channel(const volatile afx_runtime_slot_t *context,
                             uint32_t local, uint32_t *out) {
     if (local >= context->channels) return 0;
-    uint32_t physical = *(volatile uint8_t *)(context->channel_map +
-                                                local * AFX_CHANNEL_MAP_ENTRY_BYTES);
+    uint32_t physical = *(volatile uint8_t *)AICA_RAM(context->channel_map +
+                                                      local * AFX_CHANNEL_MAP_ENTRY_BYTES);
     if (physical >= AFX_AICA_CHANNEL_COUNT) return 0;
     *out = physical;
     return 1;
@@ -345,15 +346,14 @@ static afx_result_t install_voice(const volatile afx_runtime_slot_t *context,
     /* The projected words come from the bases; the other held ones are in the registers. */
     held &= ~((1u << AFX_FIELD_TOTAL_LEVEL) | (1u << AFX_FIELD_DIRECT) |
               (1u << AFX_FIELD_DSP_SEND) | (1u << AFX_FIELD_PITCH));
-    volatile uint32_t *regs = (volatile uint32_t *)(AFX_AICA_REG_BASE +
-        physical * AFX_AICA_CHANNEL_REG_STRIDE);
+    AICA_CHANNEL(regs, physical);
     uint16_t control = words[AFX_FIELD_CONTROL] & ~(AFX_KEYON | AFX_KEYON_EXECUTE);
-    regs[AFX_FIELD_CONTROL] = control;
+    AICA_CHANNEL_SET(regs, AFX_FIELD_CONTROL, control);
     for (uint32_t field = 1; field < AFX_FIELD_COUNT; ++field)
-        if (!(held & (1u << field))) regs[field] = words[field];
+        if (!(held & (1u << field))) AICA_CHANNEL_SET(regs, field, words[field]);
     if (run) control |= AFX_KEYON | AFX_KEYON_EXECUTE;
     voice_control[physical] = control;
-    if (run) regs[AFX_FIELD_CONTROL] = control;
+    if (run) AICA_CHANNEL_SET(regs, AFX_FIELD_CONTROL, control);
     return AFX_OK;
 }
 static afx_result_t write_note(const volatile afx_runtime_slot_t *context,
@@ -364,7 +364,7 @@ static afx_result_t write_note(const volatile afx_runtime_slot_t *context,
         !physical_channel(context, event->channel, &physical)) return AFX_BAD_COMMAND;
     if ((context->flags & AFX_FLAG_LANES) && (voice_flags[physical] & VOICE_MUTED)) return AFX_OK;
     afx_result_t result = afx_apply_setup_fields(state,
-        (const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES), event->mask,
+        (const uint8_t *)AICA_RAM(context->setups + event->setup * AFX_SETUP_BYTES), event->mask,
         event->values, afx_field_value_bytes(event->mask));
     if (result) return result;
     return install_voice(context, physical, state, 1);
@@ -374,8 +374,7 @@ static afx_result_t write_patch(const volatile afx_runtime_slot_t *context,
                                 const afx_event_t *event) {
     uint32_t physical;
     if (!physical_channel(context, event->channel, &physical)) return AFX_BAD_COMMAND;
-    volatile uint32_t *regs = (volatile uint32_t *)(AFX_AICA_REG_BASE +
-        physical * AFX_AICA_CHANNEL_REG_STRIDE);
+    AICA_CHANNEL(regs, physical);
     const uint8_t *value = event->values;
     uint32_t projection = 0;
     for (uint32_t field = 0; field < AFX_FIELD_COUNT; ++field) {
@@ -394,7 +393,7 @@ static afx_result_t write_patch(const volatile afx_runtime_slot_t *context,
         } else if (field == AFX_FIELD_PITCH) {
             voice_base_pitch[physical] = field_value;
             projection |= 1u << field;
-        } else regs[field] = field_value;
+        } else AICA_CHANNEL_SET(regs, field, field_value);
     }
     write_projection(physical, projection, context->gain);
     return AFX_OK;
@@ -656,10 +655,10 @@ static int bank_table_valid(const afx_activation_t *activate) {
     if ((activate->image_base & 3u) || !range(table, AFX_BANK_TABLE_BYTES, activate->image_size))
         return 0;
     for (uint32_t slot = 1; slot < AFX_MAX_FLOW_BANKS; ++slot) {
-        uint32_t entry = *(volatile uint32_t *)(activate->image_base + table + slot * 4u);
+        uint32_t entry = *(volatile uint32_t *)AICA_RAM(activate->image_base + table + slot * 4u);
         uint32_t base = (entry & 0xffffu) << AFX_BANK_ADDRESS_UNIT_SHIFT;
         uint32_t bytes = (entry >> 16) << AFX_BANK_ADDRESS_UNIT_SHIFT;
-        if (bytes ? base < (uint32_t)(uintptr_t)__asset_base || !asset_range(base, bytes) : base)
+        if (bytes ? base < AICA_ASSET_BASE || !asset_range(base, bytes) : base)
             return 0;
     }
     return 1;
@@ -714,10 +713,10 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
     int song = (activate.flags & AFX_FLAG_SONG) != 0, pool = (activate.flags & AFX_FLAG_POOL) != 0;
     uint32_t runtime = (uint32_t)activate.runtime_units << 5;
     if (contexts[index].reference || (pool && !song) || !pool != !activate.runtime_units ||
-        (pool && (runtime < (uint32_t)(uintptr_t)__asset_base ||
+        (pool && (runtime < AICA_ASSET_BASE ||
                   !asset_range(runtime, AFX_SONG_RUNTIME_BYTES(activate.flags & AFX_FLAG_LANES)))) ||
         (!activate.bank_bytes && bank_base) ||
-        (activate.bank_bytes && (bank_base < (uint32_t)(uintptr_t)__asset_base ||
+        (activate.bank_bytes && (bank_base < AICA_ASSET_BASE ||
          !asset_range(bank_base, activate.bank_bytes))) ||
         !activate.required_channels || activate.required_channels > AFX_MAX_FLOW_CHANNELS ||
         !asset_range(activate.image_base, activate.image_size) ||
@@ -758,10 +757,10 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
             if (*(volatile uint8_t *)AICA_RAM(lane_map + local) + 1u > lane_count)
                 lane_count = *(volatile uint8_t *)AICA_RAM(lane_map + local) + 1u;
     for (uint32_t local = 0; local < activate.required_channels; ++local) {
-        uint32_t physical = *(volatile uint8_t *)(activate.channel_map +
+        uint32_t physical = *(volatile uint8_t *)AICA_RAM(activate.channel_map +
             local * AFX_CHANNEL_MAP_ENTRY_BYTES);
         uint32_t lane = (!pool && (activate.flags & AFX_FLAG_LANES)) ?
-            *(volatile uint8_t *)(lane_map + local) : 0;
+            *(volatile uint8_t *)AICA_RAM(lane_map + local) : 0;
         if (lane >= AFX_MAX_FLOW_CHANNELS) {
             clear_words((volatile uint32_t *)context, sizeof(*context) / 4);
             publish(index, reference, AFX_ERROR, sequence, AFX_BAD_COMMAND, 0, 0, local);
@@ -902,7 +901,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
     }
     for (uint32_t i = 0; i < request.state_count; ++i) {
         const volatile afx_restore_channel_t *source =
-            (const volatile afx_restore_channel_t *)(request.states_address + i * sizeof(*source));
+            (const volatile afx_restore_channel_t *)AICA_RAM(request.states_address + i * sizeof(*source));
         uint32_t local = source->local_channel;
         uint32_t bit = 1u << (local & 31u);
         uint32_t *seen = local < 32 ? &seen_low : &seen_high;
@@ -925,7 +924,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
     keyoff(context);
     for (uint32_t i = 0; i < request.state_count; ++i) {
         afx_restore_channel_t state;
-        const volatile uint32_t *source = (const volatile uint32_t *)(request.states_address +
+        const volatile uint32_t *source = (const volatile uint32_t *)AICA_RAM(request.states_address +
             i * sizeof(state));
         for (uint32_t word = 0; word < sizeof(state) / 4; ++word)
             ((uint32_t *)&state)[word] = source[word];
@@ -1106,7 +1105,7 @@ static void dsp_control(uint32_t opcode, uint32_t reference, uint32_t sequence,
         (request.ring_bytes &&
          (request.ring_bytes != ((uint32_t)AFX_DSP_MIN_BYTES << rbl) ||
           (request.ring_address & (AFX_DSP_RING_ALIGN - 1u)) ||
-          request.ring_address < (uint32_t)(uintptr_t)__asset_base ||
+          request.ring_address < AICA_ASSET_BASE ||
           !range(request.ring_address, request.ring_bytes, AFX_ASSET_MAX)))) {
         scene_result(sequence, AFX_BAD_COMMAND);
         return;
@@ -1192,15 +1191,27 @@ static void drain_commands(void) {
         }
     }
 }
+/* One pass of the main loop. */
+#define MAIN_LOOP_PASS() do { \
+        drain_commands(); \
+        for (uint32_t index = 0; index < AFX_MAX_FLOW_SLOTS; ++index) service(index); \
+        STATUS->timer_ticks = *CLOCK; \
+        ++STATUS->heartbeat; \
+    } while (0)
+/* The main loop. The host backend (driver/host/src/firmware.c) defines it
+ * empty, so arm_main returns after booting, and runs MAIN_LOOP_PASS itself. */
+#ifndef AICA_MAIN_LOOP
+#define AICA_MAIN_LOOP() for (;;) MAIN_LOOP_PASS()
+#endif
 void arm_main(void) {
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x289c) = 0; /* SCIEB */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x28b4) = 0; /* MCIEB */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x28a4) = 0x7ff; /* SCIRE */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x28bc) = 0x7ff; /* MCIRE */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x28a8) = 0x18; /* SCILV0 */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x28ac) = 0x50; /* SCILV1 */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x28b0) = 0x08; /* SCILV2 */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x2800) = 0; /* master mute */
+    AICA_REG_WRITE(0x289c, 0); /* SCIEB */
+    AICA_REG_WRITE(0x28b4, 0); /* MCIEB */
+    AICA_REG_WRITE(0x28a4, 0x7ff); /* SCIRE */
+    AICA_REG_WRITE(0x28bc, 0x7ff); /* MCIRE */
+    AICA_REG_WRITE(0x28a8, 0x18); /* SCILV0 */
+    AICA_REG_WRITE(0x28ac, 0x50); /* SCILV1 */
+    AICA_REG_WRITE(0x28b0, 0x08); /* SCILV2 */
+    AICA_REG_WRITE(0x2800, 0); /* master mute */
     if (initialized_data_probe != 0x41584632) { STATUS->error = AFX_BAD_FIRMWARE; return; }
 
     clear_words((volatile uint32_t *)QUEUE, sizeof(*QUEUE) / 4);
@@ -1209,9 +1220,9 @@ void arm_main(void) {
     STATUS->layout_id = AFX_LAYOUT_ID;
     dsp_disable();
     STATUS->capabilities = AFX_CAP_BOOTSTRAP | AFX_CAP_LIFECYCLE | AFX_CAP_PLAYBACK | AFX_CAP_DSP | AFX_CAP_DSP_HOST_INIT;
-    STATUS->asset_base = (uint32_t)__asset_base;
+    STATUS->asset_base = AICA_ASSET_BASE;
     STATUS->asset_limit = AFX_ASSET_MAX;
-    STATUS->private_end = (uint32_t)__private_end;
+    STATUS->private_end = AICA_PRIVATE_END;
     STATUS->stack_base = AFX_STACK_BASE;
     STATUS->timer_ticks = 0;
     STATUS->error = AFX_OK;
@@ -1223,8 +1234,7 @@ void arm_main(void) {
     STATUS->stack_free[4] = stack_free(AFX_ABT_STACK_TOP, AFX_UND_STACK_TOP);
     *CLOCK = 0;
     for (uint32_t channel = 0; channel < AFX_AICA_CHANNEL_COUNT; ++channel) {
-        volatile uint32_t *regs = (volatile uint32_t *)(AFX_AICA_REG_BASE +
-            channel * AFX_AICA_CHANNEL_REG_STRIDE);
+        AICA_CHANNEL(regs, channel);
         voice_control[channel] = AFX_KEYON_EXECUTE;
         voice_base_mix[channel] = voice_base_direct[channel] =
             voice_base_dsp_send[channel] = 0;
@@ -1233,21 +1243,16 @@ void arm_main(void) {
         voice_lane_pitch[channel] = 0;
         voice_lane_id[channel] = 0;
         voice_lane_pan[channel] = 0;
-        regs[AFX_FIELD_CONTROL] = AFX_KEYON_EXECUTE;
-        for (uint32_t field = 1; field < AFX_FIELD_COUNT; ++field) regs[field] = 0;
-        regs[AFX_FIELD_ENV_DR] = 0x1f;
+        AICA_CHANNEL_SET(regs, AFX_FIELD_CONTROL, AFX_KEYON_EXECUTE);
+        for (uint32_t field = 1; field < AFX_FIELD_COUNT; ++field) AICA_CHANNEL_SET(regs, field, 0);
+        AICA_CHANNEL_SET(regs, AFX_FIELD_ENV_DR, 0x1f);
     }
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x2800) = 0x0f;
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x2890) = AFX_TIMER_RELOAD;
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + 0x289c) = 0x40; /* Timer A only */
+    AICA_REG_WRITE(0x2800, 0x0f);
+    AICA_REG_WRITE(0x2890, AFX_TIMER_RELOAD);
+    AICA_REG_WRITE(0x289c, 0x40); /* Timer A only */
     STATUS->magic = AFX_STATUS_MAGIC; /* publish only after all shared state is ready */
     /* Once, so afx_init can see the interrupt arrive before relying on it. */
-    *(volatile uint32_t *)(AFX_AICA_REG_BASE + AFX_AICA_MCIPD) = AFX_AICA_MCI_SCPU;
+    AICA_REG_WRITE(AFX_AICA_MCIPD, AFX_AICA_MCI_SCPU);
     arm_fiq_enable();
-    for (;;) {
-        drain_commands();
-        for (uint32_t index = 0; index < AFX_MAX_FLOW_SLOTS; ++index) service(index);
-        STATUS->timer_ticks = *CLOCK;
-        ++STATUS->heartbeat;
-    }
+    AICA_MAIN_LOOP();
 }

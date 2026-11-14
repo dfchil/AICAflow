@@ -36,3 +36,7 @@ local_extract/
 __pycache__/
 tools/__pycache__/
 /driver/sh4/libaicaflow_host.a
+/driver/host/libaicaflow_pc.a
+/driver/host/libaicaflow_web.a
+/driver/host/afx_render
+*.dSYM/

@@ -28,14 +28,6 @@ the commit history.
   restart while stopping, pause and resume, and every runtime block given
   back. Design: docs/design/song-sections.md.
 
-### Removed
-
-- `LOOP` (opcode 0x16), `AFX_FLAG_LOOP` and the AFX header's `loop_tick`
-  (now a reserved zero word): a song's continue join replaces them. A flow
-  with them is refused. `afx_asset_loops()` now reports a song's loop index.
-  The console checks' looping fixture became a long flow and two songs
-  (`driver/tests/make_fixtures.py`); `loop-check` became `song-check`.
-
 - A scene slot filled in steps: `afx_scene_slot_stream_begin()` places an
   uploading bank at the slot's start, the existing
   `afx_sample_bank_stream_dma_begin()`, `_poll()` and `_finish()` upload it a
@@ -47,6 +39,26 @@ the commit history.
   the slot's bank. No firmware change; ABI 13. Checked on hardware by
   `make -C driver scenes-check`, which streams a 32 KiB phrase while instances
   activate beside each chunk.
+
+### Removed
+
+- `LOOP` (opcode 0x16), `AFX_FLAG_LOOP` and the AFX header's `loop_tick`
+  (now a reserved zero word): a song's continue join replaces them. A flow
+  with them is refused. `afx_asset_loops()` now reports a song's loop index.
+  The console checks' looping fixture became a long flow and two songs
+  (`driver/tests/make_fixtures.py`); `loop-check` became `song-check`.
+
+- A host backend for PCs and browsers (`driver/host`). The SH4 library and
+  the firmware's executor (`driver/arm7/driver.c`, compiled natively behind
+  the new `driver/arm7/aica_access.h`; the console image is unchanged) run
+  on a software AICA: 64 voices (16-bit and 8-bit PCM, ADPCM, noise, loops, the envelopes, LFOs and
+  filter), the DSP after MAME's and the mixer, at 44.1 kHz.
+  `<aicaflow/host_audio.h>` gives the output. `libaicaflow_pc.a` uses threads;
+  `libaicaflow_web.a` is built with Emscripten and runs without them.
+  `driver/host/host.mk` attaches it to enDjinn's pc-enDjinn (Vulkan) and
+  web-enDjinn targets, and the quickstart and dynamic SFX examples build for
+  both. `afx_render` plays a flow and bank into a WAV. The console checks run
+  unchanged on the host in `make check`. Design: docs/design/host-backend.md.
 - AFS scene files and their loader, `<aicaflow/scene.h>`. An AFS holds the
   banks and flows of one scene with the AICA layout the authoring tool
   planned; `afx_scene_load()` allocates one block and places each entry at its
@@ -195,6 +207,11 @@ the commit history.
 
 ### Fixed
 
+- A call that found the driver lock held in the moment the event thread took
+  or gave it back returned `AFX_BUSY` instead of waiting. The event thread
+  now marks itself before it takes the lock and after it gives it back. Seen
+  on the host backend, where the event thread runs in parallel: a STOP was
+  refused and its instance never ended.
 - Firmware: a gain change kept only four bits of the mix word's low byte, so
   it cleared the low-pass bypass and voice-off flags and cut the filter Q.
   Only the attenuation byte is scaled now.

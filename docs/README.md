@@ -9,6 +9,8 @@
 - [Lifetime](lifetime.md) — instances, banks and resource ownership.
 - [Dependencies](dependencies.md) — setup and version updates.
 - [Testing](testing.md) — host checks and hardware verification.
+- [Host backend](design/host-backend.md) — AICAflow on a PC or in a browser,
+  with a software AICA.
 - [Release verification](release-check.md) — candidate checks and remaining work.
 
 ## Reference

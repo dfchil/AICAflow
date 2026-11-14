@@ -21,7 +21,8 @@ prefix = r'''
 #include <stddef.h>
 #include <string.h>
 #include <aicaflow/codec.h>
-#include "sample_address.h"
+#include <stdint.h>
+#include <aicaflow/protocol.h>
 /* AICA RAM by address: a flow's stream at STREAM_BASE, a song from SONG_BASE. */
 #define STREAM_BASE 0x4000u
 #define SONG_BASE 0x10000u
@@ -37,6 +38,7 @@ static uintptr_t aica_ptr(uint32_t address) {
 }
 #define AICA_RAM(address) aica_ptr(address)
 static uint16_t song_position[AFX_MAX_FLOW_SLOTS];
+#include "sample_address.h"
 static volatile uint32_t registers[64][32];
 #undef AFX_AICA_REG_BASE
 #define AFX_AICA_REG_BASE ((uintptr_t)registers)
@@ -103,12 +105,12 @@ names = ("range", "asset_range", "clear_words", "dsp_returns", "dsp_disable", "d
          "lifecycle", "write_note", "write_patch", "patch", "execute", "service", "bank_table_valid")
 body = "\n".join(function(name) for name in names)
 # Keep production validation/installation intact; only translate staging pointers.
-assert body.count("(request.states_address +") == 2
-body = body.replace("(request.states_address +", "((uintptr_t)restore_states +")
-assert body.count("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)") == 1
-body = body.replace("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)", "setup_bytes")
-assert body.count("(activate->image_base + table + slot * 4u)") == 1
-body = body.replace("(activate->image_base + table + slot * 4u)",
+assert body.count("AICA_RAM(request.states_address +") == 2
+body = body.replace("AICA_RAM(request.states_address +", "((uintptr_t)restore_states +")
+assert body.count("(const uint8_t *)AICA_RAM(context->setups + event->setup * AFX_SETUP_BYTES)") == 1
+body = body.replace("(const uint8_t *)AICA_RAM(context->setups + event->setup * AFX_SETUP_BYTES)", "setup_bytes")
+assert body.count("AICA_RAM(activate->image_base + table + slot * 4u)") == 1
+body = body.replace("AICA_RAM(activate->image_base + table + slot * 4u)",
                     "((uintptr_t)image_bytes + activate->image_base - STREAM_BASE + table + slot * 4u)")
 checks = r'''
 int main(void) {

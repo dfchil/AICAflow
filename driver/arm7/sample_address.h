@@ -1,6 +1,7 @@
 #ifndef AICAFLOW_SAMPLE_ADDRESS_H
 #define AICAFLOW_SAMPLE_ADDRESS_H
 #include <aicaflow/protocol.h>
+#include "aica_access.h"
 
 enum {
     AFX_SAMPLE_NOISE_ENABLE = 0x400u,
@@ -13,7 +14,7 @@ enum {
  * the host test reads it from a buffer instead. */
 #ifndef AFX_BANK_TABLE_READ
 #define AFX_BANK_TABLE_READ(context, slot) \
-    (*(volatile const uint32_t *)(uintptr_t)(AFX_BANK_TABLE_OFFSET((context)->end) + (slot) * 4u))
+    (*(volatile const uint32_t *)AICA_RAM(AFX_BANK_TABLE_OFFSET((context)->end) + (slot) * 4u))
 #endif
 
 /* Convert only the sample address bits; preserve format, loop and key flags.
