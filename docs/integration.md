@@ -213,16 +213,28 @@ scene is loaded and the ring is large enough; such a scene cannot be released
 until the DSP is disabled. Plain bank and flow uploads keep working beside
 scenes.
 
-## Looping flows
+## Songs
 
-A flow whose stream ends with `LOOP` (header flag `AFX_FLAG_LOOP`;
-`afx_asset_loops()` says so and gives the authored tick it continues at)
-repeats by itself, gaplessly, until stopped: it never ends on its own, so the
-end callback does not see it until `afx_instance_stop()`. Each loop is
-reported like other news, and `afx_set_loop_callback()` is called for it, with
-the loop target as the status position (image-relative) and the hardware tick
-the flow continued at as `next_deadline`; `afx_instance_status()` counts them in
-`loops`. Seek ticks address the authored first pass.
+A song (`<aicaflow/song.h>`, an AFM file) is sections played in an order.
+`afx_song_load(banks, count, afm, size, &song)` loads it like a flow, and its
+instances play through the instance API. A section ends its body with `NEXT`:
+a continue join goes on with the same executor and voices, as a loop does,
+and a new-play join starts the next section on the song's second executor with
+voices of its own while the last one plays its tail (its key-offs and
+releases). At the end of the order the song goes on at its loop index: it
+never ends by itself, so the end callback does not see it until
+`afx_instance_stop()`. Each such wrap is reported like other news, and
+`afx_set_loop_callback()` is called for it; `afx_instance_status()` counts them
+in `loops`, and `afx_asset_loops()` gives the loop index.
+
+A song with a new-play join plays from a pool of voices that activation takes
+(the AFM header says how many) and from a runtime block that each instance
+gets in AICA RAM; any number of instances of one song may play at once. Its
+status position is `AFX_SONG_POSITION(order position, stream offset)`, and
+`afx_instance_rebuild()` resumes a paused song at such a position: pause, read
+the status, rebuild at its position. `afx_song_seek()` restarts a paused song
+at an order position. A song has no AFC, so `afx_instance_seek()` refuses it.
+A scene places a song entry (`AFX_SCENE_SONG`) as it places a flow.
 
 ## Seek, DSP and player metadata
 

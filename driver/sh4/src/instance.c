@@ -75,6 +75,7 @@ void release_instance_preserving_generation(uint32_t index) {
     bool retired = slot->retired;
     uint32_t asset_index = slot->asset_index;
     if (slot->staging_addr) (void)free_allocation(slot->staging_addr);
+    if (slot->runtime_addr) (void)free_allocation(slot->runtime_addr);
     if (slot->ending && !slot->ending_queued) --g_endings_held;
     g_available_channels |= slot->channel_mask;
     map_release(slot);
@@ -89,7 +90,7 @@ void release_instance_preserving_generation(uint32_t index) {
 
 /* What one activation takes on the SH-4 side, reserved before anything is queued. */
 typedef struct {
-    uint32_t asset_index, index, map_address, bank_base, bank_bytes;
+    uint32_t asset_index, index, map_address, bank_base, bank_bytes, runtime;
     uint64_t channels;
     uint8_t count, arena, offset;
 } activation_plan_t;
@@ -120,9 +121,22 @@ static int activation_reserve(afx_asset_t asset, activation_plan_t *plan) {
         g_available_channels |= channels;
         return -AFX_NO_FLOW_SLOTS;
     }
+    /* A song with a pool plays from a runtime block of this instance's own,
+     * which the ARM7 initializes. */
+    uint32_t runtime = 0;
+    if (flow->flags & AFX_FLAG_POOL) {
+        runtime = afx_mem_alloc(AFX_SONG_RUNTIME_BYTES(flow->flags & AFX_FLAG_LANES), AFX_UPLOAD_ALIGN);
+        if (!runtime) {
+            afx_instance_slot_t rollback = { .required_channels = count, .map_addr = map_address,
+                .map_arena = arena, .map_offset = offset };
+            map_release(&rollback);
+            g_available_channels |= channels;
+            return -AFX_NO_AICA_RAM;
+        }
+    }
     *plan = (activation_plan_t){ .asset_index = asset_index, .index = index,
         .map_address = map_address, .bank_base = bank_base, .bank_bytes = bank_bytes,
-        .channels = channels, .count = count, .arena = arena, .offset = offset };
+        .runtime = runtime, .channels = channels, .count = count, .arena = arena, .offset = offset };
     return AFX_OK;
 }
 static void activation_unreserve(const activation_plan_t *plan) {
@@ -130,6 +144,7 @@ static void activation_unreserve(const activation_plan_t *plan) {
         .map_arena = plan->arena, .map_offset = plan->offset };
     map_release(&rollback);
     g_available_channels |= plan->channels;
+    if (plan->runtime) (void)free_allocation(plan->runtime);
 }
 static int activation_send(const activation_plan_t *plan, afx_instance_t *out) {
     afx_asset_slot_t *flow = &g_assets[plan->asset_index];
@@ -142,13 +157,13 @@ static int activation_send(const activation_plan_t *plan, afx_instance_t *out) {
     afx_activation_t activation = {
         .image_base = flow->addr, .image_size = flow->size,
         .stream_offset = flow->stream_offset, .stream_size = flow->stream_size,
-        .setups_offset = 0, .setup_count = flow->setup_count,
+        .setups_offset = (flow->flags & AFX_FLAG_SONG) ? AFX_SONG_IMAGE_HEADER_BYTES : 0,
+        .setup_count = flow->setup_count,
         .channel_map = plan->map_address, .required_channels = plan->count,
-        .flags = flow->flags & (AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC |
-                                       AFX_FLAG_MUSIC_CHORUS | AFX_FLAG_LANES | AFX_FLAG_LOOP |
-                                       AFX_FLAG_BANKS),
+        .flags = flow->flags & (AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
+                                AFX_FLAG_LANES | AFX_FLAG_BANKS | AFX_FLAG_SONG | AFX_FLAG_POOL),
         .start_tick = start_tick, .bank_base_units = (uint16_t)(plan->bank_base >> 5),
-        .bank_bytes = plan->bank_bytes
+        .runtime_units = (uint16_t)(plan->runtime >> 5), .bank_bytes = plan->bank_bytes
     };
     uint32_t sequence = new_sequence();
     int queued = enqueue(AFX_CMD_ACTIVATE, reference, sequence, 0, &activation, sizeof(activation));
@@ -164,6 +179,7 @@ static int activation_send(const activation_plan_t *plan, afx_instance_t *out) {
     slot->map_arena = plan->arena;
     slot->map_offset = plan->offset;
     slot->channel_mask = plan->channels;
+    slot->runtime_addr = plan->runtime;
     slot->start_tick = start_tick;
     slot->status = (afx_instance_status_t){ .reference = reference, .state = AFX_FREE,
                                              .sequence = sequence, .result = AFX_OK };
@@ -288,8 +304,12 @@ int afx_instance_rebuild(afx_instance_t instance, const afx_restore_channel_t *s
     if (slot->pending || slot->status.state != AFX_PAUSED || state_count > slot->required_channels ||
         (state_count && !states)) return -AFX_BAD_COMMAND;
     afx_asset_slot_t *flow = &g_assets[slot->asset_index];
-    if (stream_position < flow->stream_offset ||
-        stream_position >= flow->stream_offset + flow->stream_size) return -AFX_BAD_BOUNDS;
+    /* A song's position (AFX_SONG_POSITION) is checked by the ARM7, which
+     * reads the song; a pool song resumes with fresh voices. */
+    if (flow->flags & AFX_FLAG_SONG) {
+        if ((flow->flags & AFX_FLAG_POOL) && state_count) return -AFX_BAD_COMMAND;
+    } else if (stream_position < flow->stream_offset ||
+               stream_position >= flow->stream_offset + flow->stream_size) return -AFX_BAD_BOUNDS;
     uint32_t seen_low = 0, seen_high = 0;
     for (uint32_t i = 0; i < state_count; ++i) {
         uint32_t local = states[i].local_channel;
@@ -403,6 +423,19 @@ int afx_instance_seek_checkpoint(afx_instance_t instance, uint32_t tick, uint32_
 }
 int afx_instance_seek(afx_instance_t instance, uint32_t tick) {
     return afx_instance_seek_checkpoint(instance, tick, NULL);
+}
+int afx_song_seek(afx_instance_t instance, uint32_t order_position) {
+    uint32_t index;
+    {
+        HOST_GUARD(-AFX_BUSY);
+        if (!resolve_instance(instance, &index)) return -AFX_STALE_GENERATION;
+        afx_instance_slot_t *slot = &g_instances[index];
+        if (!(g_assets[slot->asset_index].flags & AFX_FLAG_SONG)) return -AFX_UNSUPPORTED;
+        if (slot->pending || slot->status.state != AFX_PAUSED) return -AFX_BUSY;
+        if (order_position >= AFX_SONG_MAX_ORDER) return -AFX_BAD_BOUNDS;
+    }
+    return afx_instance_rebuild(instance, NULL, 0, AFX_SONG_POSITION(order_position, 0), 0,
+                                afx_status_timer_ticks() + 1u, true);
 }
 int afx_instance_patch(afx_instance_t instance, uint8_t local_channel,
                        uint32_t mask, const uint16_t *values) {

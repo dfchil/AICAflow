@@ -168,6 +168,8 @@ int afx_flow_seek_index_load_memory(afx_asset_t flow, const void *data, uint32_t
     HOST_GUARD(-AFX_BUSY);
     if (!resolve_asset(flow, &index) || !g_assets[index].flow || g_assets[index].references)
         return -AFX_INVALID_HANDLE;
+    /* A song's positions name order positions; AFC checkpoints name a flow's. */
+    if (g_assets[index].flags & AFX_FLAG_SONG) return -AFX_UNSUPPORTED;
     int result = decode_seek_header(data, size, &header);
     if (result) return result;
     afx_asset_slot_t *slot = &g_assets[index];

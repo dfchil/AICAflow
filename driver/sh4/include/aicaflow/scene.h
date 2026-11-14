@@ -22,7 +22,7 @@ typedef uint32_t afx_scene_t;
 #define AFX_MAX_SCENES 16u
 
 typedef struct {
-    uint32_t kind; /* AFX_SCENE_BANK, AFX_SCENE_FLOW, AFX_SCENE_SLOT or AFX_SCENE_RING. */
+    uint32_t kind; /* AFX_SCENE_BANK, _FLOW, _SONG (an AFM, found by name as a flow is), _SLOT or _RING. */
     const char *name; /* The entry's name, "" for none; valid while the scene is loaded. */
     afx_asset_t asset; /* A bank's or a flow's handle, a slot's loaded flow, or zero. */
     uint32_t addr; /* AICA address of the entry's range in the block. */

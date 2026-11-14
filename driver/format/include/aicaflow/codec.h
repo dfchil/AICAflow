@@ -22,7 +22,7 @@ typedef struct {
     uint8_t channel; /* Local channel index for NOTE, PATCH and KEYOFF. */
     uint16_t setup; /* Setup template index used by NOTE. */
     uint32_t wait; /* Authored tick duration for a WAIT instruction. */
-    uint32_t target; /* Stream-relative byte offset a LOOP continues at. */
+    uint32_t join; /* NEXT: AFX_JOIN_NEW or AFX_JOIN_CONTINUE. */
     uint32_t mask; /* Selected AFX_FIELD_* bits for NOTE/PATCH values. */
     uint32_t bytes; /* Total encoded instruction length in bytes. */
     const uint8_t *values; /* Borrowed pointer to packed little-endian 16-bit selected values. */
@@ -46,8 +46,7 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     case AFX_OP_WAIT8: prefix = 2; break;
     case AFX_OP_WAIT16: prefix = 3; break;
     case AFX_OP_WAIT32: prefix = 5; break;
-    case AFX_OP_LOOP: prefix = 5; break;
-    case AFX_OP_KEYOFF: prefix = 2; break;
+    case AFX_OP_KEYOFF: case AFX_OP_FREE: case AFX_OP_NEXT: prefix = 2; break;
     case AFX_OP_NOTE: prefix = 8; break;
     case AFX_OP_NOTE_PL: prefix = 4; break;
     case AFX_OP_PATCH_LEVEL: case AFX_OP_PATCH_ENV: case AFX_OP_PATCH_ENV_LEVEL: prefix = 2; break;
@@ -59,7 +58,7 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     if (e.opcode == AFX_OP_NOTE_PL) e.opcode = AFX_OP_NOTE;
     if (e.opcode == AFX_OP_PATCH_LEVEL || e.opcode == AFX_OP_PATCH_ENV ||
         e.opcode == AFX_OP_PATCH_ENV_LEVEL) e.opcode = AFX_OP_PATCH;
-    if (e.opcode >= AFX_OP_NOTE && e.opcode <= AFX_OP_KEYOFF) {
+    if ((e.opcode >= AFX_OP_NOTE && e.opcode <= AFX_OP_KEYOFF) || e.opcode == AFX_OP_FREE) {
         e.channel = p[1];
         if (e.channel >= AFX_MAX_FLOW_CHANNELS) return AFX_BAD_COMMAND;
     }
@@ -79,7 +78,7 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     if (e.opcode == AFX_OP_WAIT8) e.wait = p[1];
     if (e.opcode == AFX_OP_WAIT16) e.wait = afx_read16(p + 1);
     if (e.opcode == AFX_OP_WAIT32) e.wait = afx_read32(p + 1);
-    if (e.opcode == AFX_OP_LOOP) e.target = afx_read32(p + 1);
+    if (e.opcode == AFX_OP_NEXT && (e.join = p[1]) > AFX_JOIN_CONTINUE) return AFX_BAD_COMMAND;
     if (e.opcode >= AFX_OP_WAIT8 && e.opcode <= AFX_OP_WAIT32 && !e.wait)
         return AFX_BAD_COMMAND;
     e.bytes = prefix + afx_field_value_bytes(e.mask);
@@ -158,6 +157,29 @@ void afx_encode_header(uint8_t out[AFX_FILE_HEADER_BYTES], const afx_file_header
 /* Validates the layout of an AFS scene file: its header, its entries, their
  * names (unique when present), and block ranges that lie in the block without
  * overlapping. The AFB and AFX files it holds are checked when they load. */
+/* AFM songs. afx_song_validate_layout checks the header, the image's tables,
+ * relocations and banks; afx_song_validate also every stream, and plays the
+ * order through as the firmware would (through one wrap of its loop): a
+ * new-play join must find the song's other executor done, the header's
+ * channels must be those the sections use, and its voices the most a pool
+ * song holds at once (zero without a new-play join). The profile is the
+ * peak work in one tick of both executors together. */
+typedef struct { uint32_t stream_offset, stream_size, body_ticks; } afx_song_section_t;
+afx_result_t afx_song_validate_layout(const void *data, uint32_t size, afx_song_header_t *out,
+                                      afx_song_image_header_t *out_image);
+afx_result_t afx_song_validate(const void *data, uint32_t size, afx_song_header_t *out);
+afx_result_t afx_song_validate_profile(const void *data, uint32_t size, afx_song_header_t *out,
+                                       afx_validation_profile_t *profile);
+/* For an authoring tool: as afx_song_validate, but reports the channels the
+ * sections use and the pool the song needs instead of comparing them with the
+ * header's (whose channels must still match the image header's). */
+afx_result_t afx_song_measure(const void *data, uint32_t size, afx_validation_profile_t *profile,
+                              uint32_t *out_channels, uint32_t *out_voices);
+/* Entry i of the section table and the section index at an order position, read
+ * from an image whose header is ih. */
+afx_song_section_t afx_song_section(const void *image, const afx_song_image_header_t *ih, uint32_t i);
+uint32_t afx_song_order(const void *image, const afx_song_image_header_t *ih, uint32_t position);
+uint32_t afx_song_bank_count(const void *data, const afx_song_header_t *header);
 afx_result_t afx_scene_validate(const void *data, uint32_t size, afx_scene_header_t *out);
 /* Entry i of a validated AFS file, and its name ("" for none). */
 afx_scene_entry_t afx_scene_entry_at(const void *data, uint32_t i);

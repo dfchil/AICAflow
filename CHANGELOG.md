@@ -7,6 +7,35 @@ the commit history.
 
 ### Added
 
+- Songs (firmware ABI 14, format API 6; `<aicaflow/song.h>`, the AFM file):
+  sections played in an order with a loop index, one setup table, relocation
+  set and bank slots for the whole song. A section's body ends with `NEXT`; a
+  continue join goes on with the same executor and voices, a new-play join
+  starts the next section on the song's second executor with voices from a
+  pool while the last play rings out its tail. `FREE` gives a voice back to
+  the pool early. Gain, tempo, lanes, pause and stop act on the whole song;
+  each wrap of the order is reported as a loop. A song with a new-play join
+  gets a runtime block per instance, so instances of one song can overlap;
+  a continue-only song plays in its instance slot like a flow.
+  `afx_song_validate()` plays the order through one wrap of its loop and
+  checks that two executors suffice, the voices held at once (the header's
+  pool) and the work of both executors in a tick. A song's status position is
+  `AFX_SONG_POSITION(order position, stream offset)`, which
+  `afx_instance_rebuild()` takes back; `afx_song_seek()` restarts at an order
+  position. AFS scenes place songs (`AFX_SCENE_SONG`). `afx_validate` reads
+  AFM files. Checked on hardware by `make -C driver song-check`: continue
+  joins every 8160 ticks and new-play joins every 7160, to the tick, a
+  restart while stopping, pause and resume, and every runtime block given
+  back. Design: docs/design/song-sections.md.
+
+### Removed
+
+- `LOOP` (opcode 0x16), `AFX_FLAG_LOOP` and the AFX header's `loop_tick`
+  (now a reserved zero word): a song's continue join replaces them. A flow
+  with them is refused. `afx_asset_loops()` now reports a song's loop index.
+  The console checks' looping fixture became a long flow and two songs
+  (`driver/tests/make_fixtures.py`); `loop-check` became `song-check`.
+
 - A scene slot filled in steps: `afx_scene_slot_stream_begin()` places an
   uploading bank at the slot's start, the existing
   `afx_sample_bank_stream_dma_begin()`, `_poll()` and `_finish()` upload it a
