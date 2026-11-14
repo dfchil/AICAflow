@@ -3,7 +3,9 @@
  * and the DSP ring) stays loaded while a level scene and its song slot are
  * loaded, played and released again and again. The level's flow plays from
  * the core bank and from its own, read back from the AICA's sample address
- * registers, and the arena's largest free block must come back every time. */
+ * registers, and the arena's largest free block must come back every time.
+ * Last, a 32 KiB phrase is streamed into the slot a chunk at a time while
+ * another instance activates beside each chunk's DMA. */
 #include <kos.h>
 #include <aicaflow/bank.h>
 #include <aicaflow/host.h>
@@ -47,6 +49,10 @@ static uint32_t align32(uint32_t value) { return (value + 31u) & ~31u; }
 #define SONG_ID 0x5096e001u
 alignas(32) static unsigned char scene_bank[sizeof(bank_file)], song_bank[sizeof(bank_file)];
 alignas(32) static unsigned char song_flow[sizeof(flow_file)];
+/* The song bank grown to an announcer phrase's size: its payload, then silence. */
+#define PHRASE_BYTES 32768u
+#define PHRASE_CHUNK 4096u
+alignas(32) static unsigned char phrase_bank[sizeof(bank_file) + PHRASE_BYTES];
 
 /* The fixture's flow with every setup in bank slot 1, the scene bank's: the
  * relocations, a bank list naming it, then the image with the bank table after
@@ -174,6 +180,10 @@ int main(void) {
     afx_write32(song_bank + 8, SONG_ID); afx_write32(song_bank + 12, SONG_ID);
     memcpy(song_flow, flow_file, sizeof(flow_file));
     afx_write32(song_flow + 40, SONG_ID); afx_write32(song_flow + 44, SONG_ID);
+    memcpy(phrase_bank, song_bank, sizeof(song_bank));
+    afx_write32(phrase_bank + 20, PHRASE_BYTES);
+    afx_write32(phrase_bank + 24, payload_at + PHRASE_BYTES);
+    uint32_t phrase_size = payload_at + PHRASE_BYTES;
     uint32_t ring_at = (bank_room + flow_room + 2047u) & ~2047u;
     const part_t permanent_parts[] = {
         {AFX_SCENE_BANK, "core", bank_file, sizeof(bank_file), 0, bank_room},
@@ -183,12 +193,12 @@ int main(void) {
     const part_t level_parts[] = {
         {AFX_SCENE_BANK, "scene", scene_bank, sizeof(scene_bank), 0, bank_room},
         {AFX_SCENE_FLOW, "banked", banked_file, banked_size, bank_room, banked_room},
-        {AFX_SCENE_SLOT, "song", NULL, 0, bank_room + banked_room, bank_room + flow_room},
+        {AFX_SCENE_SLOT, "song", NULL, 0, bank_room + banked_room, PHRASE_BYTES + flow_room},
     };
     uint32_t permanent_size = scene(permanent, sizeof(permanent), 0x9e7a, ring_at + AFX_SCENE_RING_MIN_BYTES,
                                     permanent_parts, 3);
-    uint32_t level_size = scene(level, sizeof(level), 0x1e7e1, bank_room * 2u + banked_room + flow_room,
-                                level_parts, 3);
+    uint32_t level_size = scene(level, sizeof(level), 0x1e7e1,
+                                bank_room + banked_room + PHRASE_BYTES + flow_room, level_parts, 3);
     int result = afx_init(firmware, sizeof(firmware));
     printf("AFX_SCENES init=%d banked=%lu permanent=%lu level=%lu payload=%lu@%lu\n", result,
            (unsigned long)banked_size, (unsigned long)permanent_size, (unsigned long)level_size,
@@ -266,6 +276,73 @@ int main(void) {
     check("level flows play from the level bank, songs from the slot", played == LEVELS * SONGS);
     check("a slot whose flow plays keeps it", kept == LEVELS * SONGS && reloads == LEVELS * SONGS);
     check("every released level gives its whole block back", restored == LEVELS);
+
+    /* The phrase streamed into the slot. Each chunk's DMA runs while an
+     * instance activates beside it; no stream call may wait for a DMA. */
+    afx_scene_t l = 0;
+    afx_asset_t flow = 0, bank = 0, song = 0;
+    unsigned chunks = 0, activated = 0, streamed = 0;
+    uint64_t longest = 0, load_us = 0;
+    int stream_result = afx_scene_load(level, level_size, &p, 1, &l);
+    if (!stream_result) stream_result = afx_scene_find(l, "banked", &flow);
+    if (!stream_result) {
+        uint64_t t = timer_us_gettime64();
+        stream_result = afx_scene_slot_stream_begin(l, "song", PHRASE_BYTES,
+                                                    (afx_bank_id_t){SONG_ID, SONG_ID}, &bank);
+        longest = timer_us_gettime64() - t;
+    }
+    for (uint32_t offset = 0; !stream_result && offset < PHRASE_BYTES; offset += PHRASE_CHUNK) {
+        uint64_t t = timer_us_gettime64();
+        stream_result = afx_sample_bank_stream_dma_begin(bank, offset, phrase_bank + payload_at + offset,
+                                                         PHRASE_CHUNK);
+        if ((t = timer_us_gettime64() - t) > longest) longest = t;
+        if (stream_result) break;
+        ++chunks;
+        afx_instance_t beside = 0;
+        unsigned ended = ended_count;
+        int a = afx_instance_activate(flow, &beside);
+        for (bool complete = false; !complete && !stream_result;) {
+            t = timer_us_gettime64();
+            stream_result = afx_sample_bank_stream_dma_poll(bank, &complete);
+            if ((t = timer_us_gettime64() - t) > longest) longest = t;
+        }
+        if (!a) {
+            ++activated;
+            (void)afx_instance_stop(beside);
+            if (!wait_ended(ended + 1, 1000)) printf("AFX_SCENES chunk %u: no end\n", chunks);
+        }
+    }
+    if (!stream_result) {
+        uint64_t t = timer_us_gettime64();
+        stream_result = afx_sample_bank_stream_finish(bank);
+        if (!stream_result) stream_result = afx_scene_slot_flow(l, "song", song_flow, sizeof(song_flow), &song);
+        if ((t = timer_us_gettime64() - t) > longest) longest = t;
+    }
+    if (!stream_result) {
+        /* The streamed phrase plays from the slot's start. */
+        uint32_t song_base = entry_addr(l, 2);
+        afx_instance_t control = 0;
+        unsigned ended = ended_count;
+        int c = afx_instance_activate(song, &control);
+        uint32_t start = afx_instance_start_tick(control);
+        while ((int32_t)(afx_status_timer_ticks() - start) < (int32_t)note_tick + 2) {}
+        uint32_t control_address = sample_register(0);
+        streamed = !c && afx_asset_addr(bank) == song_base && control_address == song_base + address;
+        (void)afx_instance_stop(control);
+        if (!wait_ended(ended + 1, 1000)) printf("AFX_SCENES phrase: no end\n");
+        /* The same phrase loaded in one call, for comparison: it holds the lock for the whole DMA. */
+        uint64_t t = timer_us_gettime64();
+        stream_result = afx_scene_slot_load(l, "song", phrase_bank, phrase_size, song_flow,
+                                            sizeof(song_flow), &song);
+        load_us = timer_us_gettime64() - t;
+    }
+    if (l) (void)afx_scene_release(l);
+    printf("AFX_SCENES stream=%d chunks=%u activated=%u longest=%luus slot_load=%luus\n", stream_result,
+           chunks, activated, (unsigned long)longest, (unsigned long)load_us);
+    check("a streamed phrase plays from the slot", !stream_result && streamed);
+    check("instances activate beside every chunk's DMA",
+          chunks == PHRASE_BYTES / PHRASE_CHUNK && activated == chunks);
+    check("no stream call holds the lock for a DMA", load_us && longest * 4u < load_us);
 
     /* The permanent scene keeps its ring while the DSP uses it. */
     int held = afx_scene_release(p) == -AFX_ASSET_REFERENCED;

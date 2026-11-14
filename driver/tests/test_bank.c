@@ -1122,6 +1122,64 @@ static void test_scenes(void) {
     assert(afx_scene_slot_load(l, "song", song_data, 96, song, 160, &song_flow) == AFX_OK);
     assert(afx_mem_stats(&after) == AFX_OK && after.active_allocations == before.active_allocations + 2);
 
+    /* A slot filled in steps: the bank streamed a chunk at a time, then the flow. */
+    static _Alignas(32) uint8_t payload[64];
+    memcpy(payload, song_data + 32, sizeof(payload));
+    const afx_bank_id_t song_id = {0x5096, 5};
+    afx_asset_t streamed = 0;
+    bool complete = false;
+    assert(afx_instance_activate(song_flow, &instance) == AFX_OK);
+    assert(afx_scene_slot_stream_begin(l, "song", 64, song_id, &streamed) == -AFX_ASSET_REFERENCED && !streamed);
+    end_instance(instance);
+    assert(afx_scene_slot_stream_begin(l, "theme", 64, song_id, &streamed) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_slot_stream_begin(l, "song", 0, song_id, &streamed) == -AFX_BAD_BOUNDS);
+    assert(afx_scene_slot_stream_begin(l, "song", 64, (afx_bank_id_t){0}, &streamed) == -AFX_BAD_BOUNDS);
+    assert(afx_scene_slot_stream_begin(l, "song", 225, song_id, &streamed) == -AFX_NO_AICA_RAM);
+    assert(afx_scene_find(l, "song", &flow) == AFX_OK && flow == song_flow); /* Refusals keep it. */
+    assert(afx_scene_slot_stream_begin(l, "song", 64, song_id, &streamed) == AFX_OK);
+    assert(!afx_asset_addr(song_flow) && afx_asset_addr(streamed) == level_block + 128);
+    assert(afx_scene_find(l, "song", &flow) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_slot_flow(l, "song", song, 160, &flow) == -AFX_BAD_BOUNDS && !flow);
+    memset(ram + level_block + 128, 0, 64);
+    assert(afx_sample_bank_stream_dma_begin(streamed, 0, payload, 32) == AFX_OK);
+    /* Other calls go on while a chunk is in flight. */
+    assert(afx_instance_activate(theme_flow, &instance) == AFX_OK);
+    assert(afx_scene_slot_stream_begin(l, "song", 64, song_id, &stale) == -AFX_BUSY && !stale);
+    assert(afx_asset_addr(streamed) == level_block + 128);
+    thd_pass();
+    assert(afx_sample_bank_stream_dma_poll(streamed, &complete) == AFX_OK && complete);
+    end_instance(instance);
+    assert(afx_sample_bank_stream_dma_begin(streamed, 32, payload + 32, 32) == AFX_OK);
+    thd_pass();
+    assert(afx_sample_bank_stream_dma_poll(streamed, &complete) == AFX_OK && complete);
+    assert(afx_scene_slot_flow(l, "song", song, 160, &flow) == -AFX_BAD_BOUNDS);
+    assert(afx_sample_bank_stream_finish(streamed) == AFX_OK);
+    assert(!memcmp(ram + level_block + 128, song_data + 32, 64));
+    assert(afx_scene_slot_flow(l, "song", song, 160, &song_flow) == AFX_OK);
+    assert(afx_asset_addr(song_flow) == level_block + 192);
+    assert(g_assets[AFX_HANDLE_INDEX(song_flow)].bank == streamed);
+    assert(afx_scene_find(l, "song", &flow) == AFX_OK && flow == song_flow);
+    /* Another flow over the same bank: an idle one is replaced, a playing one kept. */
+    stale = song_flow;
+    assert(afx_scene_slot_flow(l, "song", song, 160, &song_flow) == AFX_OK && song_flow != stale);
+    assert(!afx_asset_addr(stale) && afx_asset_addr(song_flow) == level_block + 192);
+    assert(afx_asset_addr(streamed) == level_block + 128);
+    assert(afx_instance_activate(song_flow, &instance) == AFX_OK);
+    assert(afx_scene_slot_flow(l, "song", song, 160, &flow) == -AFX_ASSET_REFERENCED && !flow);
+    assert(afx_scene_find(l, "song", &flow) == AFX_OK && flow == song_flow);
+    end_instance(instance);
+    /* The scene's finished bank stays the scene's. */
+    assert(afx_asset_free(streamed) == -AFX_ASSET_REFERENCED);
+    /* Cancelling: freeing the bank while it streams, a chunk in flight, empties the slot. */
+    assert(afx_scene_slot_stream_begin(l, "song", 64, song_id, &streamed) == AFX_OK);
+    assert(!afx_asset_addr(song_flow));
+    assert(afx_sample_bank_stream_dma_begin(streamed, 0, payload, 32) == AFX_OK);
+    assert(afx_asset_free(streamed) == AFX_OK && !afx_asset_addr(streamed) && !g_upload_dma_asset);
+    assert(afx_scene_find(l, "song", &flow) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_slot_flow(l, "song", song, 160, &flow) == -AFX_BAD_SAMPLE && !flow);
+    assert(afx_scene_slot_load(l, "song", song_data, 96, song, 160, &song_flow) == AFX_OK);
+    assert(afx_mem_stats(&after) == AFX_OK && after.active_allocations == before.active_allocations + 2);
+
     /* Release: the permanent scene keeps its block while the level binds its core
      * bank; the level keeps its own while its theme plays. */
     assert(afx_instance_activate(theme_flow, &instance) == AFX_OK);
