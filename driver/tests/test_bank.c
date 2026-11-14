@@ -680,6 +680,12 @@ static void test_relative_flow(const afx_bank_t *bank) {
             assert(afx_instance_patch(instance, 0, mask, patch_values) == -AFX_BAD_COMMAND);
         assert(queue_head() == head);
         assert(afx_instance_patch(instance, 0, AFX_NOTE_PL_MASK, patch_values) == AFX_OK);
+        /* A flow with a REPEAT cannot be seeked: a checkpoint does not say which play it is in. */
+        uint32_t flow_index = g_instances[index].asset_index;
+        g_assets[flow_index].flags |= AFX_FLAG_REPEAT;
+        head = queue_head();
+        assert(afx_instance_seek(instance, 5) == -AFX_UNSUPPORTED && queue_head() == head);
+        g_assets[flow_index].flags &= ~(uint32_t)AFX_FLAG_REPEAT;
         unsigned reads_before = asset_reads;
         uint32_t selected = UINT32_MAX;
         assert(afx_instance_seek_checkpoint(instance, 5, &selected) == AFX_OK && selected == 0);

@@ -166,6 +166,73 @@ static void test_loop(void) {
     assert(afx_file_validate_layout(file, sizeof(file), &header) == AFX_OK && header.loop_tick == 7);
 }
 
+/* A stream with a counted repeat: NOTE_PL, WAIT8 1, KEYOFF 0, REPEAT back to
+ * target count more times, WAIT8 2, END. */
+static void repeating(uint8_t file[160], uint32_t target, uint8_t count, uint32_t flags) {
+    candidate(file);
+    afx_write32(file + 12, flags);
+    afx_write32(file + 28, 21);
+    file[140] = AFX_OP_WAIT8; file[141] = 1;
+    file[142] = AFX_OP_KEYOFF; file[143] = 0;
+    file[144] = AFX_OP_REPEAT; afx_write32(file + 145, target); file[149] = count;
+    file[150] = AFX_OP_WAIT8; file[151] = 2;
+    file[152] = AFX_OP_END;
+}
+
+static void test_repeat(void) {
+    uint8_t file[160];
+    afx_file_header_t header;
+    afx_validation_profile_t profile;
+    uint64_t ticks;
+    uint32_t num, den;
+    repeating(file, 0, 2, AFX_FLAG_REPEAT);
+    assert(afx_file_validate_profile(file, sizeof(file), &header, &profile) == AFX_OK);
+    /* The jump joins the burst before it (KEYOFF) to the burst at its target (NOTE). */
+    assert(profile.peak_commands == 2 && profile.peak_register_writes == 20);
+    /* The span (one tick) plays three times: 1 + 2 more, then the WAIT 2. */
+    assert(afx_flow_duration(file, sizeof(file), &ticks, &num, &den) == AFX_OK && ticks == 5);
+    repeating(file, 8, 255, AFX_FLAG_REPEAT); /* From the WAIT: its span is WAIT 1, KEYOFF. */
+    assert(afx_file_validate_profile(file, sizeof(file), &header, &profile) == AFX_OK);
+    assert(profile.peak_commands == 1);
+    assert(afx_flow_duration(file, sizeof(file), &ticks, &num, &den) == AFX_OK && ticks == 3 + 255);
+    /* The flag and the instruction must agree. */
+    repeating(file, 0, 2, 0);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    candidate(file); afx_write32(file + 12, AFX_FLAG_REPEAT);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    /* Into an instruction, at or past the REPEAT, or a span that never waits. */
+    repeating(file, 3, 2, AFX_FLAG_REPEAT);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    repeating(file, 12, 2, AFX_FLAG_REPEAT);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    repeating(file, 18, 2, AFX_FLAG_REPEAT);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    repeating(file, 10, 2, AFX_FLAG_REPEAT);
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    repeating(file, 0, 0, AFX_FLAG_REPEAT); /* A count of zero is no REPEAT. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    /* Two REPEATs in turn: the second's span starts after the first. Their
+     * spans may not overlap, as an instance has one counter. */
+    repeating(file, 0, 1, AFX_FLAG_REPEAT);
+    afx_write32(file + 28, 25);
+    file[142] = AFX_OP_REPEAT; afx_write32(file + 143, 0); file[147] = 1;
+    file[148] = AFX_OP_WAIT8; file[149] = 1;
+    file[150] = AFX_OP_REPEAT; afx_write32(file + 151, 16); file[155] = 1;
+    file[156] = AFX_OP_END;
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_OK);
+    assert(afx_flow_duration(file, sizeof(file), &ticks, &num, &den) == AFX_OK && ticks == 4);
+    afx_write32(file + 151, 8); /* Back into the first span. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+    /* A LOOP back into a span; its loop tick is counted along the stream. A
+     * LOOP that meets the REPEAT before it waits would jump twice in a tick. */
+    repeating(file, 0, 1, AFX_FLAG_REPEAT | AFX_FLAG_LOOP);
+    afx_write32(file + 28, 25);
+    file[152] = AFX_OP_LOOP; afx_write32(file + 153, 8); /* The WAIT 1, at tick 0. */
+    assert(afx_file_validate_profile(file, sizeof(file), &header, &profile) == AFX_OK);
+    afx_write32(file + 56, 1); afx_write32(file + 153, 10); /* The KEYOFF, then the REPEAT. */
+    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
+}
+
 static void test_bytecode(void) {
     uint8_t bytes[44];
     uint16_t values[] = {0x1234, 0x5678};
@@ -197,6 +264,18 @@ static void test_bytecode(void) {
     assert(afx_decode_event(bytes, written, &decoded) == AFX_OK);
     assert(decoded.opcode == AFX_OP_LOOP && decoded.target == 0x12345 && decoded.bytes == 5);
     assert(afx_decode_event(bytes, 4, &decoded) == AFX_BAD_BOUNDS);
+    event = (afx_event_t){.opcode = AFX_OP_REPEAT, .target = 0x12345, .count = 255};
+    assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_OK && written == 6);
+    assert(afx_decode_event(bytes, written, &decoded) == AFX_OK);
+    assert(decoded.opcode == AFX_OP_REPEAT && decoded.target == 0x12345 && decoded.count == 255 &&
+           decoded.bytes == 6);
+    assert(afx_decode_event(bytes, 5, &decoded) == AFX_BAD_BOUNDS);
+    bytes[5] = 0;
+    assert(afx_decode_event(bytes, 6, &decoded) == AFX_BAD_COMMAND);
+    event.count = 0;
+    assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_BAD_COMMAND);
+    event.count = 256;
+    assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_BAD_COMMAND);
     /* The compact PATCH forms: 2 bytes plus their values, decoded as PATCH with the form's mask. */
     static const struct { uint8_t opcode; uint32_t mask, bytes; } compact[] = {
         {AFX_OP_PATCH_LEVEL, AFX_PATCH_LEVEL_MASK, 4},
@@ -303,6 +382,7 @@ int main(int argc, char **argv) {
     test_bank_bound_container();
     test_banks();
     test_loop();
+    test_repeat();
     test_bytecode();
     test_control_id();
     puts("bank-bound protocol checks passed");

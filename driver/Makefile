@@ -46,7 +46,8 @@ timer-check:
 	mkdcdisc -e build/check_timer.elf -o build/check_timer.cdi -n afx_timer -N
 
 # A looping flow on the console: the loop callback's deadlines must advance by
-# the flow's authored length every loop (tests/check_loop.c).
+# the flow's authored length every loop, and by three times that when a REPEAT
+# plays the body three times (tests/check_loop.c).
 loop-check:
 	$(MAKE) -C arm7
 	$(MAKE) -C sh4

@@ -25,6 +25,7 @@ static volatile uint32_t registers[64][32];
 #undef AFX_AICA_REG_BASE
 #define AFX_AICA_REG_BASE ((uintptr_t)registers)
 static volatile afx_runtime_slot_t contexts[AFX_MAX_FLOW_SLOTS];
+static uint16_t repeat_state[AFX_MAX_FLOW_SLOTS];
 static afx_restore_channel_t restore_states[2];
 static uint32_t dsp_delay_base, dsp_delay_bytes, dsp_owner, last_result;
 static uint32_t ring_register, dsp_writes, ring_clears;
@@ -293,6 +294,55 @@ int main(void) {
     clock_value = 0;
     service(2);
     assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !loop->reference);
+    /* A counted repeat: WAIT8 1, then the span KEYOFF 0, WAIT8 2 played three
+     * times by REPEAT (count 2), WAIT8 3, and a LOOP back into the span. Each
+     * jump is in the tick it is due, as LOOP's; the LOOP re-enters the span
+     * with the counter disarmed, so the REPEAT plays it twice more again. */
+    memset(stream_bytes, 0, sizeof(stream_bytes));
+    stream_bytes[0] = AFX_OP_WAIT8; stream_bytes[1] = 1;
+    stream_bytes[2] = AFX_OP_KEYOFF; stream_bytes[3] = 0;
+    stream_bytes[4] = AFX_OP_WAIT8; stream_bytes[5] = 2;
+    stream_bytes[6] = AFX_OP_REPEAT; afx_write32(stream_bytes + 7, 2); stream_bytes[11] = 2;
+    stream_bytes[12] = AFX_OP_WAIT8; stream_bytes[13] = 3;
+    stream_bytes[14] = AFX_OP_LOOP; afx_write32(stream_bytes + 15, 4);
+    volatile afx_runtime_slot_t *repeat = &contexts[2];
+    *repeat = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 1,
+        .image_base = STREAM_BASE, .stream_start = 0, .pc = STREAM_BASE, .end = STREAM_BASE + 19,
+        .flags = AFX_FLAG_LOOP | AFX_FLAG_REPEAT, .tempo_period_q8_8 = 256, .gain = 255};
+    repeat_state[2] = 0;
+    const struct { uint32_t clock, deadline, pc, state; } plays[] = {
+        {0, 1, 2, 0},   /* WAIT 1 */
+        {1, 3, 6, 0},   /* KEYOFF, WAIT 2: the first play */
+        {3, 5, 6, 2},   /* REPEAT arms and jumps: the second play */
+        {5, 7, 6, 1},   /* the third */
+        {7, 10, 14, 0}, /* none left: falls through, disarmed; WAIT 3 */
+        {10, 12, 6, 0}, /* LOOP into the span: WAIT 2 */
+        {12, 14, 6, 2}, /* REPEAT arms again */
+        {14, 16, 6, 1},
+        {16, 19, 14, 0},
+    };
+    for (unsigned i = 0; i < sizeof(plays) / sizeof(plays[0]); ++i) {
+        clock_value = plays[i].clock;
+        service(2);
+        assert(repeat->reference == 3 && repeat->state == AFX_RUNNING);
+        assert(repeat->deadline == plays[i].deadline && repeat->pc == STREAM_BASE + plays[i].pc);
+        assert(repeat_state[2] == plays[i].state);
+    }
+    assert(repeat->loops == 1);
+    /* Without the flag, REPEAT ends the flow in error; so does a target that
+     * is not before it (validation refuses both). */
+    repeat->flags = AFX_FLAG_LOOP;
+    repeat->pc = STREAM_BASE + 6; repeat->deadline = 19; clock_value = 19;
+    service(2);
+    assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !repeat->reference);
+    afx_write32(stream_bytes + 7, 6);
+    *repeat = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 1,
+        .image_base = STREAM_BASE, .stream_start = 0, .pc = STREAM_BASE + 6, .end = STREAM_BASE + 19,
+        .flags = AFX_FLAG_LOOP | AFX_FLAG_REPEAT, .tempo_period_q8_8 = 256, .gain = 255};
+    repeat_state[2] = 0;
+    clock_value = 0;
+    service(2);
+    assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !repeat->reference);
     /* A PATCH command on a channel that has not sounded holds for its first
      * NOTE, which keeps the patched words instead of its template's, plain and
      * projected alike; the NOTE after it takes the template's again. */
@@ -371,4 +421,4 @@ with tempfile.TemporaryDirectory() as directory:
                     "-I" + str(root / "driver/arm7"),
                     str(path / "check.c"), "-o", str(path / "check")], check=True)
     subprocess.run([str(path / "check")], check=True)
-print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore, LOOP, held PATCH and bank tables: PASS")
+print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore, LOOP, REPEAT, held PATCH and bank tables: PASS")

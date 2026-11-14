@@ -26,6 +26,9 @@ afx_result_t afx_encode_event(uint8_t *out, uint32_t capacity, const afx_event_t
         prefix = 3; afx_write16(tmp + 1, (uint16_t)e->wait); break;
     case AFX_OP_WAIT32: prefix = 5; afx_write32(tmp + 1, e->wait); break;
     case AFX_OP_LOOP: prefix = 5; afx_write32(tmp + 1, e->target); break;
+    case AFX_OP_REPEAT:
+        if (!e->count || e->count > 255) return AFX_BAD_COMMAND;
+        prefix = 6; afx_write32(tmp + 1, e->target); tmp[5] = (uint8_t)e->count; break;
     case AFX_OP_KEYOFF: prefix = 2; tmp[1] = e->channel; break;
     case AFX_OP_PATCH_LEVEL: case AFX_OP_PATCH_ENV: case AFX_OP_PATCH_ENV_LEVEL:
         if (afx_compact_opcode(AFX_OP_PATCH, e->mask) != e->opcode || !values) return AFX_BAD_COMMAND;
@@ -104,7 +107,8 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
         (h->loop_tick && !(h->flags & AFX_FLAG_LOOP)) ||
         h->relocation_count != h->setup_count ||
         (h->flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
-                      AFX_FLAG_LANES | AFX_FLAG_LOOP | AFX_FLAG_BANKS))) return AFX_BAD_BOUNDS;
+                      AFX_FLAG_LANES | AFX_FLAG_LOOP | AFX_FLAG_BANKS | AFX_FLAG_REPEAT)))
+        return AFX_BAD_BOUNDS;
     if (!(h->bank_id_low || h->bank_id_high) && h->relocation_count) return AFX_BAD_SAMPLE;
     image = file + h->image_offset;
     uint32_t slots = 1;
@@ -156,53 +160,98 @@ static void event_work(const afx_event_t *event, uint32_t *commands, uint32_t *w
     }
 }
 
-/* The loop target of a stream ending in LOOP: it must be an instruction
- * boundary before the LOOP, the loop body must wait at least once (the
- * executor would otherwise spin), and the header's loop_tick must be the
- * authored tick of the target. Returns the burst that starts at the target,
- * which the LOOP joins to the burst that ends the stream. */
-static afx_result_t loop_validate(const uint8_t *stream, uint32_t size, uint32_t target,
-                                  const afx_file_header_t *h, uint32_t *commands,
-                                  uint32_t *writes) {
-    uint32_t cursor = 0, tick = 0, waits = 0;
-    *commands = *writes = 0;
-    if (target >= size - 5u) return AFX_BAD_COMMAND; /* At or past the LOOP itself. */
+static int is_wait(const afx_event_t *event) {
+    return event->opcode >= AFX_OP_WAIT8 && event->opcode <= AFX_OP_WAIT32;
+}
+/* Walks the stream from its start to target, which must be an instruction
+ * boundary; out_tick gets the authored ticks before it. */
+static afx_result_t boundary(const uint8_t *stream, uint32_t size, uint32_t target,
+                             uint32_t *out_tick) {
+    uint32_t cursor = 0, tick = 0;
     while (cursor < target) {
         afx_event_t event;
         afx_result_t result = afx_decode_event(stream + cursor, size - cursor, &event);
         if (result) return result;
         cursor += event.bytes;
-        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) tick += event.wait;
+        if (is_wait(&event)) tick += event.wait;
     }
-    if (cursor != target || tick != h->loop_tick) return AFX_BAD_COMMAND;
+    if (cursor != target) return AFX_BAD_COMMAND;
+    if (out_tick) *out_tick = tick;
+    return AFX_OK;
+}
+/* The work a jump to from runs before its first WAIT, in the tick of the jump.
+ * A head that never waits, or meets a REPEAT first (a second jump in one
+ * tick), is refused: the executor would spin, and it refuses both. */
+static afx_result_t head_work(const uint8_t *stream, uint32_t size, uint32_t from,
+                              uint32_t *commands, uint32_t *writes) {
+    uint32_t cursor = from;
+    *commands = *writes = 0;
     while (cursor < size) {
         afx_event_t event;
         afx_result_t result = afx_decode_event(stream + cursor, size - cursor, &event);
         if (result) return result;
         cursor += event.bytes;
-        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) {
-            ++waits;
-            if (waits == 1) break;
-        }
+        if (is_wait(&event)) return AFX_OK;
+        if (event.opcode == AFX_OP_REPEAT || event.opcode == AFX_OP_END ||
+            event.opcode == AFX_OP_PARK || event.opcode == AFX_OP_LOOP) break;
         event_work(&event, commands, writes);
     }
+    return AFX_BAD_COMMAND;
+}
+
+/* The loop target of a stream ending in LOOP: it must be an instruction
+ * boundary before the LOOP, the loop body must wait at least once (the
+ * executor would otherwise spin), and the header's loop_tick must be the
+ * authored tick of the target, counted along the stream (a REPEAT's span
+ * once), and the loop must wait before it meets a REPEAT. Returns the burst that starts at the target, which the LOOP joins
+ * to the burst that ends the stream. */
+static afx_result_t loop_validate(const uint8_t *stream, uint32_t size, uint32_t target,
+                                  const afx_file_header_t *h, uint32_t *commands,
+                                  uint32_t *writes) {
+    uint32_t tick;
+    if (target >= size - 5u) return AFX_BAD_COMMAND; /* At or past the LOOP itself. */
+    afx_result_t result = boundary(stream, size, target, &tick);
+    if (result) return result;
+    if (tick != h->loop_tick) return AFX_BAD_COMMAND;
+    return head_work(stream, size, target, commands, writes);
+}
+
+/* A REPEAT at offset at: its target is an instruction boundary before it and
+ * not inside an earlier REPEAT's span (spans do not nest: an instance has one
+ * repeat counter), and its span waits at least once. Returns the burst at
+ * the target, which the jump joins to the burst before the REPEAT. */
+static afx_result_t repeat_validate(const uint8_t *stream, uint32_t size, uint32_t at,
+                                    uint32_t target, uint32_t span_floor,
+                                    uint32_t *commands, uint32_t *writes) {
+    if (target >= at || target < span_floor) return AFX_BAD_COMMAND;
+    afx_result_t result = boundary(stream, size, target, NULL);
+    if (result) return result;
+    uint32_t cursor = target, waits = 0;
+    while (cursor < at) {
+        afx_event_t event;
+        result = afx_decode_event(stream + cursor, size - cursor, &event);
+        if (result) return result;
+        cursor += event.bytes;
+        waits += is_wait(&event);
+    }
     if (!waits) return AFX_BAD_COMMAND;
-    return AFX_OK;
+    return head_work(stream, size, target, commands, writes);
 }
 
 static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_t *h,
                                      afx_validation_profile_t *profile) {
-    uint32_t cursor = h->stream_offset, end = cursor + h->stream_size;
+    const uint8_t *stream = image + h->stream_offset;
+    uint32_t cursor = 0, end = h->stream_size, span_floor = 0, repeats = 0;
     int terminal = 0;
     uint32_t commands = 0, writes = 0;
     afx_validation_profile_t work = {0};
     while (cursor < end) {
         afx_event_t event;
         uint32_t at = cursor;
-        afx_result_t result = afx_decode_event(image + cursor, end - cursor, &event);
+        afx_result_t result = afx_decode_event(stream + cursor, end - cursor, &event);
         if (result) return result;
         cursor += event.bytes;
-        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) {
+        if (is_wait(&event)) {
             if (commands > work.peak_commands) work.peak_commands = commands;
             if (writes > work.peak_register_writes) work.peak_register_writes = writes;
             commands = writes = 0;
@@ -211,6 +260,21 @@ static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_
         if (event.opcode == AFX_OP_NOTE && event.setup >= h->setup_count) return AFX_BAD_COMMAND;
         if (event.opcode >= AFX_OP_NOTE && event.opcode <= AFX_OP_KEYOFF &&
             event.channel >= h->required_channels) return AFX_BAD_COMMAND;
+        if (event.opcode == AFX_OP_REPEAT) {
+            /* Jumping back runs the burst at the target in this same tick;
+             * falling through runs the one after the REPEAT, counted below. */
+            uint32_t head_commands, head_writes;
+            if (!(h->flags & AFX_FLAG_REPEAT)) return AFX_BAD_COMMAND;
+            result = repeat_validate(stream, end, at, event.target, span_floor,
+                                     &head_commands, &head_writes);
+            if (result) return result;
+            if (commands + head_commands > work.peak_commands)
+                work.peak_commands = commands + head_commands;
+            if (writes + head_writes > work.peak_register_writes)
+                work.peak_register_writes = writes + head_writes;
+            span_floor = cursor;
+            ++repeats;
+        }
         if (event.opcode == AFX_OP_END || event.opcode == AFX_OP_PARK || event.opcode == AFX_OP_LOOP) {
             if (cursor != end || (event.opcode == AFX_OP_PARK && !(h->flags & AFX_FLAG_CONTROLLED)) ||
                 ((event.opcode == AFX_OP_LOOP) != ((h->flags & AFX_FLAG_LOOP) != 0)))
@@ -219,17 +283,15 @@ static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_
                 /* The LOOP runs the burst at its target right after the burst
                  * that precedes it, in the same tick. */
                 uint32_t head_commands, head_writes;
-                result = loop_validate(image + h->stream_offset, h->stream_size, event.target, h,
-                                       &head_commands, &head_writes);
+                result = loop_validate(stream, end, event.target, h, &head_commands, &head_writes);
                 if (result) return result;
-                (void)at;
                 commands += head_commands;
                 writes += head_writes;
             }
             terminal = 1;
         }
     }
-    if (!terminal) return AFX_BAD_COMMAND;
+    if (!terminal || (repeats != 0) != ((h->flags & AFX_FLAG_REPEAT) != 0)) return AFX_BAD_COMMAND;
     if (commands > work.peak_commands) work.peak_commands = commands;
     if (writes > work.peak_register_writes) work.peak_register_writes = writes;
     if (profile) *profile = work;
@@ -333,13 +395,22 @@ afx_result_t afx_flow_duration(const void *data, uint32_t size, uint64_t *out_ti
     afx_result_t result = afx_file_validate(data, size, &header);
     if (result) return result;
     const uint8_t *stream = (const uint8_t *)data + header.image_offset + header.stream_offset;
-    uint64_t ticks = 0;
+    /* linear counts each WAIT once, as the stream lists it. */
+    uint64_t ticks = 0, linear = 0;
     for (uint32_t cursor = 0; cursor < header.stream_size;) {
         afx_event_t event;
         result = afx_decode_event(stream + cursor, header.stream_size - cursor, &event);
         if (result) return result;
+        if (event.opcode == AFX_OP_REPEAT) {
+            uint32_t span_start;
+            (void)boundary(stream, header.stream_size, event.target, &span_start); /* Validated. */
+            ticks += (linear - span_start) * event.count;
+        }
         cursor += event.bytes;
-        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) ticks += event.wait;
+        if (is_wait(&event)) {
+            ticks += event.wait;
+            linear += event.wait;
+        }
     }
     *out_ticks = ticks;
     *out_tick_rate_num = header.tick_rate_num;

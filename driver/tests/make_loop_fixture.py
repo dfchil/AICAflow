@@ -4,13 +4,15 @@ END replaced by LOOP 0, so the three notes repeat without a gap.
 
     python3 driver/tests/make_loop_fixture.py driver/build
 
-Writes loop.afx and loop.afb (the fixture's bank, unchanged) into the directory."""
+Writes loop.afx and loop.afb (the fixture's bank, unchanged) into the directory,
+and repeat.afx: the same with REPEAT 0 (count 2) before the LOOP, so each loop
+plays the notes three times (firmware ABI 14)."""
 import struct
 import sys
 from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-SIZES = {0: 1, 1: 2, 2: 3, 3: 5, 0x12: 2, 0x13: 1, 0x14: 8, 0x15: 4, 0x16: 5}
+SIZES = {0: 1, 1: 2, 2: 3, 3: 5, 0x12: 2, 0x13: 1, 0x14: 8, 0x15: 4, 0x16: 5, 0x19: 6}
 
 
 def control_id(image):
@@ -54,28 +56,37 @@ def work_profile(stream):
     return (max(c for c, _ in bursts) << 16) | max(w for _, w in bursts)
 
 
-def main(out_dir):
-    afx = bytes.fromhex((FIXTURES / "quickstart.afx.hex").read_text())
-    afb = bytes.fromhex((FIXTURES / "quickstart.afb.hex").read_text())
+def looping(afx, repeat):
+    """The fixture's flow with END replaced by LOOP 0, and with repeat > 0 a
+    REPEAT 0 of that count before it. A REPEAT right before the LOOP joins the
+    same bursts the LOOP does, so the work profile is the same."""
     header = list(struct.unpack_from("<20I", afx))
     image_offset, image_size, stream_offset, stream_size = header[4:8]
     image = bytearray(afx[image_offset:image_offset + image_size])
     stream = image[stream_offset:stream_offset + stream_size]
     assert stream[-1] == 0, "the fixture's stream must end with END"
-    image[stream_offset:stream_offset + stream_size] = bytes(stream[:-1]) + bytes([0x16]) + struct.pack("<I", 0)
+    tail = (bytes([0x19]) + struct.pack("<IB", 0, repeat) if repeat else b"") + bytes([0x16]) + struct.pack("<I", 0)
+    image[stream_offset:stream_offset + stream_size] = bytes(stream[:-1]) + tail
+    grown = len(tail) - 1
     header[2] = image_offset + len(image)   # total_size
-    header[3] |= 32                         # AFX_FLAG_LOOP
+    header[3] |= 32 | (128 if repeat else 0)  # AFX_FLAG_LOOP, AFX_FLAG_REPEAT
     header[5] = len(image)                  # image_size
-    header[7] = stream_size + 4             # stream_size: END (1) -> LOOP (5)
+    header[7] = stream_size + grown         # stream_size: END (1) -> [REPEAT (6)] LOOP (5)
     header[8] = control_id(image)
     header[14] = 0                          # loop_tick: the target is the stream start
-    header[19] = work_profile(image[stream_offset:stream_offset + stream_size + 4])  # trusted loaders need it
+    header[19] = work_profile(image[stream_offset:stream_offset + stream_size + grown])  # trusted loaders need it
     out = bytearray(afx[:image_offset])
     struct.pack_into("<20I", out, 0, *header)
-    out += image
+    return out + image
+
+
+def main(out_dir):
+    afx = bytes.fromhex((FIXTURES / "quickstart.afx.hex").read_text())
+    afb = bytes.fromhex((FIXTURES / "quickstart.afb.hex").read_text())
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "loop.afx").write_bytes(out)
+    (out_dir / "loop.afx").write_bytes(looping(afx, 0))
+    (out_dir / "repeat.afx").write_bytes(looping(afx, 2))
     (out_dir / "loop.afb").write_bytes(afb)
 
 

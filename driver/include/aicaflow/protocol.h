@@ -5,7 +5,9 @@
 #include <aicaflow/limits.h>
 #include <aicaflow/result.h>
 
-/* ABI 13: a flow with AFX_FLAG_BANKS plays samples from up to four banks,
+/* ABI 14: a flow with AFX_FLAG_REPEAT plays a span of its stream again a
+ * counted number of times (AFX_OP_REPEAT), which an ABI 13 firmware refuses
+ * at activation; ABI 13: a flow with AFX_FLAG_BANKS plays samples from up to four banks,
  * which an ABI 12 firmware refuses at activation; ABI 12: a PATCH command on a channel that has not sounded since activation
  * holds for that channel's first NOTE, which an ABI 11 firmware lets overwrite
  * it; ABI 11: AFX_LANE_PITCH, which an ABI 10 firmware ignores; ABI 10: the
@@ -15,7 +17,7 @@
  * bank-relative playback, compact state and allocated DSP rings.
  * Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
-#define AFX_ABI_VERSION 13
+#define AFX_ABI_VERSION 14
 #define AFX_FIRMWARE_MAGIC 0x32524641
 #define AFX_STATUS_MAGIC 0x32534641
 #define AFX_LAYOUT_ID 0x20261009
