@@ -178,6 +178,32 @@ must be idle, by the rule `afx_asset_release()` frees by; otherwise the call
 returns `AFX_ASSET_REFERENCED` and the slot keeps it. A per-level song sized
 for the largest one no longer fragments the arena.
 
+`afx_scene_slot_load()` holds AICAflow's lock while the whole bank goes over by
+DMA, about 6 ms for 32 KiB, and other threads' calls get `AFX_BUSY` meanwhile.
+A game that fills a slot during play, such as an announcer slot taking one
+phrase after another, fills it in steps instead, each step a short call:
+
+```c
+afx_asset_t bank, flow;
+afx_scene_slot_stream_begin(scene, "announcer", payload_bytes, bank_id, &bank);
+/* For each chunk, a multiple of 32 bytes except the last, from a 32-byte
+ * aligned buffer: */
+afx_sample_bank_stream_dma_begin(bank, offset, chunk, chunk_bytes);
+/* ... once per frame, until complete: */
+afx_sample_bank_stream_dma_poll(bank, &complete);
+afx_sample_bank_stream_finish(bank);
+afx_scene_slot_flow(scene, "announcer", afx, afx_bytes, &flow);
+```
+
+`payload_bytes` and `bank_id` are the AFB file's payload length and identity
+(header fields 20, 8 and 12), and the chunks are its payload. The begin call
+empties the slot by the same idle rule, and `afx_scene_slot_flow()` places the
+flow after the finished bank. A step that returns `AFX_BUSY` changed nothing
+and can be tried again on the next frame. `afx_asset_free(bank)` before the
+bank is finished cancels the stream and leaves the slot empty. On the console
+no stream call held the lock for more than 54 µs, and instances activated
+beside every chunk's DMA (`make -C driver scenes-check`).
+
 `afx_scene_release(scene)` gives a scene up. Its flows and banks are released
 as by `afx_asset_release()`, and the block is freed once no instance plays its
 flows and no flow of another scene binds its banks. Until then a scene's
@@ -187,16 +213,28 @@ scene is loaded and the ring is large enough; such a scene cannot be released
 until the DSP is disabled. Plain bank and flow uploads keep working beside
 scenes.
 
-## Looping flows
+## Songs
 
-A flow whose stream ends with `LOOP` (header flag `AFX_FLAG_LOOP`;
-`afx_asset_loops()` says so and gives the authored tick it continues at)
-repeats by itself, gaplessly, until stopped: it never ends on its own, so the
-end callback does not see it until `afx_instance_stop()`. Each loop is
-reported like other news, and `afx_set_loop_callback()` is called for it, with
-the loop target as the status position (image-relative) and the hardware tick
-the flow continued at as `next_deadline`; `afx_instance_status()` counts them in
-`loops`. Seek ticks address the authored first pass.
+A song (`<aicaflow/song.h>`, an AFM file) is sections played in an order.
+`afx_song_load(banks, count, afm, size, &song)` loads it like a flow, and its
+instances play through the instance API. A section ends its body with `NEXT`:
+a continue join goes on with the same executor and voices, as a loop does,
+and a new-play join starts the next section on the song's second executor with
+voices of its own while the last one plays its tail (its key-offs and
+releases). At the end of the order the song goes on at its loop index: it
+never ends by itself, so the end callback does not see it until
+`afx_instance_stop()`. Each such wrap is reported like other news, and
+`afx_set_loop_callback()` is called for it; `afx_instance_status()` counts them
+in `loops`, and `afx_asset_loops()` gives the loop index.
+
+A song with a new-play join plays from a pool of voices that activation takes
+(the AFM header says how many) and from a runtime block that each instance
+gets in AICA RAM; any number of instances of one song may play at once. Its
+status position is `AFX_SONG_POSITION(order position, stream offset)`, and
+`afx_instance_rebuild()` resumes a paused song at such a position: pause, read
+the status, rebuild at its position. `afx_song_seek()` restarts a paused song
+at an order position. A song has no AFC, so `afx_instance_seek()` refuses it.
+A scene places a song entry (`AFX_SCENE_SONG`) as it places a flow.
 
 ## Seek, DSP and player metadata
 

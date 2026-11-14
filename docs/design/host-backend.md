@@ -151,13 +151,17 @@ share that code, since the web build uses Emscripten's SDL2.
   octaves and a fractional FNS, 8-bit PCM, pan, a one-shot's end, release
   time against MAME's table, ADPCM sample by sample against AICAforge's
   decoder, and a DSP delay's echo to the sample.
-- `test_host`: the firmware's executor and the SH4 library play the loop
+- `test_host`: the firmware's executor and the SH4 library play the long
   fixture through the public API.
-- The console checks, unchanged: `check_loop`, `check_commands`,
-  `check_banks`, `check_scenes` and `check_timer`. They cover gapless loops,
+- The console checks, unchanged: `check_song`, `check_commands`,
+  `check_banks`, `check_scenes` and `check_timer`. They cover songs (continue
+  and new-play joins to the tick, restart while stopping, pause and resume),
   STOP behind ACTIVATE, replace, release when idle, held PATCH read back from
-  the channel registers, banks, scenes with the DSP ring, and a 1002 Hz
-  Timer A.
+  the channel registers, banks, scenes with the DSP ring and streamed slots,
+  and a 1002 Hz Timer A. On the host a DMA is an instant copy, so the scenes
+  check's lock-time comparison passes trivially there.
+- `afx_render` plays an AFM song as well as a flow: the continue-only song
+  fixture renders bit-identical to the long flow, the same notes eight times.
 
 None of these prove that the host sounds like the console. A clean
 audio-only capture from the console is the reference for that, compared with

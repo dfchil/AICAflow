@@ -54,7 +54,7 @@ typedef struct {
     uint32_t control_id; /* Identity matched against the optional AFC sidecar. */
     uint32_t bank_id_low; /* Low half of the authored bank identity. */
     uint32_t bank_id_high; /* High half of the authored bank identity. */
-    uint32_t loop_tick; /* With AFX_FLAG_LOOP in flags, the authored tick the LOOP continues at. */
+    uint32_t loop_index; /* A song's loop index; AFX_SONG_NO_LOOP for a flow or a song that ends. */
 } afx_asset_slot_t;
 #if defined(__sh__)
 _Static_assert(sizeof(afx_asset_slot_t) == 84, "SH-4 asset bookkeeping size");
@@ -78,6 +78,7 @@ typedef struct {
     uint32_t asset_index; /* Index of the retained flow in g_assets. */
     uint32_t map_addr; /* Absolute AICA byte address of the uploaded channel map. */
     uint32_t staging_addr; /* Temporary AICA restore-state allocation; zero when absent. */
+    uint32_t runtime_addr; /* A pool song's runtime block (AFX_SONG_RUNTIME_BYTES); zero otherwise. */
     uint32_t start_tick; /* Initial scheduled start time in hardware timer ticks. */
     uint32_t observed_epoch; /* Last stable publication read; reset with the slot. */
     uint8_t required_channels; /* Number of local channels owned by this instance. */
@@ -147,6 +148,7 @@ bool flow_banks_add(uint32_t flow, const afx_asset_t banks[AFX_MAX_FLOW_BANKS - 
 afx_asset_t flow_bank(uint32_t flow, uint32_t slot);
 
 /* Uploads sample data as a bank: to a new allocation, or to place in a scene's block. */
+int flow_bank_header(const void *data, uint32_t size, afx_file_header_t *out);
 int sample_bank_upload(const void *data, uint32_t bytes, uint32_t place, afx_asset_t *out);
 /* Loads an AFB file as afx_bank_load_memory(), or to place, refusing a payload
  * larger than place_bytes. */

@@ -1,5 +1,6 @@
 #include <aicaflow/bank.h>
 #include <aicaflow/scene.h>
+#include <aicaflow/song.h>
 #include <aicaflow/codec.h>
 #include <aicaflow/dsp.h>
 
@@ -998,7 +999,7 @@ static void test_scenes(void) {
         {0, 0, AFX_BAD_FORMAT}, {4, 2, AFX_BAD_FORMAT}, {8, 0, AFX_BAD_FORMAT},
         {16, 0, AFX_BAD_BOUNDS}, {20, 0, AFX_BAD_BOUNDS}, {20, 400, AFX_BAD_BOUNDS},
         {24, 0, AFX_BAD_BOUNDS}, {24, 1000, AFX_BAD_BOUNDS}, {28, 1, AFX_BAD_FORMAT},
-        {32, 0, AFX_BAD_FORMAT}, {32, 5, AFX_BAD_FORMAT}, {60, 1, AFX_BAD_FORMAT},
+        {32, 0, AFX_BAD_FORMAT}, {32, 6, AFX_BAD_FORMAT}, {60, 1, AFX_BAD_FORMAT},
         {56, 1, AFX_BAD_FORMAT}, /* ticks on a bank */
         {48, 32, AFX_BAD_BOUNDS}, /* the bank overlaps the flow */
         {48, 16, AFX_BAD_BOUNDS}, /* not on a 32-byte boundary */
@@ -1121,6 +1122,64 @@ static void test_scenes(void) {
     assert(afx_scene_slot_load(l, "song", song_data, 96, song, 160, &song_flow) == AFX_OK);
     assert(afx_mem_stats(&after) == AFX_OK && after.active_allocations == before.active_allocations + 2);
 
+    /* A slot filled in steps: the bank streamed a chunk at a time, then the flow. */
+    static _Alignas(32) uint8_t payload[64];
+    memcpy(payload, song_data + 32, sizeof(payload));
+    const afx_bank_id_t song_id = {0x5096, 5};
+    afx_asset_t streamed = 0;
+    bool complete = false;
+    assert(afx_instance_activate(song_flow, &instance) == AFX_OK);
+    assert(afx_scene_slot_stream_begin(l, "song", 64, song_id, &streamed) == -AFX_ASSET_REFERENCED && !streamed);
+    end_instance(instance);
+    assert(afx_scene_slot_stream_begin(l, "theme", 64, song_id, &streamed) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_slot_stream_begin(l, "song", 0, song_id, &streamed) == -AFX_BAD_BOUNDS);
+    assert(afx_scene_slot_stream_begin(l, "song", 64, (afx_bank_id_t){0}, &streamed) == -AFX_BAD_BOUNDS);
+    assert(afx_scene_slot_stream_begin(l, "song", 225, song_id, &streamed) == -AFX_NO_AICA_RAM);
+    assert(afx_scene_find(l, "song", &flow) == AFX_OK && flow == song_flow); /* Refusals keep it. */
+    assert(afx_scene_slot_stream_begin(l, "song", 64, song_id, &streamed) == AFX_OK);
+    assert(!afx_asset_addr(song_flow) && afx_asset_addr(streamed) == level_block + 128);
+    assert(afx_scene_find(l, "song", &flow) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_slot_flow(l, "song", song, 160, &flow) == -AFX_BAD_BOUNDS && !flow);
+    memset(ram + level_block + 128, 0, 64);
+    assert(afx_sample_bank_stream_dma_begin(streamed, 0, payload, 32) == AFX_OK);
+    /* Other calls go on while a chunk is in flight. */
+    assert(afx_instance_activate(theme_flow, &instance) == AFX_OK);
+    assert(afx_scene_slot_stream_begin(l, "song", 64, song_id, &stale) == -AFX_BUSY && !stale);
+    assert(afx_asset_addr(streamed) == level_block + 128);
+    thd_pass();
+    assert(afx_sample_bank_stream_dma_poll(streamed, &complete) == AFX_OK && complete);
+    end_instance(instance);
+    assert(afx_sample_bank_stream_dma_begin(streamed, 32, payload + 32, 32) == AFX_OK);
+    thd_pass();
+    assert(afx_sample_bank_stream_dma_poll(streamed, &complete) == AFX_OK && complete);
+    assert(afx_scene_slot_flow(l, "song", song, 160, &flow) == -AFX_BAD_BOUNDS);
+    assert(afx_sample_bank_stream_finish(streamed) == AFX_OK);
+    assert(!memcmp(ram + level_block + 128, song_data + 32, 64));
+    assert(afx_scene_slot_flow(l, "song", song, 160, &song_flow) == AFX_OK);
+    assert(afx_asset_addr(song_flow) == level_block + 192);
+    assert(g_assets[AFX_HANDLE_INDEX(song_flow)].bank == streamed);
+    assert(afx_scene_find(l, "song", &flow) == AFX_OK && flow == song_flow);
+    /* Another flow over the same bank: an idle one is replaced, a playing one kept. */
+    stale = song_flow;
+    assert(afx_scene_slot_flow(l, "song", song, 160, &song_flow) == AFX_OK && song_flow != stale);
+    assert(!afx_asset_addr(stale) && afx_asset_addr(song_flow) == level_block + 192);
+    assert(afx_asset_addr(streamed) == level_block + 128);
+    assert(afx_instance_activate(song_flow, &instance) == AFX_OK);
+    assert(afx_scene_slot_flow(l, "song", song, 160, &flow) == -AFX_ASSET_REFERENCED && !flow);
+    assert(afx_scene_find(l, "song", &flow) == AFX_OK && flow == song_flow);
+    end_instance(instance);
+    /* The scene's finished bank stays the scene's. */
+    assert(afx_asset_free(streamed) == -AFX_ASSET_REFERENCED);
+    /* Cancelling: freeing the bank while it streams, a chunk in flight, empties the slot. */
+    assert(afx_scene_slot_stream_begin(l, "song", 64, song_id, &streamed) == AFX_OK);
+    assert(!afx_asset_addr(song_flow));
+    assert(afx_sample_bank_stream_dma_begin(streamed, 0, payload, 32) == AFX_OK);
+    assert(afx_asset_free(streamed) == AFX_OK && !afx_asset_addr(streamed) && !g_upload_dma_asset);
+    assert(afx_scene_find(l, "song", &flow) == -AFX_INVALID_HANDLE);
+    assert(afx_scene_slot_flow(l, "song", song, 160, &flow) == -AFX_BAD_SAMPLE && !flow);
+    assert(afx_scene_slot_load(l, "song", song_data, 96, song, 160, &song_flow) == AFX_OK);
+    assert(afx_mem_stats(&after) == AFX_OK && after.active_allocations == before.active_allocations + 2);
+
     /* Release: the permanent scene keeps its block while the level binds its core
      * bank; the level keeps its own while its theme plays. */
     assert(afx_instance_activate(theme_flow, &instance) == AFX_OK);
@@ -1149,6 +1208,140 @@ static void test_scenes(void) {
     assert(afx_mem_stats(&after) == AFX_OK && after.free_bytes == before.free_bytes);
     /* Left loaded: afx_shutdown forgets it with the allocator. */
     assert(afx_scene_load(permanent, permanent_bytes, NULL, 0, &p) == AFX_OK);
+}
+
+/* An AFM over bank (0x5096, 1): one setup at bank offset 0, one section of
+ * the stream given, played twice, looping to the first. Its work profile is
+ * the validator's. Returns its size. */
+static uint32_t song_file(uint8_t out[512], const uint8_t *stream, uint32_t bytes, uint32_t body,
+                          uint32_t voices) {
+    memset(out, 0, 512);
+    uint8_t *image = out + 128;
+    uint32_t table = 32 + AFX_SETUP_BYTES, order = table + 12, streams = order + 4;
+    afx_write32(image, 1); afx_write32(image + 4, 2); afx_write32(image + 8, 0);
+    afx_write32(image + 12, table); afx_write32(image + 16, order); afx_write32(image + 20, streams);
+    afx_write32(image + 24, bytes); afx_write32(image + 28, 1);
+    afx_write16(image + 32 + 2 * AFX_FIELD_ENV_DR, 31);
+    afx_write32(image + table, streams); afx_write32(image + table + 4, bytes);
+    afx_write32(image + table + 8, body);
+    memcpy(image + streams, stream, bytes);
+    uint32_t image_size = streams + bytes;
+    afx_write32(out, AFX_SONG_MAGIC); afx_write32(out + 4, AFX_SONG_VERSION);
+    afx_write32(out + 8, 128 + image_size); afx_write32(out + 12, AFX_FLAG_MUSIC);
+    afx_write32(out + 16, 128); afx_write32(out + 20, image_size);
+    afx_write32(out + 24, 1); afx_write32(out + 28, 96);
+    afx_write32(out + 36, 0x5096); afx_write32(out + 40, 1);
+    afx_write32(out + 44, 1); afx_write32(out + 48, voices);
+    afx_write32(out + 52, 1000); afx_write32(out + 56, 1);
+    afx_write32(out + 64, afx_control_id(image, image_size));
+    afx_write32(out + 96, 32); afx_write32(out + 104, 64);
+    afx_validation_profile_t work;
+    assert(afx_song_validate_profile(out, 128 + image_size, NULL, &work) == AFX_OK);
+    afx_write32(out + 60, AFX_WORK_PROFILE(work.peak_commands, work.peak_register_writes));
+    return 128 + image_size;
+}
+
+/* Songs load like flows and activate with their kind: a pool song takes a
+ * runtime block of its own per instance, which recycling gives back. */
+static void test_songs(void) {
+    static uint8_t afm[512];
+    uint8_t bank_data[96], flow_data[160];
+    afx_bank_t bank = {0};
+    afx_asset_t song = 0, refused = 0;
+    afx_mem_stats_t before, during, after;
+    bank_file(bank_data, 0x5096, 1);
+    assert(afx_bank_load_memory(&bank, bank_data, sizeof(bank_data)) == AFX_OK);
+    const afx_bank_t *banks[] = {&bank};
+    const uint8_t pool[] = {AFX_OP_KEYOFF, 0, AFX_OP_WAIT8, 10, AFX_OP_NEXT, AFX_JOIN_NEW,
+                            AFX_OP_KEYOFF, 0, AFX_OP_WAIT8, 2, AFX_OP_END};
+    uint32_t size = song_file(afm, pool, sizeof(pool), 10, 2);
+    /* Each kind through its own call. */
+    flow_file(flow_data, 0x5096, 1);
+    assert(afx_flow_upload(banks, 1, afm, size, &refused) == -AFX_BAD_FORMAT && !refused);
+    assert(afx_song_load(banks, 1, flow_data, sizeof(flow_data), &refused) == -AFX_BAD_FORMAT && !refused);
+    assert(afx_song_load(NULL, 0, afm, size, &refused) == -AFX_BAD_SAMPLE);
+    assert(afx_song_load(banks, 1, afm, size, &song) == AFX_OK && song);
+    uint32_t index = AFX_HANDLE_INDEX(song), loop_position = 99;
+    assert(g_assets[index].flags == (AFX_FLAG_MUSIC | AFX_FLAG_SONG | AFX_FLAG_POOL));
+    assert(g_assets[index].required_channels == 2 && g_assets[index].bank == bank.asset);
+    assert(afx_asset_loops(song, &loop_position) && loop_position == 0);
+    assert(!memcmp(ram + afx_asset_addr(song), afm + 128, size - 128));
+    assert(afx_mem_stats(&before) == AFX_OK);
+    afx_instance_t instance = 0;
+    assert(afx_instance_activate(song, &instance) == AFX_OK);
+    afx_cmd_t command = queued(queue_head() - 1);
+    afx_activation_t activation;
+    memcpy(&activation, command.payload, sizeof(activation));
+    assert(command.opcode == AFX_CMD_ACTIVATE && activation.required_channels == 2);
+    assert(activation.flags == (AFX_FLAG_MUSIC | AFX_FLAG_SONG | AFX_FLAG_POOL));
+    assert(activation.setups_offset == AFX_SONG_IMAGE_HEADER_BYTES && activation.setup_count == 1);
+    assert(activation.stream_offset == afx_read32(afm + 128 + 20) &&
+           activation.stream_size == sizeof(pool));
+    uint32_t runtime = (uint32_t)activation.runtime_units << 5;
+    uint32_t slot = AFX_HANDLE_INDEX(instance);
+    assert(runtime && g_instances[slot].runtime_addr == runtime);
+    assert(afx_mem_stats(&during) == AFX_OK &&
+           during.used_bytes == before.used_bytes + AFX_SONG_RUNTIME_BYTES(0));
+    /* A song's position is checked by the ARM7; a pool song resumes with fresh voices. */
+    observed(slot, instance, AFX_PAUSED, command.sequence, AFX_OK);
+    irq_run_worker();
+    afx_restore_channel_t state = {0};
+    assert(afx_instance_rebuild(instance, &state, 1, AFX_SONG_POSITION(1, 4), 0, 1, true) == -AFX_BAD_COMMAND);
+    assert(afx_instance_seek(instance, 0) == -AFX_UNSUPPORTED);
+    assert(afx_song_seek(instance, AFX_SONG_MAX_ORDER) == -AFX_BAD_BOUNDS);
+    assert(afx_song_seek(instance, 1) == AFX_OK);
+    command = queued(queue_head() - 1);
+    afx_rebuild_payload_t rebuild;
+    memcpy(&rebuild, command.payload, sizeof(rebuild));
+    assert(command.opcode == AFX_CMD_REBUILD && rebuild.stream_position == AFX_SONG_POSITION(1, 0) &&
+           !rebuild.state_count);
+    end_instance(instance);
+    assert(afx_mem_stats(&after) == AFX_OK && after.used_bytes == before.used_bytes);
+    uint8_t seek_index[48] = {0};
+    assert(afx_flow_seek_index_load_memory(song, seek_index, sizeof(seek_index)) == -AFX_UNSUPPORTED);
+    /* Two instances of one song at once, each with a block of its own. */
+    afx_instance_t first = 0, second = 0;
+    assert(afx_instance_activate(song, &first) == AFX_OK);
+    assert(afx_instance_activate(song, &second) == AFX_OK);
+    uint32_t a = g_instances[AFX_HANDLE_INDEX(first)].runtime_addr;
+    uint32_t b = g_instances[AFX_HANDLE_INDEX(second)].runtime_addr;
+    assert(a && b && a != b);
+    end_instance(first);
+    end_instance(second);
+    assert(afx_asset_free(song) == AFX_OK);
+    /* A continue-only song plays in its instance slot: no pool, no block. */
+    const uint8_t cont[] = {AFX_OP_KEYOFF, 0, AFX_OP_WAIT8, 10, AFX_OP_NEXT, AFX_JOIN_CONTINUE, AFX_OP_END};
+    size = song_file(afm, cont, sizeof(cont), 10, 0);
+    assert(afx_song_load(banks, 1, afm, size, &song) == AFX_OK);
+    assert(g_assets[AFX_HANDLE_INDEX(song)].flags == (AFX_FLAG_MUSIC | AFX_FLAG_SONG));
+    assert(afx_instance_activate(song, &instance) == AFX_OK);
+    command = queued(queue_head() - 1);
+    memcpy(&activation, command.payload, sizeof(activation));
+    assert(activation.flags == (AFX_FLAG_MUSIC | AFX_FLAG_SONG) && !activation.runtime_units &&
+           activation.required_channels == 1);
+    assert(!g_instances[AFX_HANDLE_INDEX(instance)].runtime_addr);
+    end_instance(instance);
+    assert(afx_asset_free(song) == AFX_OK);
+    assert(afx_song_seek(0, 0) == -AFX_STALE_GENERATION);
+    /* A scene places a song as it places a flow, and binds it to the scene's bank. */
+    _Alignas(32) static uint8_t scene[1024];
+    uint32_t song_bytes = (size - 128 + 31u) & ~31u;
+    const scene_part_t parts[] = {
+        {AFX_SCENE_BANK, "bank", bank_data, sizeof(bank_data), 0, 64, 0},
+        {AFX_SCENE_SONG, "song", afm, size, 64, song_bytes, 20},
+    };
+    uint32_t scene_bytes = scene_file(scene, sizeof(scene), 9, 64 + song_bytes, parts, 2);
+    assert(afx_scene_validate(scene, scene_bytes, NULL) == AFX_OK);
+    afx_scene_t loaded = 0;
+    afx_scene_info_t info;
+    assert(afx_scene_load(scene, scene_bytes, NULL, 0, &loaded) == AFX_OK);
+    assert(afx_scene_find(loaded, "song", &song) == AFX_OK && song);
+    assert(afx_scene_entry(loaded, 1, &info) == AFX_OK && info.kind == AFX_SCENE_SONG &&
+           info.asset == song && info.ticks == 20 && info.loops);
+    assert(afx_asset_addr(song) == info.addr && (g_assets[AFX_HANDLE_INDEX(song)].flags & AFX_FLAG_SONG));
+    assert(g_assets[AFX_HANDLE_INDEX(song)].bank != bank.asset); /* The scene's own bank. */
+    assert(afx_scene_release(loaded) == AFX_OK);
+    assert(afx_bank_release(&bank) == AFX_OK);
 }
 
 static uint8_t *read_fixture(const char *path, uint32_t *bytes) {
@@ -1270,6 +1463,7 @@ int main(int argc, char **argv) {
     assert(afx_bank_release(&bank) == AFX_OK);
     test_flow_banks();
     test_scenes();
+    test_songs();
     if (argc == 4) {
         uint32_t bank_bytes, flow_bytes, seek_bytes;
         uint8_t *b = read_fixture(argv[1], &bank_bytes);

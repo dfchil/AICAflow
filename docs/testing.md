@@ -41,6 +41,13 @@ Host checks prove asset/command properties, not audible equality on hardware.
 Hardware smoke testing is manual: run quickstart, the DSP demo and tuner,
 verify playback, bank replacement, STOP/recycle, seek and a runtime DSP program.
 Record source, KOS and firmware revisions with the result.
+`make -C driver song-check` builds `driver/build/check_song.elf`, which prints
+`AFX_SONG PASS` when a song with a continue join loops every 8160 ticks and one
+with a new-play join every 7160 (the next play starting while the last rings
+out), measured from activation, a song restarts while its last instance stops,
+a paused song resumes at the position its status reports, and every runtime
+block is given back. The checks' fixtures come from
+`driver/tests/make_fixtures.py`.
 `make -C driver commands-check` builds `driver/build/check_commands.elf`,
 which checks the command semantics on the console and prints `AFX_CMD PASS`:
 STOP right behind ACTIVATE, channels back at STOP with all 64 in use,

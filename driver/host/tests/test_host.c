@@ -16,10 +16,10 @@ alignas(32) static const unsigned char firmware[] = {
 #embed "../../../firmware/aicaflow.drv"
 };
 alignas(32) static const unsigned char flow_file[] = {
-#embed "../../build/loop.afx"
+#embed "../../build/long.afx"
 };
 alignas(32) static const unsigned char bank_file[] = {
-#embed "../../build/loop.afb"
+#embed "../../build/long.afb"
 };
 
 static volatile int ended;
@@ -46,7 +46,7 @@ int main(void) {
         if (abs(audio[i]) > peak) peak = abs(audio[i]);
     }
     double rms = sqrt(energy / (2 * 44100));
-    printf("one second of the loop fixture: rms %.0f peak %d\n", rms, peak);
+    printf("one second of the long fixture: rms %.0f peak %d\n", rms, peak);
     assert(rms > 100 && peak < 32767);
     assert(afx_instance_stop(instance) == AFX_OK);
     for (int waited = 0; !ended && waited < 200; ++waited) afx_test_sleep(10);

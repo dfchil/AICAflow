@@ -1,8 +1,8 @@
-/* Plays a flow through the host backend and writes what it renders as a WAV:
+/* Plays a flow, or an AFM song, through the host backend and writes what it renders as a WAV:
  * the real firmware and SH4 library on the software AICA.
  *
  *   afx_render [-s seconds] [-g gain] [-f firmware.drv] [--room feedback,damping,wet_q8]
- *              [--coef index=value]... bank.afb flow.afx out.wav
+ *              [--coef index=value]... bank.afb flow.afx|song.afm out.wav
  *
  * --room installs afx_dsp_program_room() as the DSP scene; --coef then
  * overrides its coefficients, as a program tuning a preset would. */
@@ -10,6 +10,7 @@
 #include <aicaflow/dsp.h>
 #include <aicaflow/host.h>
 #include <aicaflow/host_audio.h>
+#include <aicaflow/song.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -80,7 +81,11 @@ int main(int argc, char **argv) {
     afx_asset_t flow;
     afx_instance_t instance;
     result = afx_bank_load_file(&bank, argv[arg]);
-    if (!result) result = afx_bank_flow_upload(&bank, flow_data, flow_size, &flow);
+    /* An AFM song plays as a flow does, through its instance. */
+    const afx_bank_t *banks[1] = {&bank};
+    if (!result) result = flow_size >= 4 && !memcmp(flow_data, "AFM1", 4)
+        ? afx_song_load(banks, 1, flow_data, flow_size, &flow)
+        : afx_bank_flow_upload(&bank, flow_data, flow_size, &flow);
     afx_set_end_callback(on_end, NULL);
     if (!result) result = afx_instance_activate(flow, &instance);
     if (!result && gain != 255) result = afx_instance_gain(instance, (uint8_t)gain);

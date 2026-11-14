@@ -66,7 +66,7 @@ All fields are unsigned 32-bit little-endian words:
 | 40, 44 | bank_id_low, bank_id_high | Identity of the bound AFB (bank slot 0) |
 | 48 | relocations_offset | File-relative relocation-table start |
 | 52 | relocation_count | Number of 12-byte relocation records |
-| 56 | loop_tick | With AFX_FLAG_LOOP, the authored tick of the final LOOP's target; otherwise zero |
+| 56 | reserved | Zero (was `loop_tick` before format API 6) |
 | 60 | banks_offset | With `AFX_FLAG_BANKS`, file-relative start of the bank list; otherwise zero |
 | 64 | required_channels | Local voice count required by this flow |
 | 68, 72 | tick_rate_num, tick_rate_den | Authored ticks per second = numerator / denominator |
@@ -239,3 +239,14 @@ Each compact 16-byte record is little-endian:
 The 32-byte named record appends a zero-padded, fixed 16-byte source sample
 name at offset 16. AFI describes direct one-shots; loop points, root key
 and tuning are stored in AFX setups.
+
+## AFM songs
+
+An AFM file is a song: sections played in an order. Its 96-byte header
+(`afx_song_header_t` in [format.h](../include/aicaflow/format.h)) is followed
+by the relocations and bank list as in an AFX, then the 32-byte aligned image:
+a 32-byte image header (`afx_song_image_header_t`), the setups, the lane map,
+the section table (stream offset, stream size and body ticks per section),
+the order (16-bit section indices) and the streams, with the bank table after
+them when the song uses `AFX_FLAG_BANKS`. `afx_song_validate()` checks a file;
+[the design note](../../../docs/design/song-sections.md) explains the layout.

@@ -62,6 +62,7 @@ static void render(uint32_t frames) {
 }
 
 uint64_t afx_test_ms(void) { return g_frames * 1000u / afx_host_audio_rate(); }
+uint64_t afx_test_us(void) { return g_frames * 1000000u / afx_host_audio_rate(); }
 
 void afx_test_sleep(uint32_t milliseconds) {
     uint32_t total = milliseconds * afx_host_audio_rate() + g_fraction;

@@ -42,9 +42,13 @@ a missing or early terminal instruction are rejected.
 | 13 | PARK | — | 1 | Stop execution without releasing the controlled flow. Must be final and requires AFX_FLAG_CONTROLLED. |
 | 14 | NOTE_PL | channel:u8 setup:u16 pitch:u16 mix:u16 | 8 | Compact NOTE form: only PITCH and MIX/TOTAL_LEVEL override the setup. |
 | 15 | PATCH_LEVEL | channel:u8 mix:u16 | 4 | Compact PATCH form: only MIX/TOTAL_LEVEL changes. |
-| 16 | LOOP | target:u32 | 5 | Continue at the stream-relative byte offset `target`, in the same tick. Must be the final instruction and requires AFX_FLAG_LOOP. |
 | 17 | PATCH_ENV | channel:u8 env_ad:u16 | 4 | Compact PATCH form: only ENV_AD (attack and decay rates) changes. |
 | 18 | PATCH_ENV_LEVEL | channel:u8 env_ad:u16 mix:u16 | 6 | Compact PATCH form: ENV_AD and MIX/TOTAL_LEVEL change. |
+| 19 | NEXT | join:u8 | 2 | Songs only: the body of the section ends; the song moves to its next order position in this tick, the next section starting on the song's other executor (`AFX_JOIN_NEW`, 0) or on this one with its voices (`AFX_JOIN_CONTINUE`, 1). |
+| 1a | FREE | channel:u8 | 2 | Songs only: the local channel's voice goes back to the song's pool. |
+
+Opcode 0x16 was LOOP, gone with format API 6; a song's continue join
+replaces it.
 
 NOTE_PL, PATCH_LEVEL, PATCH_ENV and PATCH_ENV_LEVEL are compact encodings of
 NOTE and PATCH; `afx_compact_opcode()` picks the one for a mask. PATCH_ENV
@@ -57,15 +61,16 @@ release-tail WAIT, then END. A looping source sample does not make a flow
 infinite: it still needs an authored KEYOFF and END. PARK is reserved for
 SH-4-controlled flows.
 
-A flow that repeats, such as a song with an intro, ends with LOOP instead of
-END. The stream is delta-timed, so the loop is a cursor move: the executor
-continues at the target without touching the flow's deadline, and the loop is
-gapless and drift-free. The target is an instruction boundary before the LOOP;
-the events there run in the same tick as those just before the LOOP, as one
-burst. Voices sounding when the LOOP runs keep sounding unless the stream keys
-them off first; a NOTE at the target replaces the voice on its channel. The
-instance never completes by itself: the host stops it. Each loop is reported
-to the host (the loop count in the observed state word; `afx_set_loop_callback`).
+A song (AFM, [song sections](../../../docs/design/song-sections.md)) is
+sections played in an order. Each section's stream has one NEXT at its body
+length; after a new-play NEXT come the section's tail events (its voices'
+key-offs and releases), then END; after a continue NEXT only END. The stream
+is delta-timed, so a join is a cursor move: the next section starts in the
+tick NEXT runs, gapless and drift-free. A continue join keeps the executor and
+its voices, so a voice sounding at the join keeps sounding, as across a loop.
+At the end of the order the song goes on at its loop index, reported to the
+host as a loop (the loop count in the observed state word;
+`afx_set_loop_callback`); a song without one ends when its last executor does.
 
 ## NOTE and PATCH field masks
 
@@ -97,13 +102,15 @@ and source are set by NOTE; use KEYOFF to release a voice.
 
 ## Termination and timing constraints
 
-- The stream contains exactly one terminal END, PARK or LOOP, and it is last.
+- The stream contains exactly one terminal END or PARK, and it is last.
 - WAIT values are nonzero.
 - Only a controlled flow may end with PARK.
-- Only a flow with AFX_FLAG_LOOP may end with LOOP, and such a flow must. The
-  target is the offset of an instruction before the LOOP, at least one WAIT
-  lies between them, and the header's `loop_tick` is the authored tick of the
-  target (the sum of the WAITs before it).
+- A flow contains no NEXT or FREE. In a song, a section's stream has exactly
+  one NEXT, at its body length, and ends with END; only END follows a
+  continue NEXT; there is no PARK. At a new-play join the song's other
+  executor must have ended in an earlier tick, and the validator plays the
+  order through one wrap of its loop to check that, the voices held at once
+  and the work of both executors in a tick (`afx_song_validate`).
 - A normal flow must use END; keying off a voice does not automatically retire
   the instance.
 - The AFX header tick-rate numerator and denominator define authored ticks.

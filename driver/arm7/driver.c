@@ -2,6 +2,7 @@
 #include <aicaflow/codec.h>
 #include "aica_access.h"
 #include "sample_address.h"
+#include "aica_access.h"
 
 /* The host backend compiles this file natively (driver/host/src/firmware.c):
  * aica_access.h maps AICA RAM and registers, and the host clears the state
@@ -11,6 +12,8 @@
  * this normal ARM context, which keeps the explicitly reserved FIQ stack free
  * of decoder and register-write pressure. */
 static volatile afx_runtime_slot_t contexts[AFX_MAX_FLOW_SLOTS];
+/* A song's order position, per instance slot. */
+static uint16_t song_position[AFX_MAX_FLOW_SLOTS];
 static volatile uint32_t initialized_data_probe = 0x41584632;
 /* KOS's linear 0..255 gain to AICA logarithmic TL attenuation table.  It is
  * static so NOTE/PATCH avoid floating point or a runtime table rebuild. */
@@ -277,20 +280,46 @@ static int physical_channel(const volatile afx_runtime_slot_t *context,
     *out = physical;
     return 1;
 }
+/* Songs. A song's instance slot holds what applies to the whole song. A
+ * continue-only song plays in that slot like a flow; a song with a pool keeps
+ * its runtime block's address in pc and plays on the block's two executors. */
+static uint32_t image_word(uint32_t image, uint32_t field) {
+    return *(volatile uint32_t *)AICA_RAM(image + field);
+}
+#define SONG_FIELD(image, field) image_word(image, offsetof(afx_song_image_header_t, field))
+static volatile afx_song_control_t *song_control(const volatile afx_runtime_slot_t *song) {
+    return (volatile afx_song_control_t *)AICA_RAM(song->pc);
+}
+static volatile afx_runtime_slot_t *song_executor(const volatile afx_runtime_slot_t *song, uint32_t e) {
+    return (volatile afx_runtime_slot_t *)AICA_RAM(song->pc + AFX_SONG_EXECUTOR_OFFSET(e));
+}
+/* Points an executor at the section the order plays at position. */
+static void song_enter(volatile afx_runtime_slot_t *x, uint32_t image, uint32_t position) {
+    uint32_t section = *(volatile uint16_t *)AICA_RAM(image + SONG_FIELD(image, order_offset) + position * 2u);
+    uint32_t entry = image + SONG_FIELD(image, sections_offset) + section * AFX_SONG_SECTION_BYTES;
+    x->stream_start = *(volatile uint32_t *)AICA_RAM(entry);
+    x->pc = image + x->stream_start;
+    x->end = x->pc + *(volatile uint32_t *)AICA_RAM(entry + 4u);
+}
+/* Image-relative for a flow; for a song, its order position and the stream
+ * offset of the executor playing the newest section (AFX_SONG_POSITION). */
+static uint32_t stream_position(uint32_t index, const volatile afx_runtime_slot_t *context) {
+    if (!(context->flags & AFX_FLAG_SONG)) return context->pc - context->image_base;
+    const volatile afx_runtime_slot_t *x = context;
+    if (context->flags & AFX_FLAG_POOL) x = song_executor(context, song_control(context)->newest);
+    return AFX_SONG_POSITION(song_position[index], x->pc - x->image_base - x->stream_start);
+}
 static void complete(uint32_t index, volatile afx_runtime_slot_t *context,
                      uint32_t state, uint32_t result, uint32_t detail) {
     uint32_t reference = context->reference;
     uint32_t sequence = context->sequence;
-    uint32_t position = context->pc - context->image_base;
+    uint32_t position = stream_position(index, context);
     uint32_t deadline = context->deadline;
     uint32_t max_lateness = context->max_lateness;
     keyoff(context);
     clear_words((volatile uint32_t *)context, sizeof(*context) / 4);
     if (result == AFX_OK) detail = max_lateness;
     publish(index, reference, state, sequence, result, position, deadline, detail);
-}
-static uint32_t stream_position(const volatile afx_runtime_slot_t *context) {
-    return context->pc - context->image_base;
 }
 /* The state word of a live context: its loop count above its state, so a
  * LOOP is news to the host (AFX_STATE_LOOPS_SHIFT). */
@@ -379,67 +408,195 @@ static afx_result_t write_restore(const volatile afx_runtime_slot_t *context,
     return install_voice(context, physical, words, run);
 }
 
-static void service(uint32_t index) {
-    volatile afx_runtime_slot_t *context = &contexts[index];
-    if (context->state != AFX_RUNNING) return;
+/* The pool: entry i of the song's channel map is a voice, free while bit i of
+ * the control block's mask is set. */
+static uint32_t pool_take(const volatile afx_runtime_slot_t *song) {
+    volatile afx_song_control_t *control = song_control(song);
+    for (uint32_t i = 0; i < song->channels; ++i) {
+        volatile uint32_t *mask = i < 32 ? &control->free_low : &control->free_high;
+        uint32_t bit = 1u << (i & 31u);
+        if (*mask & bit) {
+            *mask &= ~bit;
+            return *(volatile uint8_t *)AICA_RAM(song->channel_map + i * AFX_CHANNEL_MAP_ENTRY_BYTES);
+        }
+    }
+    return AFX_SONG_UNMAPPED;
+}
+static void pool_give(const volatile afx_runtime_slot_t *song, uint32_t physical) {
+    volatile afx_song_control_t *control = song_control(song);
+    for (uint32_t i = 0; i < song->channels; ++i)
+        if (*(volatile uint8_t *)AICA_RAM(song->channel_map + i * AFX_CHANNEL_MAP_ENTRY_BYTES) == physical) {
+            if (i < 32) control->free_low |= 1u << i;
+            else control->free_high |= 1u << (i - 32u);
+            return;
+        }
+}
+/* A local channel's voice, taken from the pool at its first event in a play,
+ * with the lane values the song has for its lane. */
+static int song_map(const volatile afx_runtime_slot_t *song, volatile afx_runtime_slot_t *x,
+                    uint32_t local) {
+    if (local >= x->channels) return 1; /* Refused by the instruction itself. */
+    volatile uint8_t *map = (volatile uint8_t *)AICA_RAM(x->channel_map);
+    if (map[local] != AFX_SONG_UNMAPPED) return 1;
+    uint32_t physical = pool_take(song);
+    if (physical >= AFX_AICA_CHANNEL_COUNT) return 0;
+    map[local] = (uint8_t)physical;
+    uint32_t lane = (song->flags & AFX_FLAG_LANES) ?
+        *(volatile uint8_t *)AICA_RAM(song->setups + song->setup_count * AFX_SETUP_BYTES + local) : 0;
+    voice_lane_id[physical] = (uint8_t)lane;
+    voice_control[physical] = 0;
+    voice_held[physical] = 0;
+    if (song->flags & AFX_FLAG_LANES) {
+        volatile uint8_t *values = (volatile uint8_t *)AICA_RAM(song->pc + AFX_SONG_LANES_OFFSET);
+        voice_lane_gain[physical] = values[AFX_LANE_GAIN * 64u + lane];
+        voice_flags[physical] = values[AFX_LANE_MUTE * 64u + lane] ? VOICE_MUTED : 0;
+        voice_lane_pan[physical] = (int8_t)values[AFX_LANE_PAN * 64u + lane];
+        voice_lane_dsp_send[physical] = values[AFX_LANE_DSP_SEND * 64u + lane];
+        voice_lane_pitch[physical] = (int8_t)values[AFX_LANE_PITCH * 64u + lane];
+    } else {
+        voice_lane_gain[physical] = voice_lane_dsp_send[physical] = 255;
+        voice_lane_pan[physical] = voice_lane_pitch[physical] = 0;
+        voice_flags[physical] = 0;
+    }
+    return 1;
+}
+/* Gives an executor's voices back to the pool; with silence, keys them off as
+ * an ending flow's are. */
+static void song_unmap(const volatile afx_runtime_slot_t *song, volatile afx_runtime_slot_t *x,
+                       int silence) {
+    if (!x->channel_map) return; /* Never started. */
+    volatile uint8_t *map = (volatile uint8_t *)AICA_RAM(x->channel_map);
+    if (silence) keyoff(x);
+    for (uint32_t local = 0; local < AFX_MAX_FLOW_CHANNELS; ++local) {
+        if (map[local] != AFX_SONG_UNMAPPED) pool_give(song, map[local]);
+        map[local] = AFX_SONG_UNMAPPED;
+    }
+}
+/* Starts executor e on the section at an order position, at deadline. */
+static void song_start(const volatile afx_runtime_slot_t *song, uint32_t e, uint32_t position,
+                       uint32_t deadline, uint32_t fraction) {
+    volatile afx_runtime_slot_t *x = song_executor(song, e);
+    volatile uint32_t *map = (volatile uint32_t *)AICA_RAM(song->pc + AFX_SONG_MAP_OFFSET(e));
+    for (uint32_t word = 0; word < 16u; ++word) map[word] = 0xffffffffu;
+    x->channel_map = song->pc + AFX_SONG_MAP_OFFSET(e);
+    x->channels = (uint8_t)SONG_FIELD(song->image_base, channels);
+    x->setups = song->setups;
+    x->setup_count = song->setup_count;
+    x->bank_base_units = song->bank_base_units;
+    x->bank_end = song->bank_end;
+    x->flags = song->flags;
+    x->gain = song->gain;
+    x->lane_count = song->lane_count;
+    x->reference = song->reference;
+    x->sequence = song->sequence;
+    x->image_base = song->image_base;
+    x->tempo_period_q8_8 = song->tempo_period_q8_8;
+    x->tempo_fraction = (uint8_t)fraction;
+    x->deadline = deadline;
+    x->remaining_wait = 0;
+    x->max_lateness = 0;
+    x->loops = 0;
+    song_enter(x, song->image_base, position);
+    x->state = AFX_RUNNING;
+}
+/* NEXT: the song moves to its next order position, wrapping to its loop
+ * index (a loop) or, without one, playing no further section. */
+static afx_result_t song_next(uint32_t index, volatile afx_runtime_slot_t *song,
+                              volatile afx_runtime_slot_t *x, uint32_t e, uint32_t join) {
+    if (!(song->flags & AFX_FLAG_SONG)) return AFX_BAD_COMMAND;
+    uint32_t image = song->image_base;
+    uint32_t next = song_position[index] + 1u, wrapped = 0;
+    if (next >= SONG_FIELD(image, order_count)) {
+        next = SONG_FIELD(image, loop_index);
+        wrapped = 1;
+    }
+    if (next == AFX_SONG_NO_LOOP) return AFX_OK; /* The tail plays on to END. */
+    if (join == AFX_JOIN_CONTINUE) song_enter(x, image, next);
+    else {
+        if (!(song->flags & AFX_FLAG_POOL) || song_executor(song, e ^ 1u)->state == AFX_RUNNING)
+            return AFX_BAD_COMMAND;
+        song_start(song, e ^ 1u, next, x->deadline, x->tempo_fraction);
+        song_control(song)->newest = e ^ 1u;
+    }
+    song_position[index] = (uint16_t)next;
+    if (wrapped) {
+        song->loops++;
+        publish(index, song->reference, state_word(song), song->sequence, AFX_OK,
+                stream_position(index, song), x->deadline, song->max_lateness);
+    }
+    return AFX_OK;
+}
+/* Runs one executor while it is due: a flow's or a continue-only song's
+ * (x == context) or one of a pool song's. */
+static void execute(uint32_t index, volatile afx_runtime_slot_t *context,
+                    volatile afx_runtime_slot_t *x, uint32_t e) {
     uint32_t events = 0;
-    int looped = 0;
+    int looped = 0, pool = (context->flags & AFX_FLAG_POOL) != 0;
     while (events < AFX_EXECUTOR_MAX_EVENTS_PER_PASS) {
         uint32_t now = *CLOCK;
-        if (!tick_due(now, context->deadline)) return;
-        record_lateness(context, now);
+        if (!tick_due(now, x->deadline)) return;
+        record_lateness(x, now);
+        if (x != context && x->max_lateness > context->max_lateness)
+            context->max_lateness = x->max_lateness;
         /* Split a legal very long WAIT32 into rollover-safe deadline steps. */
-        if (context->remaining_wait) {
-            schedule_wait(context, context->remaining_wait);
+        if (x->remaining_wait) {
+            schedule_wait(x, x->remaining_wait);
             continue;
         }
-        if (context->pc >= context->end) {
-            complete(index, context, AFX_ERROR, AFX_BAD_BOUNDS, now - context->deadline);
+        if (x->pc >= x->end) {
+            complete(index, context, AFX_ERROR, AFX_BAD_BOUNDS, now - x->deadline);
             return;
         }
         afx_event_t event;
-        afx_result_t result = afx_decode_event((const uint8_t *)AICA_RAM(context->pc),
-                                               context->end - context->pc, &event);
+        afx_result_t result = afx_decode_event((const uint8_t *)AICA_RAM(x->pc), x->end - x->pc, &event);
         if (result) {
-            complete(index, context, AFX_ERROR, result, now - context->deadline);
+            complete(index, context, AFX_ERROR, result, now - x->deadline);
             return;
         }
-        context->pc += event.bytes;
+        x->pc += event.bytes;
         ++events;
+        if (pool && event.opcode >= AFX_OP_NOTE && event.opcode <= AFX_OP_KEYOFF &&
+            !song_map(context, x, event.channel)) {
+            complete(index, context, AFX_ERROR, AFX_NO_CHANNELS, event.channel);
+            return;
+        }
         switch (event.opcode) {
         case AFX_OP_WAIT8:
         case AFX_OP_WAIT16:
         case AFX_OP_WAIT32: {
-            schedule_wait(context, event.wait);
+            schedule_wait(x, event.wait);
             looped = 0;
             break;
         }
-        case AFX_OP_LOOP: {
-            /* Continue at the target in this same tick: the deadline carries on
-             * as authored, so the loop is gapless. A second LOOP without a WAIT
-             * between (which validation refuses) would spin: end the flow. */
-            uint32_t stream = context->image_base + context->stream_start;
-            if (!(context->flags & AFX_FLAG_LOOP) || looped ||
-                event.target >= context->end - stream) {
-                complete(index, context, AFX_ERROR, AFX_BAD_COMMAND, now - context->deadline);
-                return;
+        case AFX_OP_NEXT:
+            /* A continue join moves the cursor in this same tick, as LOOP did;
+             * a second one before a WAIT (which validation refuses) would spin. */
+            result = looped ? AFX_BAD_COMMAND : song_next(index, context, x, e, event.join);
+            looped = event.join == AFX_JOIN_CONTINUE;
+            break;
+        case AFX_OP_FREE: {
+            if (!(context->flags & AFX_FLAG_SONG) || event.channel >= x->channels) result = AFX_BAD_COMMAND;
+            else if (pool) {
+                volatile uint8_t *map = (volatile uint8_t *)AICA_RAM(x->channel_map);
+                uint32_t physical = map[event.channel];
+                if (physical != AFX_SONG_UNMAPPED) {
+                    release_voice(physical);
+                    voice_flags[physical] &= VOICE_MUTED;
+                    pool_give(context, physical);
+                    map[event.channel] = AFX_SONG_UNMAPPED;
+                }
             }
-            context->pc = stream + event.target;
-            context->loops++;
-            looped = 1;
-            publish(index, context->reference, state_word(context), context->sequence, AFX_OK,
-                    stream_position(context), context->deadline, context->max_lateness);
             break;
         }
         case AFX_OP_NOTE:
-            result = write_note(context, &event);
+            result = write_note(x, &event);
             break;
         case AFX_OP_PATCH:
-            result = write_patch(context, &event);
+            result = write_patch(x, &event);
             break;
         case AFX_OP_KEYOFF: {
             uint32_t physical;
-            if (!physical_channel(context, event.channel, &physical)) result = AFX_BAD_COMMAND;
+            if (!physical_channel(x, event.channel, &physical)) result = AFX_BAD_COMMAND;
             else {
                 release_voice(physical);
                 /* KEYOFF may begin an audible release; later authored TOTAL_LEVEL
@@ -449,28 +606,47 @@ static void service(uint32_t index) {
             break;
         }
         case AFX_OP_END:
-            complete(index, context, AFX_DONE, AFX_OK, now - context->deadline);
+            if (x == context) complete(index, context, AFX_DONE, AFX_OK, now - x->deadline);
+            else {
+                /* This play is over; the song ends with its last one. */
+                song_unmap(context, x, 1);
+                x->state = 0;
+                if (song_executor(context, e ^ 1u)->state != AFX_RUNNING)
+                    complete(index, context, AFX_DONE, AFX_OK, now - x->deadline);
+            }
             return;
         case AFX_OP_PARK:
-            if (!(context->flags & AFX_FLAG_CONTROLLED)) {
-                complete(index, context, AFX_ERROR, AFX_BAD_COMMAND, now - context->deadline);
+            if (x != context || !(context->flags & AFX_FLAG_CONTROLLED)) {
+                complete(index, context, AFX_ERROR, AFX_BAD_COMMAND, now - x->deadline);
                 return;
             }
             context->state = AFX_PARKED;
             publish(index, context->reference, state_word(context), context->sequence, AFX_OK,
-                    stream_position(context), context->deadline, now - context->deadline);
+                    stream_position(index, context), context->deadline, now - context->deadline);
             return;
         default:
             result = AFX_BAD_COMMAND;
             break;
         }
         if (result) {
-            complete(index, context, AFX_ERROR, result, now - context->deadline);
+            complete(index, context, AFX_ERROR, result, now - x->deadline);
             return;
         }
     }
     publish(index, context->reference, state_word(context), context->sequence, AFX_OK,
-            stream_position(context), context->deadline, context->max_lateness);
+            stream_position(index, context), x->deadline, context->max_lateness);
+}
+static void service(uint32_t index) {
+    volatile afx_runtime_slot_t *context = &contexts[index];
+    if (context->state != AFX_RUNNING) return;
+    if (!(context->flags & AFX_FLAG_POOL)) {
+        execute(index, context, context, 0);
+        return;
+    }
+    for (uint32_t e = 0; e < 2u && context->state == AFX_RUNNING; ++e) {
+        volatile afx_runtime_slot_t *x = song_executor(context, e);
+        if (x->state == AFX_RUNNING) execute(index, context, x, e);
+    }
 }
 /* An AFX_FLAG_BANKS flow's bank table: inside the image, and every slot it
  * fills a bank in the asset arena. Slot 0 comes from the activation. */
@@ -487,6 +663,41 @@ static int bank_table_valid(const afx_activation_t *activate) {
     }
     return 1;
 }
+/* A song's image header and tables, read from AICA RAM: every table inside
+ * the image, every section inside the streams the activation names, every
+ * order entry a section, and the map one entry per local channel (a pool
+ * song's lists its pool instead). */
+static int song_valid(const afx_activation_t *activate) {
+    uint32_t image = activate->image_base, size = activate->image_size;
+    if ((image & 3u) || size < AFX_SONG_IMAGE_HEADER_BYTES ||
+        activate->setups_offset != AFX_SONG_IMAGE_HEADER_BYTES) return 0;
+    uint32_t sections = SONG_FIELD(image, section_count), order = SONG_FIELD(image, order_count);
+    uint32_t loop = SONG_FIELD(image, loop_index), channels = SONG_FIELD(image, channels);
+    uint32_t table = SONG_FIELD(image, sections_offset), order_at = SONG_FIELD(image, order_offset);
+    uint32_t lanes_end = activate->setups_offset + activate->setup_count * AFX_SETUP_BYTES +
+                         ((activate->flags & AFX_FLAG_LANES) ? channels : 0);
+    if (!sections || !order || order > AFX_SONG_MAX_ORDER || (loop != AFX_SONG_NO_LOOP && loop >= order) ||
+        !channels || channels > AFX_MAX_FLOW_CHANNELS || (table & 3u) || (order_at & 1u) ||
+        table < lanes_end || !range(table, sections * AFX_SONG_SECTION_BYTES, size) ||
+        !range(order_at, order * 2u, size) ||
+        SONG_FIELD(image, streams_offset) != activate->stream_offset ||
+        SONG_FIELD(image, streams_size) != activate->stream_size ||
+        (!(activate->flags & AFX_FLAG_POOL) && activate->required_channels != channels)) return 0;
+    if (activate->flags & AFX_FLAG_LANES)
+        for (uint32_t local = 0; local < channels; ++local)
+            if (*(volatile uint8_t *)AICA_RAM(image + activate->setups_offset +
+                                      activate->setup_count * AFX_SETUP_BYTES + local) >= AFX_MAX_FLOW_CHANNELS)
+                return 0;
+    for (uint32_t i = 0; i < sections; ++i) {
+        uint32_t entry = image + table + i * AFX_SONG_SECTION_BYTES;
+        uint32_t offset = *(volatile uint32_t *)AICA_RAM(entry), bytes = *(volatile uint32_t *)AICA_RAM(entry + 4u);
+        if (!bytes || offset < activate->stream_offset ||
+            !range(offset - activate->stream_offset, bytes, activate->stream_size)) return 0;
+    }
+    for (uint32_t i = 0; i < order; ++i)
+        if (*(volatile uint16_t *)AICA_RAM(image + order_at + i * 2u) >= sections) return 0;
+    return 1;
+}
 static void activation(uint32_t reference, uint32_t sequence, const uint8_t payload[48]) {
     STATUS->reserved = 0xa1010000u;
     afx_activation_t activate;
@@ -499,7 +710,11 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
 
     STATUS->reserved = 0xa1030000u;
     uint32_t bank_base = (uint32_t)activate.bank_base_units << AFX_BANK_ADDRESS_UNIT_SHIFT;
-    if (contexts[index].reference || activate.reserved ||
+    int song = (activate.flags & AFX_FLAG_SONG) != 0, pool = (activate.flags & AFX_FLAG_POOL) != 0;
+    uint32_t runtime = (uint32_t)activate.runtime_units << 5;
+    if (contexts[index].reference || (pool && !song) || !pool != !activate.runtime_units ||
+        (pool && (runtime < AICA_ASSET_BASE ||
+                  !asset_range(runtime, AFX_SONG_RUNTIME_BYTES(activate.flags & AFX_FLAG_LANES)))) ||
         (!activate.bank_bytes && bank_base) ||
         (activate.bank_bytes && (bank_base < AICA_ASSET_BASE ||
          !asset_range(bank_base, activate.bank_bytes))) ||
@@ -509,14 +724,15 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
         !activate.stream_size || (activate.setups_offset & 1u) ||
         activate.setup_count > 65536u ||
         !range(activate.setups_offset, activate.setup_count * AFX_SETUP_BYTES, activate.image_size) ||
-        ((activate.flags & AFX_FLAG_LANES) &&
+        (!song && (activate.flags & AFX_FLAG_LANES) &&
          (activate.setups_offset + activate.setup_count * AFX_SETUP_BYTES > activate.stream_offset ||
           activate.required_channels > activate.stream_offset -
               (activate.setups_offset + activate.setup_count * AFX_SETUP_BYTES))) ||
         !map_valid(activate.channel_map, activate.required_channels) ||
         (activate.flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
-                            AFX_FLAG_LANES | AFX_FLAG_LOOP | AFX_FLAG_BANKS)) ||
-        ((activate.flags & AFX_FLAG_BANKS) && !bank_table_valid(&activate))) {
+                            AFX_FLAG_LANES | AFX_FLAG_BANKS | AFX_FLAG_SONG | AFX_FLAG_POOL)) ||
+        ((activate.flags & AFX_FLAG_BANKS) && !bank_table_valid(&activate)) ||
+        (song && !song_valid(&activate))) {
         publish(index, reference, AFX_ERROR, sequence, AFX_BAD_COMMAND, 0, 0, 0);
         return;
     }
@@ -535,10 +751,16 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
     uint32_t lane_count = 0;
     uint32_t lane_map = activate.image_base + activate.setups_offset +
                         activate.setup_count * AFX_SETUP_BYTES;
+    /* A pool song's lanes follow its local channels, which take voices later. */
+    if (pool && (activate.flags & AFX_FLAG_LANES))
+        for (uint32_t local = 0; local < SONG_FIELD(activate.image_base, channels); ++local)
+            if (*(volatile uint8_t *)AICA_RAM(lane_map + local) + 1u > lane_count)
+                lane_count = *(volatile uint8_t *)AICA_RAM(lane_map + local) + 1u;
     for (uint32_t local = 0; local < activate.required_channels; ++local) {
         uint32_t physical = *(volatile uint8_t *)AICA_RAM(activate.channel_map +
             local * AFX_CHANNEL_MAP_ENTRY_BYTES);
-        uint32_t lane = (activate.flags & AFX_FLAG_LANES) ? *(volatile uint8_t *)AICA_RAM(lane_map + local) : 0;
+        uint32_t lane = (!pool && (activate.flags & AFX_FLAG_LANES)) ?
+            *(volatile uint8_t *)AICA_RAM(lane_map + local) : 0;
         if (lane >= AFX_MAX_FLOW_CHANNELS) {
             clear_words((volatile uint32_t *)context, sizeof(*context) / 4);
             publish(index, reference, AFX_ERROR, sequence, AFX_BAD_COMMAND, 0, 0, local);
@@ -563,7 +785,28 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
     context->max_lateness = 0;
     context->tempo_period_q8_8 = AFX_TEMPO_NORMAL;
     context->tempo_fraction = 0;
-    publish(index, reference, AFX_RUNNING, sequence, AFX_OK, activate.stream_offset,
+    context->loops = 0;
+    song_position[index] = 0;
+    if (pool) {
+        /* The block: every pool voice free, executor 0 on the first section. */
+        context->pc = runtime;
+        clear_words((volatile uint32_t *)AICA_RAM(runtime), AFX_SONG_RUNTIME_BYTES(activate.flags & AFX_FLAG_LANES) / 4u);
+        volatile afx_song_control_t *control = song_control(context);
+        uint32_t voices = activate.required_channels;
+        control->free_low = voices >= 32 ? 0xffffffffu : (1u << voices) - 1u;
+        control->free_high = voices <= 32 ? 0 : voices == 64 ? 0xffffffffu : (1u << (voices - 32u)) - 1u;
+        if (activate.flags & AFX_FLAG_LANES) {
+            volatile uint8_t *values = (volatile uint8_t *)AICA_RAM(runtime + AFX_SONG_LANES_OFFSET);
+            for (uint32_t lane = 0; lane < 64u; ++lane)
+                values[AFX_LANE_GAIN * 64u + lane] = values[AFX_LANE_DSP_SEND * 64u + lane] = 255;
+        }
+        /* Executor 1 waits with its map empty until the first new-play join. */
+        volatile uint32_t *map1 = (volatile uint32_t *)AICA_RAM(runtime + AFX_SONG_MAP_OFFSET(1));
+        for (uint32_t word = 0; word < 16u; ++word) map1[word] = 0xffffffffu;
+        song_executor(context, 1)->channel_map = runtime + AFX_SONG_MAP_OFFSET(1);
+        song_start(context, 0, 0, activate.start_tick, 0);
+    } else if (song) song_enter(context, activate.image_base, 0);
+    publish(index, reference, AFX_RUNNING, sequence, AFX_OK, stream_position(index, context),
             activate.start_tick, 0);
     STATUS->reserved = 0xa1070000u;
 }
@@ -598,14 +841,21 @@ static void lifecycle(uint32_t opcode, uint32_t reference, uint32_t sequence) {
     if (opcode == AFX_CMD_PAUSE) {
         if (context->state != AFX_RUNNING) {
             publish(index, reference, state_word(context), sequence, AFX_BUSY,
-                    stream_position(context), context->deadline, 0);
+                    stream_position(index, context), context->deadline, 0);
             return;
         }
         context->state = AFX_PAUSED;
         context->sequence = sequence;
         keyoff(context);
+        if (context->flags & AFX_FLAG_POOL) {
+            /* The newest play waits to be resumed; a ringing tail is over. */
+            uint32_t newest = song_control(context)->newest;
+            song_unmap(context, song_executor(context, 0), 0);
+            song_unmap(context, song_executor(context, 1), 0);
+            song_executor(context, newest ^ 1u)->state = 0;
+        }
         publish(index, reference, state_word(context), sequence, AFX_OK,
-                stream_position(context), context->deadline, 0);
+                stream_position(index, context), context->deadline, 0);
         return;
     }
     if (opcode == AFX_CMD_STOP) {
@@ -615,7 +865,7 @@ static void lifecycle(uint32_t opcode, uint32_t reference, uint32_t sequence) {
         return;
     }
     publish(index, reference, state_word(context), sequence, AFX_UNSUPPORTED,
-            stream_position(context), context->deadline, 0);
+            stream_position(index, context), context->deadline, 0);
 }
 static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
                     const uint8_t payload[48]) {
@@ -627,16 +877,26 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
     volatile afx_runtime_slot_t *context = &contexts[index];
     uint32_t stream_end = context->end - context->image_base;
     uint32_t seen_low = 0, seen_high = 0;
+    /* A song's position names an order position and an offset in its section. */
+    int song = (context->flags & AFX_FLAG_SONG) != 0, pool = (context->flags & AFX_FLAG_POOL) != 0;
+    uint32_t order = request.stream_position >> AFX_SONG_POSITION_SHIFT;
+    uint32_t offset = request.stream_position & (AFX_SONG_MAX_STREAM - 1u), section_bytes = 0;
+    if (song && context->reference == reference && order < SONG_FIELD(context->image_base, order_count)) {
+        uint32_t image = context->image_base;
+        uint32_t section = *(volatile uint16_t *)AICA_RAM(image + SONG_FIELD(image, order_offset) + order * 2u);
+        section_bytes = *(volatile uint32_t *)AICA_RAM(image + SONG_FIELD(image, sections_offset) +
+                                               section * AFX_SONG_SECTION_BYTES + 4u);
+    }
     if (context->reference != reference || context->state != AFX_PAUSED ||
         (flags & ~AFX_REBUILD_RUN) || request.reserved[0] || request.reserved[1] ||
         request.reserved[2] || request.reserved[3] || request.reserved[4] ||
         request.reserved[5] || request.reserved[6] ||
-        request.state_count > context->channels ||
+        request.state_count > (pool ? 0u : context->channels) ||
         !asset_range(request.states_address, request.state_count * sizeof(afx_restore_channel_t)) ||
-        request.stream_position < context->stream_start ||
-        request.stream_position >= stream_end) {
+        (song ? offset >= section_bytes :
+                request.stream_position < context->stream_start || request.stream_position >= stream_end)) {
         publish(index, reference, state_word(context), sequence, AFX_BAD_COMMAND,
-                stream_position(context), context->deadline, 0);
+                stream_position(index, context), context->deadline, 0);
         return;
     }
     for (uint32_t i = 0; i < request.state_count; ++i) {
@@ -647,7 +907,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
         uint32_t *seen = local < 32 ? &seen_low : &seen_high;
         if (local >= context->channels || (*seen & bit)) {
             publish(index, reference, state_word(context), sequence, AFX_BAD_COMMAND,
-                    stream_position(context), context->deadline, local);
+                    stream_position(index, context), context->deadline, local);
             return;
         }
         *seen |= bit;
@@ -657,7 +917,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
         afx_result_t result = resolve_sample_address(context, &control, &low);
         if (result) {
             publish(index, reference, state_word(context), sequence, result,
-                    stream_position(context), context->deadline, local);
+                    stream_position(index, context), context->deadline, local);
             return;
         }
     }
@@ -672,12 +932,27 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
         if (result) {
             keyoff(context);
             publish(index, reference, state_word(context), sequence, result,
-                    stream_position(context), context->deadline, state.local_channel);
+                    stream_position(index, context), context->deadline, state.local_channel);
             return;
         }
     }
-    context->pc = context->image_base + request.stream_position;
-    context->remaining_wait = request.remaining_wait;
+    volatile afx_runtime_slot_t *x = context;
+    if (pool) {
+        /* The newest play resumes on executor 0, with fresh voices. */
+        song_unmap(context, song_executor(context, 0), 0);
+        song_unmap(context, song_executor(context, 1), 0);
+        song_executor(context, 1)->state = 0;
+        song_start(context, 0, order, request.next_deadline, 0);
+        song_control(context)->newest = 0;
+        x = song_executor(context, 0);
+    }
+    if (song) {
+        song_enter(x, context->image_base, order);
+        song_position[index] = (uint16_t)order;
+        x->pc += offset;
+    } else x->pc = context->image_base + request.stream_position;
+    x->remaining_wait = request.remaining_wait;
+    x->deadline = request.next_deadline;
     context->deadline = request.next_deadline;
     context->state = (flags & AFX_REBUILD_RUN) ? AFX_RUNNING : AFX_PAUSED;
     context->sequence = sequence;
@@ -695,11 +970,12 @@ static void patch(uint32_t reference, uint32_t sequence, const uint8_t payload[4
      * (or a newer generation), as gain and tempo updates already do. */
     if (context->reference != reference) return;
     if ((context->state != AFX_RUNNING && context->state != AFX_PARKED) ||
+        (context->flags & AFX_FLAG_POOL) ||
         request.reserved[0] || request.reserved[1] || request.reserved[2] ||
         request.reserved_tail || request.local_channel >= context->channels ||
         (request.mask & ~AFX_PATCH_FIELD_MASK)) {
         publish(index, reference, state_word(context), sequence, AFX_BAD_COMMAND,
-                stream_position(context), context->deadline, request.local_channel);
+                stream_position(index, context), context->deadline, request.local_channel);
         return;
     }
     /* Member by member: a brace initializer of the whole event makes GCC zero
@@ -708,7 +984,7 @@ static void patch(uint32_t reference, uint32_t sequence, const uint8_t payload[4
     event.opcode = AFX_OP_PATCH;
     event.channel = request.local_channel;
     event.setup = 0;
-    event.wait = event.target = event.bytes = 0;
+    event.wait = event.join = event.bytes = 0;
     event.mask = request.mask;
     event.values = (const uint8_t *)request.values;
     /* A program may patch a channel right after activating its flow, before
@@ -719,7 +995,7 @@ static void patch(uint32_t reference, uint32_t sequence, const uint8_t payload[4
     afx_result_t result = write_patch(context, &event);
     if (result)
         publish(index, reference, state_word(context), sequence, result,
-                stream_position(context), context->deadline, request.local_channel);
+                stream_position(index, context), context->deadline, request.local_channel);
     else if (unsounded) voice_held[physical] |= request.mask;
 }
 static void set_instance_gain(uint32_t reference, const uint8_t payload[48]) {
@@ -734,6 +1010,8 @@ static void set_instance_gain(uint32_t reference, const uint8_t payload[48]) {
     volatile afx_runtime_slot_t *context = &contexts[index];
     if (context->reference != reference) return;
     context->gain = (uint8_t)request.gain;
+    if (context->flags & AFX_FLAG_POOL)
+        song_executor(context, 0)->gain = song_executor(context, 1)->gain = (uint8_t)request.gain;
     for (uint32_t local = 0; local < context->channels; ++local) {
         uint32_t physical;
         if (physical_channel(context, local, &physical) && (voice_flags[physical] & VOICE_LATCHED)) {
@@ -750,7 +1028,11 @@ static void set_instance_tempo(uint32_t reference, const uint8_t payload[48]) {
         request.period_q8_8 > AFX_TEMPO_MAX) return;
     for (uint32_t i = 0; i < 11u; ++i) if (request.reserved[i]) return;
     volatile afx_runtime_slot_t *context = &contexts[index];
-    if (context->reference == reference) context->tempo_period_q8_8 = request.period_q8_8;
+    if (context->reference != reference) return;
+    context->tempo_period_q8_8 = request.period_q8_8;
+    if (context->flags & AFX_FLAG_POOL)
+        song_executor(context, 0)->tempo_period_q8_8 =
+            song_executor(context, 1)->tempo_period_q8_8 = request.period_q8_8;
 }
 static void set_lanes(uint32_t reference, uint32_t modifier, const uint8_t payload[48]) {
     afx_lane_payload_t request;
@@ -764,6 +1046,12 @@ static void set_lanes(uint32_t reference, uint32_t modifier, const uint8_t paylo
     if (context->reference != reference || !(context->flags & AFX_FLAG_LANES) ||
         request.first_lane >= lanes ||
         (lanes - request.first_lane < 32u && request.mask >> (lanes - request.first_lane))) return;
+    if (context->flags & AFX_FLAG_POOL) {
+        /* Voices that take a lane later start from the song's values. */
+        volatile uint8_t *values = (volatile uint8_t *)AICA_RAM(context->pc + AFX_SONG_LANES_OFFSET + modifier * 64u);
+        for (uint32_t i = 0; i < 32u && request.first_lane + i < lanes; ++i)
+            if (request.mask & (1u << i)) values[request.first_lane + i] = request.values[i];
+    }
     for (uint32_t local = 0; local < context->channels; ++local) {
         uint32_t physical;
         if (!physical_channel(context, local, &physical)) continue;

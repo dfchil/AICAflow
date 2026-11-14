@@ -66,7 +66,7 @@ $(WEB_BUILD)/%.o: %.c $(LIB_HEADERS)
 TEST_BUILD := build/test
 TEST_CFLAGS := -std=gnu2x -O2 -g $(WARNINGS) $(SANITIZE) $(DEFS) -pthread
 EXPAND := python3 tests/expand_embed.py
-CHECKS := check_loop check_commands check_banks check_scenes check_timer
+CHECKS := check_song check_commands check_banks check_scenes check_timer
 
 $(TEST_BUILD)/libaicaflow_test.a: $(LIB_SRCS) $(LIB_HEADERS)
 	@mkdir -p $(TEST_BUILD)/lib
@@ -76,18 +76,19 @@ $(TEST_BUILD)/libaicaflow_test.a: $(LIB_SRCS) $(LIB_HEADERS)
 			-c $(CURDIR)/$$src -o $$(echo $$src | tr '/.' '__').o || exit 1; done
 	ar rcs $@ $(TEST_BUILD)/lib/*.o
 
-../build/loop.afx ../build/loop.afb: ../tests/make_loop_fixture.py ../tests/fixtures/quickstart.afx.hex ../tests/fixtures/quickstart.afb.hex
+FIXTURES := ../build/long.afx ../build/long.afb ../build/song.afm ../build/song_new.afm
+$(FIXTURES): ../tests/make_fixtures.py ../tests/fixtures/quickstart.afx.hex ../tests/fixtures/quickstart.afb.hex
 	mkdir -p ../build
-	python3 ../tests/make_loop_fixture.py ../build
+	python3 ../tests/make_fixtures.py ../build
 
 $(TEST_BUILD)/test_aica: tests/test_aica.c $(TEST_BUILD)/libaicaflow_test.a
 	$(CC) $(TEST_CFLAGS) -Iemu -I../sh4/include -I../include -I../format/include \
 		tests/test_aica.c $(TEST_BUILD)/libaicaflow_test.a -lm -o $@
 
 # Sources with #embed are expanded first; see tests/expand_embed.py.
-$(TEST_BUILD)/src/%.c: tests/%.c tests/expand_embed.py ../build/loop.afx ../build/loop.afb ../../firmware/aicaflow.drv
+$(TEST_BUILD)/src/%.c: tests/%.c tests/expand_embed.py $(FIXTURES) ../../firmware/aicaflow.drv
 	$(EXPAND) $< $@
-$(TEST_BUILD)/src/check_%.c: ../tests/check_%.c tests/expand_embed.py ../build/loop.afx ../build/loop.afb ../../firmware/aicaflow.drv
+$(TEST_BUILD)/src/check_%.c: ../tests/check_%.c tests/expand_embed.py $(FIXTURES) ../../firmware/aicaflow.drv
 	$(EXPAND) $< $@
 
 $(TEST_BUILD)/test_host: $(TEST_BUILD)/src/test_host.c tests/host_clock.c tests/kos.h $(TEST_BUILD)/libaicaflow_test.a

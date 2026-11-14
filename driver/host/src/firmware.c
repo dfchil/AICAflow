@@ -33,6 +33,7 @@ void afx_host_firmware_boot(aica_t *chip) {
     g_chip = chip;
     /* What crt0.s clears and copies before arm_main. */
     memset((void *)contexts, 0, sizeof(contexts));
+    memset(song_position, 0, sizeof(song_position));
     initialized_data_probe = 0x41584632;
     memset(voice_lane_gain, 0, sizeof(voice_lane_gain));
     memset(voice_lane_dsp_send, 0, sizeof(voice_lane_dsp_send));

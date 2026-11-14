@@ -9,9 +9,11 @@
 uint32_t afx_host_g2_read_32(uintptr_t address);
 #define g2_read_32(address) afx_host_g2_read_32(address)
 uint64_t afx_test_ms(void);
+uint64_t afx_test_us(void);
 void afx_test_sleep(uint32_t milliseconds);
 void afx_test_pass(void);
 #define timer_ms_gettime64() afx_test_ms()
+#define timer_us_gettime64() afx_test_us()
 #define thd_sleep(milliseconds) afx_test_sleep(milliseconds)
 #define thd_pass() afx_test_pass()
 #endif

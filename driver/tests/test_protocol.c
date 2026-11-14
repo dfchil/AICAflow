@@ -112,58 +112,154 @@ static void test_banks(void) {
     assert(afx_file_bank_count(plain, &header) == 1);
 }
 
-/* A looping stream: NOTE_PL, WAIT8 1, then LOOP back to the NOTE_PL. */
-static void looping(uint8_t file[160], uint32_t target, uint32_t loop_tick, uint32_t flags) {
-    candidate(file);
-    afx_write32(file + 12, flags);
-    afx_write32(file + 28, 15);
-    afx_write32(file + 56, loop_tick);
-    file[140] = AFX_OP_WAIT8; file[141] = 1;
-    file[142] = AFX_OP_LOOP; afx_write32(file + 143, target);
+/* An AFM of one setup (bank-relative address 0, 64 bytes) and the given
+ * sections, order and loop index. Returns its size. */
+typedef struct { const uint8_t *stream; uint32_t bytes, body; } test_section_t;
+static uint32_t song_file(uint8_t *out, uint32_t capacity, const test_section_t *sections,
+                          uint32_t section_count, const uint16_t *order, uint32_t order_count,
+                          uint32_t loop, uint32_t channels, uint32_t voices, const uint8_t *lanes) {
+    memset(out, 0, capacity);
+    uint32_t image_at = 128, setups_end = 32 + AFX_SETUP_BYTES;
+    uint32_t table = setups_end + (lanes ? (channels + 3u) & ~3u : 0);
+    uint32_t order_at = table + section_count * AFX_SONG_SECTION_BYTES;
+    uint32_t streams = (order_at + order_count * 2u + 3u) & ~3u, at = streams;
+    uint8_t *image = out + image_at;
+    for (uint32_t i = 0; i < section_count; ++i) {
+        memcpy(image + at, sections[i].stream, sections[i].bytes);
+        afx_write32(image + table + i * 12u, at);
+        afx_write32(image + table + i * 12u + 4u, sections[i].bytes);
+        afx_write32(image + table + i * 12u + 8u, sections[i].body);
+        at += sections[i].bytes;
+    }
+    for (uint32_t i = 0; i < order_count; ++i) afx_write16(image + order_at + i * 2u, order[i]);
+    if (lanes) memcpy(image + setups_end, lanes, channels);
+    uint32_t image_size = at;
+    assert(image_at + image_size <= capacity);
+    afx_write32(image, section_count); afx_write32(image + 4, order_count);
+    afx_write32(image + 8, loop); afx_write32(image + 12, table); afx_write32(image + 16, order_at);
+    afx_write32(image + 20, streams); afx_write32(image + 24, at - streams);
+    afx_write32(image + 28, channels);
+    afx_write16(image + 32 + 2 * AFX_FIELD_ENV_DR, 31);
+    afx_write32(out, AFX_SONG_MAGIC); afx_write32(out + 4, AFX_SONG_VERSION);
+    afx_write32(out + 8, image_at + image_size); afx_write32(out + 12, AFX_FLAG_MUSIC | (lanes ? AFX_FLAG_LANES : 0));
+    afx_write32(out + 16, image_at); afx_write32(out + 20, image_size);
+    afx_write32(out + 24, 1); afx_write32(out + 28, 96);
+    afx_write32(out + 36, 0x5096); afx_write32(out + 40, 1);
+    afx_write32(out + 44, channels); afx_write32(out + 48, voices);
+    afx_write32(out + 52, 1000); afx_write32(out + 56, 1);
+    afx_write32(out + 64, afx_control_id(image, image_size));
+    afx_write32(out + 96, 32); afx_write32(out + 100, 0); afx_write32(out + 104, 64);
+    return image_at + image_size;
 }
+#define NOTE(ch) AFX_OP_NOTE_PL, ch, 0, 0, 0, 8, 0x24, 0x30
+#define WAIT(t) AFX_OP_WAIT8, t
 
-static void test_loop(void) {
-    uint8_t file[160];
-    afx_file_header_t header;
-    afx_validation_profile_t profile;
-    uint64_t ticks;
-    uint32_t num, den;
-    looping(file, 0, 0, AFX_FLAG_LOOP);
-    assert(afx_file_validate_profile(file, sizeof(file), &header, &profile) == AFX_OK);
-    assert((header.flags & AFX_FLAG_LOOP) && header.loop_tick == 0);
-    /* The LOOP joins the burst before it (nothing) to the burst at its target (the NOTE). */
-    assert(profile.peak_commands == 1 && profile.peak_register_writes == 19);
-    assert(afx_flow_duration(file, sizeof(file), &ticks, &num, &den) == AFX_OK && ticks == 1);
-    /* Looping to the WAIT itself: an instruction boundary one tick in. */
-    looping(file, 8, 0, AFX_FLAG_LOOP);
-    assert(afx_file_validate_profile(file, sizeof(file), &header, &profile) == AFX_OK);
-    assert(profile.peak_commands == 1);
-    /* Into the middle of an instruction, at the LOOP itself, or past it. */
-    looping(file, 3, 0, AFX_FLAG_LOOP);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
-    looping(file, 10, 0, AFX_FLAG_LOOP);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
-    looping(file, 15, 0, AFX_FLAG_LOOP);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
-    /* The header's loop tick must be the target's authored tick. */
-    looping(file, 0, 1, AFX_FLAG_LOOP);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
-    looping(file, 8, 1, AFX_FLAG_LOOP);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
-    /* The flag and the terminal instruction must agree; loop_tick needs the flag. */
-    looping(file, 0, 0, 0);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
-    looping(file, 0, 0, AFX_FLAG_LOOP); file[142] = AFX_OP_END; afx_write32(file + 28, 11);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
-    candidate(file); afx_write32(file + 56, 1);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_BOUNDS);
-    /* A loop body that never waits would spin. */
-    looping(file, 0, 0, AFX_FLAG_LOOP);
-    file[140] = AFX_OP_LOOP; afx_write32(file + 141, 0); afx_write32(file + 28, 13);
-    assert(afx_file_validate(file, sizeof(file), NULL) == AFX_BAD_COMMAND);
-    /* The old layout check reads the flag and tick without decoding the stream. */
-    looping(file, 3, 7, AFX_FLAG_LOOP);
-    assert(afx_file_validate_layout(file, sizeof(file), &header) == AFX_OK && header.loop_tick == 7);
+static void test_song(void) {
+    static uint8_t file[1024];
+    afx_song_header_t header;
+    afx_validation_profile_t work;
+    /* A: a note, its body ten ticks, then a tail of two that keys it off. */
+    const uint8_t a[] = {NOTE(0), WAIT(10), AFX_OP_NEXT, AFX_JOIN_NEW, AFX_OP_KEYOFF, 0, WAIT(2), AFX_OP_END};
+    const test_section_t one[] = {{a, sizeof(a), 10}};
+    const uint16_t twice[] = {0, 0};
+    /* A, A, looping to the first: two voices at each join, the tail's and the new play's. */
+    uint32_t size = song_file(file, sizeof(file), one, 1, twice, 2, 0, 1, 2, NULL);
+    assert(afx_song_validate_profile(file, size, &header, &work) == AFX_OK);
+    assert(header.voices == 2 && header.channels == 1);
+    uint32_t measured_channels = 0, measured_voices = 0;
+    afx_write32(file + 48, 7); /* A wrong pool: measured, not compared. */
+    assert(afx_song_measure(file, size, NULL, &measured_channels, &measured_voices) == AFX_OK);
+    assert(measured_channels == 1 && measured_voices == 2);
+    afx_write32(file + 48, 2);
+    /* At a join the tail's KEYOFF and the new play's NOTE share a tick. */
+    assert(work.peak_commands == 2 && work.peak_register_writes == 20);
+    afx_write32(file + 48, 1);
+    assert(afx_song_validate(file, size, NULL) == AFX_BAD_COMMAND); /* Not the pool it needs. */
+    afx_write32(file + 48, 2);
+    afx_write32(file + 44, 2);
+    assert(afx_song_validate(file, size, NULL) == AFX_BAD_BOUNDS); /* Image header disagrees. */
+    afx_write32(file + 128 + 28, 2);
+    assert(afx_song_validate(file, size, NULL) == AFX_BAD_COMMAND); /* Channels not those used. */
+    /* FREE gives the tail's voice back before the new play takes one. */
+    const uint8_t freed[] = {NOTE(0), NOTE(1), WAIT(10), AFX_OP_NEXT, AFX_JOIN_NEW, AFX_OP_KEYOFF, 0,
+                             AFX_OP_KEYOFF, 1, AFX_OP_FREE, 0, AFX_OP_FREE, 1, WAIT(2), AFX_OP_END};
+    const test_section_t free_one[] = {{freed, sizeof(freed), 10}};
+    size = song_file(file, sizeof(file), free_one, 1, twice, 2, 0, 2, 2, NULL);
+    assert(afx_song_validate(file, size, NULL) == AFX_OK);
+    const uint8_t kept[] = {NOTE(0), NOTE(1), WAIT(10), AFX_OP_NEXT, AFX_JOIN_NEW, AFX_OP_KEYOFF, 0,
+                            AFX_OP_KEYOFF, 1, WAIT(2), AFX_OP_END};
+    const test_section_t kept_one[] = {{kept, sizeof(kept), 10}};
+    size = song_file(file, sizeof(file), kept_one, 1, twice, 2, 0, 2, 4, NULL);
+    assert(afx_song_validate(file, size, NULL) == AFX_OK);
+    /* Two executors: a tail must be over before the next join, not in its tick. */
+    const uint8_t long_tail[] = {NOTE(0), WAIT(10), AFX_OP_NEXT, AFX_JOIN_NEW, WAIT(10), AFX_OP_END};
+    const test_section_t long_one[] = {{long_tail, sizeof(long_tail), 10}};
+    size = song_file(file, sizeof(file), long_one, 1, twice, 2, 0, 1, 2, NULL);
+    assert(afx_song_validate(file, size, NULL) == AFX_BAD_COMMAND);
+    const uint8_t short_tail[] = {NOTE(0), WAIT(10), AFX_OP_NEXT, AFX_JOIN_NEW, WAIT(9), AFX_OP_END};
+    const test_section_t short_one[] = {{short_tail, sizeof(short_tail), 10}};
+    size = song_file(file, sizeof(file), short_one, 1, twice, 2, 0, 1, 2, NULL);
+    assert(afx_song_validate(file, size, NULL) == AFX_OK);
+    /* A song that ends: the last NEXT starts nothing, and the tail plays out. */
+    size = song_file(file, sizeof(file), long_one, 1, twice, 1, AFX_SONG_NO_LOOP, 1, 1, NULL);
+    assert(afx_song_validate(file, size, NULL) == AFX_OK);
+    /* Continue-only: intro, then a body that goes on with its voices. No pool. */
+    const uint8_t intro[] = {NOTE(0), WAIT(4), AFX_OP_NEXT, AFX_JOIN_CONTINUE, AFX_OP_END};
+    const uint8_t body[] = {NOTE(1), WAIT(6), AFX_OP_KEYOFF, 1, WAIT(2), AFX_OP_NEXT, AFX_JOIN_CONTINUE,
+                            AFX_OP_END};
+    const test_section_t loop_song[] = {{intro, sizeof(intro), 4}, {body, sizeof(body), 8}};
+    const uint16_t intro_body[] = {0, 1};
+    size = song_file(file, sizeof(file), loop_song, 2, intro_body, 2, 1, 2, 0, NULL);
+    assert(afx_song_validate_profile(file, size, &header, &work) == AFX_OK);
+    assert(!header.voices && work.peak_commands == 1);
+    /* At the continue join the body's KEYOFF and its NOTE share a tick: no. The
+     * body keys off at 6 and joins at 8; its NOTE then runs at 8 with nothing else. */
+    /* With lanes. */
+    const uint8_t lanes[] = {3, 1};
+    size = song_file(file, sizeof(file), loop_song, 2, intro_body, 2, 1, 2, 0, lanes);
+    assert(afx_song_validate(file, size, NULL) == AFX_OK);
+    const uint8_t bad_lanes[] = {3, 64};
+    size = song_file(file, sizeof(file), loop_song, 2, intro_body, 2, 1, 2, 0, bad_lanes);
+    assert(afx_song_validate(file, size, NULL) == AFX_BAD_FORMAT);
+    /* Refused streams. */
+    const uint8_t late_next[] = {NOTE(0), WAIT(9), AFX_OP_NEXT, AFX_JOIN_NEW, AFX_OP_END};
+    const uint8_t two_nexts[] = {WAIT(10), AFX_OP_NEXT, 0, AFX_OP_NEXT, 0, AFX_OP_END};
+    const uint8_t tail_after_continue[] = {NOTE(0), WAIT(10), AFX_OP_NEXT, AFX_JOIN_CONTINUE,
+                                           AFX_OP_KEYOFF, 0, AFX_OP_END};
+    const uint8_t no_end[] = {NOTE(0), WAIT(10), AFX_OP_NEXT, AFX_JOIN_NEW, WAIT(1)};
+    const uint8_t parked[] = {NOTE(0), WAIT(10), AFX_OP_NEXT, AFX_JOIN_NEW, AFX_OP_PARK};
+    const uint8_t no_next[] = {NOTE(0), WAIT(10), AFX_OP_END};
+    const uint8_t bad_join[] = {NOTE(0), WAIT(10), AFX_OP_NEXT, 2, AFX_OP_END};
+    const uint8_t *const refused[] = {late_next, two_nexts, tail_after_continue, no_end, parked,
+                                      no_next, bad_join};
+    const uint32_t refused_bytes[] = {sizeof(late_next), sizeof(two_nexts), sizeof(tail_after_continue),
+                                      sizeof(no_end), sizeof(parked), sizeof(no_next), sizeof(bad_join)};
+    for (unsigned i = 0; i < sizeof(refused) / sizeof(*refused); ++i) {
+        const test_section_t bad[] = {{refused[i], refused_bytes[i], 10}};
+        size = song_file(file, sizeof(file), bad, 1, twice, 2, 0, 1, 1, NULL);
+        assert(afx_song_validate(file, size, NULL) != AFX_OK);
+    }
+    /* Layout: an order entry past the sections, a loop index past the order. */
+    const uint16_t past[] = {0, 1};
+    size = song_file(file, sizeof(file), one, 1, past, 2, 0, 1, 2, NULL);
+    assert(afx_song_validate_layout(file, size, NULL, NULL) == AFX_BAD_BOUNDS);
+    size = song_file(file, sizeof(file), one, 1, twice, 2, 2, 1, 2, NULL);
+    assert(afx_song_validate_layout(file, size, NULL, NULL) == AFX_BAD_BOUNDS);
+    size = song_file(file, sizeof(file), one, 1, twice, 2, 0, 1, 2, NULL);
+    afx_write32(file + 72, 1); /* A reserved word. */
+    assert(afx_song_validate_layout(file, size, NULL, NULL) == AFX_BAD_FORMAT);
+    /* A flow may not use NEXT or FREE, and LOOP (0x16) is gone. */
+    uint8_t flow[160];
+    candidate(flow);
+    flow[140] = AFX_OP_NEXT; flow[141] = 0; flow[142] = AFX_OP_END; afx_write32(flow + 28, 11);
+    assert(afx_file_validate(flow, sizeof(flow), NULL) == AFX_BAD_COMMAND);
+    candidate(flow);
+    flow[140] = 0x16; afx_write32(flow + 141, 0); afx_write32(flow + 28, 13);
+    assert(afx_file_validate(flow, sizeof(flow), NULL) == AFX_BAD_COMMAND);
+    candidate(flow); afx_write32(flow + 56, 1); /* The old loop_tick word. */
+    assert(afx_file_validate(flow, sizeof(flow), NULL) == AFX_BAD_BOUNDS);
+    candidate(flow); afx_write32(flow + 12, 32); /* The old LOOP flag. */
+    assert(afx_file_validate(flow, sizeof(flow), NULL) == AFX_BAD_BOUNDS);
 }
 
 static void test_bytecode(void) {
@@ -192,11 +288,20 @@ static void test_bytecode(void) {
     assert(afx_decode_event(bytes, written, &decoded) == AFX_OK);
     event = (afx_event_t){.opcode = AFX_OP_WAIT32, .wait = 0};
     assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_BAD_COMMAND);
-    event = (afx_event_t){.opcode = AFX_OP_LOOP, .target = 0x12345};
-    assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_OK && written == 5);
+    event = (afx_event_t){.opcode = AFX_OP_NEXT, .join = AFX_JOIN_CONTINUE};
+    assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_OK && written == 2);
     assert(afx_decode_event(bytes, written, &decoded) == AFX_OK);
-    assert(decoded.opcode == AFX_OP_LOOP && decoded.target == 0x12345 && decoded.bytes == 5);
-    assert(afx_decode_event(bytes, 4, &decoded) == AFX_BAD_BOUNDS);
+    assert(decoded.opcode == AFX_OP_NEXT && decoded.join == AFX_JOIN_CONTINUE && decoded.bytes == 2);
+    assert(afx_decode_event(bytes, 1, &decoded) == AFX_BAD_BOUNDS);
+    event.join = 2;
+    assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_BAD_COMMAND);
+    event = (afx_event_t){.opcode = AFX_OP_FREE, .channel = 63};
+    assert(afx_encode_event(bytes, sizeof(bytes), &event, NULL, &written) == AFX_OK && written == 2);
+    assert(afx_decode_event(bytes, written, &decoded) == AFX_OK && decoded.channel == 63);
+    bytes[1] = 64;
+    assert(afx_decode_event(bytes, 2, &decoded) == AFX_BAD_COMMAND);
+    bytes[0] = 0x16; /* LOOP is gone. */
+    assert(afx_decode_event(bytes, 5, &decoded) == AFX_BAD_COMMAND);
     /* The compact PATCH forms: 2 bytes plus their values, decoded as PATCH with the form's mask. */
     static const struct { uint8_t opcode; uint32_t mask, bytes; } compact[] = {
         {AFX_OP_PATCH_LEVEL, AFX_PATCH_LEVEL_MASK, 4},
@@ -302,7 +407,7 @@ int main(int argc, char **argv) {
     test_sample_addresses();
     test_bank_bound_container();
     test_banks();
-    test_loop();
+    test_song();
     test_bytecode();
     test_control_id();
     puts("bank-bound protocol checks passed");

@@ -46,14 +46,15 @@ timer-check:
 	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_timer.c sh4/libaicaflow_host.a -o build/check_timer.elf
 	mkdcdisc -e build/check_timer.elf -o build/check_timer.cdi -n afx_timer -N
 
-# A looping flow on the console: the loop callback's deadlines must advance by
-# the flow's authored length every loop (tests/check_loop.c).
-loop-check:
+# Songs on the console (tests/check_song.c): loops at the section's length
+# for a continue join and a new-play join, a restart while stopping, pause and
+# resume, and every runtime block given back.
+song-check:
 	$(MAKE) -C arm7
 	$(MAKE) -C sh4
 	mkdir -p build
-	python3 tests/make_loop_fixture.py build
-	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_loop.c sh4/libaicaflow_host.a -o build/check_loop.elf
+	python3 tests/make_fixtures.py build
+	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_song.c sh4/libaicaflow_host.a -o build/check_song.elf
 
 # Command semantics on the console (tests/check_commands.c): STOP behind
 # ACTIVATE, channels back at STOP, replace, release when idle, held PATCH.
@@ -61,7 +62,7 @@ commands-check:
 	$(MAKE) -C arm7
 	$(MAKE) -C sh4
 	mkdir -p build
-	python3 tests/make_loop_fixture.py build
+	python3 tests/make_fixtures.py build
 	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_commands.c sh4/libaicaflow_host.a -o build/check_commands.elf
 
 # Flows that play from several banks on the console (tests/check_banks.c):
@@ -70,7 +71,7 @@ banks-check:
 	$(MAKE) -C arm7
 	$(MAKE) -C sh4
 	mkdir -p build
-	python3 tests/make_loop_fixture.py build
+	python3 tests/make_fixtures.py build
 	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_banks.c sh4/libaicaflow_host.a -o build/check_banks.elf
 
 # Scenes on the console (tests/check_scenes.c): a level scene and its slot
@@ -79,7 +80,7 @@ scenes-check:
 	$(MAKE) -C arm7
 	$(MAKE) -C sh4
 	mkdir -p build
-	python3 tests/make_loop_fixture.py build
+	python3 tests/make_fixtures.py build
 	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/check_scenes.c sh4/libaicaflow_host.a -o build/check_scenes.elf
 
 upload-bench:
@@ -88,6 +89,6 @@ upload-bench:
 	mkdir -p build
 	kos-cc -std=gnu23 -O2 -Wall -Wextra -Werror -Iformat/include -Iinclude -Ish4/include tests/bench_upload.c sh4/libaicaflow_host.a -o build/bench_upload.elf
 
-.PHONY: smoke check layout timer-check loop-check commands-check banks-check scenes-check upload-bench
+.PHONY: smoke check layout timer-check song-check commands-check banks-check scenes-check upload-bench
 
 build/test_protocol build/test_bank build/test_bank_trusted build/test_dsp build/afx_validate: $(wildcard format/include/aicaflow/*.h) include/aicaflow/firmware.h

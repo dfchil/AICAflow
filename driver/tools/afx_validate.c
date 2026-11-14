@@ -13,11 +13,28 @@ int main(int argc, char **argv) {
     uint8_t *bytes = malloc((size_t)size);
     if (!bytes || fread(bytes, 1, (size_t)size, input) != (size_t)size) return fclose(input), free(bytes), 2;
     fclose(input);
+    if (size >= 4 && afx_read32(bytes) == AFX_SONG_MAGIC) {
+        /* A song: all of it, and its header's work profile against the played-through one. */
+        afx_song_header_t song;
+        afx_validation_profile_t work;
+        afx_result_t result = afx_song_validate_profile(bytes, (uint32_t)size, &song, &work);
+        free(bytes);
+        if (result) return fprintf(stderr, "invalid AFM: %u\n", result), 1;
+        if (song.work_profile != AFX_WORK_PROFILE(work.peak_commands, work.peak_register_writes))
+            return fprintf(stderr, "AFM work profile %u/%u, played through %u/%u\n",
+                           AFX_WORK_PROFILE_COMMANDS(song.work_profile),
+                           AFX_WORK_PROFILE_WRITES(song.work_profile), work.peak_commands,
+                           work.peak_register_writes), 1;
+        printf("valid AFM: %ld bytes, %u channels, %u pool voices, %u setups, peak %u commands/%u writes\n",
+               size, song.channels, song.voices, song.setup_count, work.peak_commands,
+               work.peak_register_writes);
+        return 0;
+    }
     afx_file_header_t header;
     afx_result_t result = afx_file_validate(bytes, (uint32_t)size, &header);
     free(bytes);
     if (result) return fprintf(stderr, "invalid AFX: %u\n", result), 1;
-    if (header.flags & AFX_FLAG_LOOP) printf("loops at authored tick %u\n", header.loop_tick);
+
     printf("valid AFX: %ld bytes, %u channels, %u setups, %u stream bytes\n", size,
            header.required_channels, header.setup_count, header.stream_size);
     return 0;

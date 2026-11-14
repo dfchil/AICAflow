@@ -108,10 +108,10 @@ int afx_asset_release(afx_asset_t asset);
 uint32_t afx_asset_addr(afx_asset_t asset);
 uint32_t afx_asset_size(afx_asset_t asset);
 int afx_asset_work(afx_asset_t asset, afx_work_profile_t *out_profile);
-/* Whether a flow loops (its stream ends with LOOP): true, with the authored
- * tick its LOOP continues at, for a looping flow; false otherwise. A looping
- * instance never ends by itself; stop it. */
-bool afx_asset_loops(afx_asset_t asset, uint32_t *out_loop_tick);
+/* Whether a song loops (<aicaflow/song.h>): true, with the order position it
+ * goes on at after its last, for a song with a loop index; false for a song
+ * that ends and for a flow. A looping instance never ends by itself; stop it. */
+bool afx_asset_loops(afx_asset_t asset, uint32_t *out_loop_position);
 
 /* Stage 3 lifecycle API. Commands are nonblocking: a zero result means queued.
  * The firmware reports every change of state back by interrupt, and AICAflow's
@@ -207,11 +207,10 @@ int afx_instance_refresh(afx_instance_t instance);
  * handing the report over (a queue, a flag) instead of locking. NULL removes it. */
 typedef void (*afx_end_callback_t)(afx_instance_t instance, const afx_instance_status_t *status, void *user);
 void afx_set_end_callback(afx_end_callback_t callback, void *user);
-/* Called once for each LOOP an instance takes, with its status then: position
- * is the loop target (image-relative, like every position) and next_deadline
- * the hardware tick it continued at, so a player clock is
- * loop_tick + (now - next_deadline) / tempo. Same thread and rules as the end
- * callback; loops are reported before ends. NULL removes it. */
+/* Called once for each loop a song takes (its order wrapping to the loop
+ * index), with its status then: position is AFX_SONG_POSITION of the newest
+ * section and next_deadline the hardware tick of the join. Same thread and
+ * rules as the end callback; loops are reported before ends. NULL removes it. */
 typedef void (*afx_loop_callback_t)(afx_instance_t instance, const afx_instance_status_t *status, void *user);
 void afx_set_loop_callback(afx_loop_callback_t callback, void *user);
 
