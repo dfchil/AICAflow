@@ -32,7 +32,9 @@ order:
 - the lane map, if the song has lanes;
 - the sections: each a stream and its authored body length in ticks;
 - the order: section indices, and the loop index (the order position the song
-  continues at after the last one; none for a song that ends).
+  continues at after the last one; none for a song that ends). A section may
+  follow itself, and a song needs no intro: SM64's seq0B is the order [body]
+  with loop index 0.
 
 A section's stream is today's bytecode with two additions and one rule:
 
@@ -95,8 +97,13 @@ runtime slots. (On main, 672 bytes of private memory are free.)
   and the incoming section's executor, so a resume continues it; the tail
   that was ringing is not resumed.
 - **Reports.** Each loop is reported as a `LOOP` is today (loop count in the
-  state word, the loop callback). The status position names the order
-  position and the offset in that section's stream of the newest executor.
+  state word, the loop callback). A song's `afx_instance_status` keeps
+  `state` and `next_deadline` as a flow's does; its `position` packs the
+  order position of the newest section (high 12 bits) and that executor's
+  stream offset (low 20 bits). `afx_instance_rebuild` on a song takes that
+  value back, so a program that pauses, reads the status and rebuilds at the
+  reported position with the remaining wait carried over (SM64's resume)
+  works unchanged.
 
 ## Load-time checks
 
@@ -111,7 +118,7 @@ The SH-4 validates the AFM before it uploads it, with the format codec:
 - **the work budget at a join:** the outgoing section's events in the join
   tick plus the incoming section's first burst stay within the per-tick
   budget (38 commands, 171 register writes), and the header's work profile
-  covers it;
+  covers it. The compiler makes this hold (below); the loader only checks;
 - **the pool:** the most voices held at any tick of any join (the tail's
   voices not yet given back, plus all of the incoming section's local
   channels) must equal the header's pool. For Daytona's t03 that is about 44
@@ -141,9 +148,9 @@ int afx_song_status(afx_instance_t instance, afx_song_status_t *out);
 
 `afx_instance_activate`, `_stop`, `_pause`, `_gain_set`, `_tempo_set`,
 `afx_instance_lanes_set` and the end and loop callbacks take a song's
-instance like a flow's. `afx_instance_rebuild` on a song takes a position
-from `afx_song_status` (order position and stream offset) and resumes there,
-which is how SM64 resumes after a pause today. AFS scenes gain a song entry,
+instance like a flow's. `afx_instance_rebuild` on a song takes the position its
+`afx_instance_status` reports (order position and stream offset, packed) and
+resumes there, which is how SM64 resumes after a pause today. AFS scenes gain a song entry,
 so a scene places songs as it places flows.
 
 ### AICAforge
@@ -164,13 +171,24 @@ int afx_c_compile_song(const afx_c_section_t *sections, uint32_t section_count,
 ```
 
 The events may include `AFX_OP_FREE` per channel; the compiler places
-`NEXT` and `END`, builds the shared setup dictionary
+`NEXT` and `END`. It schedules joins as it schedules a flow's crowded ticks
+today: where a join tick holds more than the budget (an incoming downbeat on
+top of the outgoing tail's key-offs and level patches), it moves the
+outgoing tail's events later by whole ticks, keeping their order, and reports
+how many it moved and how far; it refuses only a join that moving cannot
+fit. It also builds the shared setup dictionary
 (`afx_c_optimize_events`) across all sections, computes the pool and the work
 profile, and refuses a song the loader would refuse. `afx_vgm` splits a
 recording into sections, keeps the arcade's voice allocation within each, and
 emits the order (Daytona's side).
 
 ## Open questions for Daniel
+
+SM64 (sm64-dc-f9) answered from its side: (a) for question 1, the opcode for
+2, yes to `FREE` (it already lost a jingle 12 times to `-AFX_NO_CHANNELS`
+with songs holding up to 31 voices), pause dropping the tail is fine, and it
+never seeks. Its shortest looping body is about 14 s and its tails are
+release lengths under 4 s, so two executors suffice by a wide margin.
 
 1. **Does `LOOP` really go?** SM64 has 114 continuous sounds (engines, wind,
    slides) that loop a stretch whose end has the same notes sounding as its
