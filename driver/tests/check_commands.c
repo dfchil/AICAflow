@@ -1,5 +1,5 @@
 /* Hardware check of the command semantics of firmware ABI 12 (make -C driver
- * commands-check), with the looping quickstart fixture of loop-check:
+ * commands-check), with the long quickstart fixture of tests/make_fixtures.py:
  * STOP right behind ACTIVATE, a channel reused in the frame it is stopped,
  * afx_instance_replace with every channel in use, afx_asset_release, and a
  * PATCH sent right after ACTIVATE that the channel's first NOTE keeps. */
@@ -14,10 +14,10 @@ alignas(32) static const unsigned char firmware[] = {
 #embed "../../firmware/aicaflow.drv"
 };
 alignas(32) static const unsigned char flow_file[] = {
-#embed "../build/loop.afx"
+#embed "../build/long.afx"
 };
 alignas(32) static const unsigned char bank_file[] = {
-#embed "../build/loop.afb"
+#embed "../build/long.afb"
 };
 
 static volatile unsigned ended_count;
@@ -61,7 +61,7 @@ static int channel0_note(const afx_file_header_t *header, uint32_t *tick_out,
         }
         if (event.opcode == AFX_OP_WAIT8 || event.opcode == AFX_OP_WAIT16 || event.opcode == AFX_OP_WAIT32)
             tick += event.wait;
-        if (event.opcode == AFX_OP_LOOP || event.opcode == AFX_OP_END) break;
+        if (event.opcode == AFX_OP_END) break;
         at += event.bytes;
     }
     return found != 0;

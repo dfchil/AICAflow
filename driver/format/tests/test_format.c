@@ -6,7 +6,7 @@
 #if defined(AFX_ABI_VERSION) || defined(AFX_CONTROL_BASE) || defined(AFX_CMD_QUEUE_CAPACITY)
 #error "The public asset format must not expose firmware or IPC internals"
 #endif
-#if AFX_FORMAT_API_VERSION != 5 || AFX_FILE_MAGIC != 0x32584641
+#if AFX_FORMAT_API_VERSION != 6 || AFX_FILE_MAGIC != 0x32584641
 #error "Unexpected public format API or AFX magic"
 #endif
 
@@ -33,10 +33,12 @@ int main(void) {
     assert(AFX_FIELD_COUNT == 18 && AFX_SETUP_BYTES == 36);
     assert(AFX_FIELD_DSP_SEND == 8 && AFX_FIELD_DIRECT == 9 && AFX_FIELD_MIX == 10);
     assert(AFX_OP_NOTE == 0x10 && AFX_OP_NOTE_PL == 0x14 && AFX_OP_PATCH_LEVEL == 0x15);
-    assert(AFX_OP_LOOP == 0x16 && AFX_OP_PATCH_ENV == 0x17 && AFX_OP_PATCH_ENV_LEVEL == 0x18);
-    assert(AFX_OP_LOOP == 0x16);
+    assert(AFX_OP_PATCH_ENV == 0x17 && AFX_OP_PATCH_ENV_LEVEL == 0x18);
+    assert(AFX_OP_NEXT == 0x19 && AFX_OP_FREE == 0x1a && AFX_JOIN_NEW == 0 && AFX_JOIN_CONTINUE == 1);
     assert(AFX_FLAG_CONTROLLED == 1 && AFX_FLAG_MUSIC == 2 && AFX_FLAG_LANES == 16);
-    assert(AFX_FLAG_LOOP == 32 && offsetof(afx_file_header_t, loop_tick) == 56);
+    assert(AFX_FLAG_SONG == 128 && AFX_FLAG_POOL == 256 && offsetof(afx_file_header_t, reserved) == 56);
+    assert(AFX_SONG_MAGIC == 0x314d4641u && sizeof(afx_song_header_t) == 96 && AFX_SCENE_SONG == 5);
+    assert(AFX_SONG_POSITION(3, 5) == ((3u << 20) | 5u));
     assert(AFX_FLAG_BANKS == 64 && offsetof(afx_file_header_t, banks_offset) == 60);
     assert(AFX_MAX_FLOW_BANKS == 4 && AFX_BANK_SLOT_SHIFT == 21 && AFX_BANK_TABLE_BYTES == 16);
     assert(AFX_BANK_TABLE_OFFSET(37u) == 40 && AFX_BANK_TABLE_OFFSET(40u) == 40);

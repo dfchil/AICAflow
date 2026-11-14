@@ -25,8 +25,8 @@ afx_result_t afx_encode_event(uint8_t *out, uint32_t capacity, const afx_event_t
         if (e->wait > 65535) return AFX_BAD_COMMAND;
         prefix = 3; afx_write16(tmp + 1, (uint16_t)e->wait); break;
     case AFX_OP_WAIT32: prefix = 5; afx_write32(tmp + 1, e->wait); break;
-    case AFX_OP_LOOP: prefix = 5; afx_write32(tmp + 1, e->target); break;
-    case AFX_OP_KEYOFF: prefix = 2; tmp[1] = e->channel; break;
+    case AFX_OP_KEYOFF: case AFX_OP_FREE: prefix = 2; tmp[1] = e->channel; break;
+    case AFX_OP_NEXT: prefix = 2; tmp[1] = (uint8_t)e->join; break;
     case AFX_OP_PATCH_LEVEL: case AFX_OP_PATCH_ENV: case AFX_OP_PATCH_ENV_LEVEL:
         if (afx_compact_opcode(AFX_OP_PATCH, e->mask) != e->opcode || !values) return AFX_BAD_COMMAND;
         prefix = 2; tmp[1] = e->channel;
@@ -101,10 +101,10 @@ static afx_result_t bank_file_validate(const uint8_t *file, uint32_t size,
         !h->required_channels || h->required_channels > AFX_MAX_FLOW_CHANNELS ||
         !h->tick_rate_num || !h->tick_rate_den ||
         !table(h->relocations_offset, h->relocation_count, 12, h->image_offset) ||
-        (h->loop_tick && !(h->flags & AFX_FLAG_LOOP)) ||
+        h->reserved ||
         h->relocation_count != h->setup_count ||
         (h->flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
-                      AFX_FLAG_LANES | AFX_FLAG_LOOP | AFX_FLAG_BANKS))) return AFX_BAD_BOUNDS;
+                      AFX_FLAG_LANES | AFX_FLAG_BANKS))) return AFX_BAD_BOUNDS;
     if (!(h->bank_id_low || h->bank_id_high) && h->relocation_count) return AFX_BAD_SAMPLE;
     image = file + h->image_offset;
     uint32_t slots = 1;
@@ -151,43 +151,9 @@ static void event_work(const afx_event_t *event, uint32_t *commands, uint32_t *w
         ++*commands; *writes += 19;
     } else if (event->opcode == AFX_OP_PATCH) {
         ++*commands; *writes += afx_field_value_bytes(event->mask) / 2u;
-    } else if (event->opcode == AFX_OP_KEYOFF) {
+    } else if (event->opcode == AFX_OP_KEYOFF || event->opcode == AFX_OP_FREE) {
         ++*commands; ++*writes;
     }
-}
-
-/* The loop target of a stream ending in LOOP: it must be an instruction
- * boundary before the LOOP, the loop body must wait at least once (the
- * executor would otherwise spin), and the header's loop_tick must be the
- * authored tick of the target. Returns the burst that starts at the target,
- * which the LOOP joins to the burst that ends the stream. */
-static afx_result_t loop_validate(const uint8_t *stream, uint32_t size, uint32_t target,
-                                  const afx_file_header_t *h, uint32_t *commands,
-                                  uint32_t *writes) {
-    uint32_t cursor = 0, tick = 0, waits = 0;
-    *commands = *writes = 0;
-    if (target >= size - 5u) return AFX_BAD_COMMAND; /* At or past the LOOP itself. */
-    while (cursor < target) {
-        afx_event_t event;
-        afx_result_t result = afx_decode_event(stream + cursor, size - cursor, &event);
-        if (result) return result;
-        cursor += event.bytes;
-        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) tick += event.wait;
-    }
-    if (cursor != target || tick != h->loop_tick) return AFX_BAD_COMMAND;
-    while (cursor < size) {
-        afx_event_t event;
-        afx_result_t result = afx_decode_event(stream + cursor, size - cursor, &event);
-        if (result) return result;
-        cursor += event.bytes;
-        if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) {
-            ++waits;
-            if (waits == 1) break;
-        }
-        event_work(&event, commands, writes);
-    }
-    if (!waits) return AFX_BAD_COMMAND;
-    return AFX_OK;
 }
 
 static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_t *h,
@@ -198,7 +164,6 @@ static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_
     afx_validation_profile_t work = {0};
     while (cursor < end) {
         afx_event_t event;
-        uint32_t at = cursor;
         afx_result_t result = afx_decode_event(image + cursor, end - cursor, &event);
         if (result) return result;
         cursor += event.bytes;
@@ -211,21 +176,11 @@ static afx_result_t stream_validate(const uint8_t *image, const afx_file_header_
         if (event.opcode == AFX_OP_NOTE && event.setup >= h->setup_count) return AFX_BAD_COMMAND;
         if (event.opcode >= AFX_OP_NOTE && event.opcode <= AFX_OP_KEYOFF &&
             event.channel >= h->required_channels) return AFX_BAD_COMMAND;
-        if (event.opcode == AFX_OP_END || event.opcode == AFX_OP_PARK || event.opcode == AFX_OP_LOOP) {
-            if (cursor != end || (event.opcode == AFX_OP_PARK && !(h->flags & AFX_FLAG_CONTROLLED)) ||
-                ((event.opcode == AFX_OP_LOOP) != ((h->flags & AFX_FLAG_LOOP) != 0)))
+        /* NEXT and FREE belong to songs. */
+        if (event.opcode == AFX_OP_NEXT || event.opcode == AFX_OP_FREE) return AFX_BAD_COMMAND;
+        if (event.opcode == AFX_OP_END || event.opcode == AFX_OP_PARK) {
+            if (cursor != end || (event.opcode == AFX_OP_PARK && !(h->flags & AFX_FLAG_CONTROLLED)))
                 return AFX_BAD_COMMAND;
-            if (event.opcode == AFX_OP_LOOP) {
-                /* The LOOP runs the burst at its target right after the burst
-                 * that precedes it, in the same tick. */
-                uint32_t head_commands, head_writes;
-                result = loop_validate(image + h->stream_offset, h->stream_size, event.target, h,
-                                       &head_commands, &head_writes);
-                if (result) return result;
-                (void)at;
-                commands += head_commands;
-                writes += head_writes;
-            }
             terminal = 1;
         }
     }
@@ -295,11 +250,13 @@ afx_result_t afx_scene_validate(const void *data, uint32_t size, afx_scene_heade
     uint32_t names = AFX_SCENE_HEADER_BYTES + h.entry_count * AFX_SCENE_ENTRY_BYTES, rings = 0;
     for (uint32_t i = 0; i < h.entry_count; ++i) {
         afx_scene_entry_t e = afx_scene_entry_at(data, i);
-        int stored = e.kind == AFX_SCENE_BANK || e.kind == AFX_SCENE_FLOW;
-        uint32_t header = e.kind == AFX_SCENE_BANK ? AFX_BANK_HEADER_BYTES : AFX_FILE_HEADER_BYTES;
+        int stored = e.kind == AFX_SCENE_BANK || e.kind == AFX_SCENE_FLOW || e.kind == AFX_SCENE_SONG;
+        uint32_t header = e.kind == AFX_SCENE_BANK ? AFX_BANK_HEADER_BYTES :
+                          e.kind == AFX_SCENE_SONG ? AFX_SONG_HEADER_BYTES : AFX_FILE_HEADER_BYTES;
         uint32_t align = e.kind == AFX_SCENE_RING ? AFX_SCENE_RING_ALIGN : 32u;
-        if (e.kind < AFX_SCENE_BANK || e.kind > AFX_SCENE_RING || e.reserved ||
-            (e.ticks && e.kind != AFX_SCENE_FLOW) || (e.kind == AFX_SCENE_RING && rings++))
+        if (e.kind < AFX_SCENE_BANK || e.kind > AFX_SCENE_SONG || e.reserved ||
+            (e.ticks && e.kind != AFX_SCENE_FLOW && e.kind != AFX_SCENE_SONG) ||
+            (e.kind == AFX_SCENE_RING && rings++))
             return AFX_BAD_FORMAT;
         if (stored ? e.file_size < header || e.file_offset < names ||
                      !afx_range(e.file_offset, e.file_size, size)
@@ -345,4 +302,246 @@ afx_result_t afx_flow_duration(const void *data, uint32_t size, uint64_t *out_ti
     *out_tick_rate_num = header.tick_rate_num;
     *out_tick_rate_den = header.tick_rate_den;
     return AFX_OK;
+}
+
+/* Songs (AFM). */
+
+static int song_table(uint32_t offset, uint32_t count, uint32_t stride, uint32_t end) {
+    if (!count) return offset == 0;
+    return !(offset & 3) && offset >= AFX_SONG_HEADER_BYTES &&
+           offset <= end && count <= (end - offset) / stride;
+}
+
+afx_song_section_t afx_song_section(const void *image, const afx_song_image_header_t *ih, uint32_t i) {
+    const uint8_t *entry = (const uint8_t *)image + ih->sections_offset + i * AFX_SONG_SECTION_BYTES;
+    return (afx_song_section_t){afx_read32(entry), afx_read32(entry + 4), afx_read32(entry + 8)};
+}
+uint32_t afx_song_order(const void *image, const afx_song_image_header_t *ih, uint32_t position) {
+    return afx_read16((const uint8_t *)image + ih->order_offset + position * 2u);
+}
+
+afx_result_t afx_song_validate_layout(const void *data, uint32_t size, afx_song_header_t *out,
+                                      afx_song_image_header_t *out_image) {
+    const uint8_t *file = data;
+    afx_song_header_t h;
+    afx_song_image_header_t ih;
+    if (!data || size < sizeof(h)) return AFX_BAD_BOUNDS;
+    read_words(&h, file, sizeof(h));
+    if (h.magic != AFX_SONG_MAGIC || h.version != AFX_SONG_VERSION) return AFX_BAD_FORMAT;
+    for (uint32_t i = 0; i < 7; ++i) if (h.reserved[i]) return AFX_BAD_FORMAT;
+    if (h.total_size != size || h.image_offset < AFX_SONG_HEADER_BYTES || (h.image_offset & 31u) ||
+        h.image_size < AFX_SONG_IMAGE_HEADER_BYTES || h.image_offset + h.image_size != size ||
+        !(h.flags & AFX_FLAG_MUSIC) ||
+        (h.flags & ~(AFX_FLAG_MUSIC | AFX_FLAG_LANES | AFX_FLAG_BANKS)) ||
+        !h.channels || h.channels > AFX_MAX_FLOW_CHANNELS || h.voices > AFX_MAX_FLOW_CHANNELS ||
+        !h.tick_rate_num || !h.tick_rate_den || !h.control_id ||
+        h.setup_count > (h.image_size - AFX_SONG_IMAGE_HEADER_BYTES) / AFX_SETUP_BYTES ||
+        !song_table(h.relocations_offset, h.setup_count, 12, h.image_offset)) return AFX_BAD_BOUNDS;
+    if (!(h.bank_id_low || h.bank_id_high) && h.setup_count) return AFX_BAD_SAMPLE;
+    const uint8_t *image = file + h.image_offset;
+    read_words(&ih, image, sizeof(ih));
+    uint32_t setups_end = AFX_SONG_IMAGE_HEADER_BYTES + h.setup_count * AFX_SETUP_BYTES;
+    uint32_t lanes_end = setups_end + ((h.flags & AFX_FLAG_LANES) ? ((h.channels + 3u) & ~3u) : 0);
+    uint32_t streams_end = ih.streams_offset + ih.streams_size;
+    uint32_t image_end = (h.flags & AFX_FLAG_BANKS) ? AFX_BANK_TABLE_OFFSET(streams_end) + AFX_BANK_TABLE_BYTES
+                                                    : streams_end;
+    if (ih.channels != h.channels || !ih.section_count || !ih.order_count || ih.order_count > AFX_SONG_MAX_ORDER ||
+        (ih.loop_index != AFX_SONG_NO_LOOP && ih.loop_index >= ih.order_count) ||
+        (ih.sections_offset & 3u) || (ih.order_offset & 3u) || ih.sections_offset < lanes_end ||
+        ih.section_count > (h.image_size - ih.sections_offset) / AFX_SONG_SECTION_BYTES ||
+        ih.order_offset < ih.sections_offset + ih.section_count * AFX_SONG_SECTION_BYTES ||
+        ih.order_count > (h.image_size - ih.order_offset) / 2u ||
+        ih.streams_offset < ih.order_offset + ih.order_count * 2u || !ih.streams_size ||
+        streams_end < ih.streams_offset || streams_end > h.image_size || image_end != h.image_size)
+        return AFX_BAD_BOUNDS;
+    for (uint32_t i = 0; i < ih.section_count; ++i) {
+        afx_song_section_t section = afx_song_section(image, &ih, i);
+        if (section.stream_offset < ih.streams_offset || !section.stream_size ||
+            section.stream_size > AFX_SONG_MAX_STREAM ||
+            !afx_range(section.stream_offset, section.stream_size, streams_end) || !section.body_ticks)
+            return AFX_BAD_BOUNDS;
+    }
+    for (uint32_t i = 0; i < ih.order_count; ++i)
+        if (afx_song_order(image, &ih, i) >= ih.section_count) return AFX_BAD_BOUNDS;
+    uint32_t slots = 1;
+    if (h.flags & AFX_FLAG_BANKS) {
+        if (!(h.bank_id_low || h.bank_id_high) || !song_table(h.banks_offset, 1, 4, h.image_offset))
+            return AFX_BAD_BOUNDS;
+        slots = 1u + afx_read32(file + h.banks_offset);
+        if (slots < 2 || slots > AFX_MAX_FLOW_BANKS ||
+            !song_table(h.banks_offset + 4u, slots - 1u, 8, h.image_offset)) return AFX_BAD_BOUNDS;
+        for (uint32_t slot = 1; slot < slots; ++slot)
+            if (!(afx_read32(file + h.banks_offset + slot * 8u - 4u) ||
+                  afx_read32(file + h.banks_offset + slot * 8u))) return AFX_BAD_SAMPLE;
+        for (uint32_t i = 0; i < AFX_BANK_TABLE_BYTES; ++i)
+            if (image[AFX_BANK_TABLE_OFFSET(streams_end) + i]) return AFX_BAD_FORMAT;
+    } else if (h.banks_offset) return AFX_BAD_BOUNDS;
+    for (uint32_t i = 0; i < h.setup_count; ++i) {
+        afx_relocation_t r;
+        read_words(&r, file + h.relocations_offset + i * sizeof(r), sizeof(r));
+        uint32_t pair = AFX_SONG_IMAGE_HEADER_BYTES + i * AFX_SETUP_BYTES;
+        if (r.pair_offset != pair || !r.byte_offset) return AFX_BAD_RELOCATION;
+        uint16_t control = afx_read16(image + pair);
+        uint32_t address = ((uint32_t)(control & 0x7fu) << 16) | afx_read16(image + pair + 2);
+        if ((control & 0x400u) || address != r.sample_index) return AFX_BAD_RELOCATION;
+        if ((h.flags & AFX_FLAG_BANKS) && (address >> AFX_BANK_SLOT_SHIFT) >= slots)
+            return AFX_BAD_RELOCATION;
+    }
+    if (h.flags & AFX_FLAG_LANES)
+        for (uint32_t i = 0; i < h.channels; ++i)
+            if (image[setups_end + i] >= AFX_MAX_FLOW_CHANNELS) return AFX_BAD_FORMAT;
+    if (out) *out = h;
+    if (out_image) *out_image = ih;
+    return AFX_OK;
+}
+
+uint32_t afx_song_bank_count(const void *data, const afx_song_header_t *header) {
+    if (!(header->flags & AFX_FLAG_BANKS)) return header->bank_id_low || header->bank_id_high;
+    return 1u + afx_read32((const uint8_t *)data + header->banks_offset);
+}
+
+/* One executor of the simulated song. */
+typedef struct {
+    int active;
+    uint32_t cursor, end; /* Image offsets in the current section's stream. */
+    uint64_t due, ended; /* The tick its next instruction runs; the tick it last ended. */
+    uint64_t mapped; /* Local channels holding a pool voice. */
+} song_exec_t;
+
+static uint32_t popcount64(uint64_t value) {
+    uint32_t count = 0;
+    for (; value; value &= value - 1u) ++count;
+    return count;
+}
+
+/* Checks each section's stream on its own: instructions, setups, channels,
+ * one NEXT at the body length with only END after a continue join, END last.
+ * Returns the channels used and whether any section joins with AFX_JOIN_NEW. */
+static afx_result_t song_sections_validate(const uint8_t *image, const afx_song_header_t *h,
+                                           const afx_song_image_header_t *ih,
+                                           uint32_t *out_channels, int *out_pool) {
+    uint32_t channels = 0;
+    int pool = 0;
+    for (uint32_t i = 0; i < ih->section_count; ++i) {
+        afx_song_section_t section = afx_song_section(image, ih, i);
+        uint32_t cursor = section.stream_offset, end = cursor + section.stream_size, nexts = 0;
+        uint64_t tick = 0;
+        int terminal = 0, join = AFX_JOIN_NEW;
+        while (cursor < end) {
+            afx_event_t event;
+            afx_result_t result = afx_decode_event(image + cursor, end - cursor, &event);
+            if (result) return result;
+            cursor += event.bytes;
+            if (nexts && join == AFX_JOIN_CONTINUE && event.opcode != AFX_OP_END) return AFX_BAD_COMMAND;
+            if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) tick += event.wait;
+            else if (event.opcode == AFX_OP_NOTE && event.setup >= h->setup_count) return AFX_BAD_COMMAND;
+            else if (event.opcode == AFX_OP_PARK) return AFX_BAD_COMMAND;
+            else if (event.opcode == AFX_OP_NEXT) {
+                if (nexts++ || tick != section.body_ticks) return AFX_BAD_COMMAND;
+                join = (int)event.join;
+                pool |= join == AFX_JOIN_NEW;
+            } else if (event.opcode == AFX_OP_END) {
+                if (cursor != end) return AFX_BAD_COMMAND;
+                terminal = 1;
+            }
+            if (((event.opcode >= AFX_OP_NOTE && event.opcode <= AFX_OP_KEYOFF) ||
+                 event.opcode == AFX_OP_FREE) && event.channel + 1u > channels)
+                channels = event.channel + 1u;
+        }
+        if (!terminal || nexts != 1) return AFX_BAD_COMMAND;
+    }
+    *out_channels = channels ? channels : 1;
+    *out_pool = pool;
+    return AFX_OK;
+}
+
+/* Plays the order through as the firmware does, from the start through one
+ * more pass of the looped part, and reports the peak work in a tick (both
+ * executors together) and the most pool voices held at once. A new-play join
+ * whose other executor has not ended in an earlier tick is refused. */
+static afx_result_t song_play(const uint8_t *image, const afx_song_image_header_t *ih, int pool,
+                              afx_validation_profile_t *work, uint32_t *out_voices) {
+    song_exec_t exec[2] = {{0}};
+    afx_song_section_t first = afx_song_section(image, ih, afx_song_order(image, ih, 0));
+    uint32_t position = 0, voices = 0, joins = 0;
+    uint32_t bound = ih->order_count +
+        (ih->loop_index == AFX_SONG_NO_LOOP ? 0 : ih->order_count - ih->loop_index + 1u);
+    exec[0] = (song_exec_t){1, first.stream_offset, first.stream_offset + first.stream_size, 0, 0, 0};
+    *work = (afx_validation_profile_t){0};
+    for (;;) {
+        uint64_t now = UINT64_MAX;
+        for (int e = 0; e < 2; ++e) if (exec[e].active && exec[e].due < now) now = exec[e].due;
+        if (now == UINT64_MAX || joins > bound) break;
+        uint32_t commands = 0, writes = 0;
+        for (int busy = 1; busy;) {
+            busy = 0;
+            for (int e = 0; e < 2; ++e) {
+                song_exec_t *x = &exec[e];
+                while (x->active && x->due == now) {
+                    afx_event_t event;
+                    busy = 1;
+                    if (afx_decode_event(image + x->cursor, x->end - x->cursor, &event)) return AFX_BAD_COMMAND;
+                    x->cursor += event.bytes;
+                    if (event.opcode >= AFX_OP_WAIT8 && event.opcode <= AFX_OP_WAIT32) {
+                        x->due += event.wait;
+                        break;
+                    }
+                    event_work(&event, &commands, &writes);
+                    if (event.opcode >= AFX_OP_NOTE && event.opcode <= AFX_OP_KEYOFF)
+                        x->mapped |= 1ull << event.channel;
+                    else if (event.opcode == AFX_OP_FREE) x->mapped &= ~(1ull << event.channel);
+                    else if (event.opcode == AFX_OP_END) {
+                        x->active = 0; x->ended = now; x->mapped = 0;
+                    } else if (event.opcode == AFX_OP_NEXT) {
+                        uint32_t next = position + 1u;
+                        if (next == ih->order_count) next = ih->loop_index;
+                        if (next == AFX_SONG_NO_LOOP) continue; /* Nothing follows: the tail plays on. */
+                        if (++joins > bound) break;
+                        position = next;
+                        afx_song_section_t section = afx_song_section(image, ih, afx_song_order(image, ih, next));
+                        if (event.join == AFX_JOIN_CONTINUE) {
+                            x->cursor = section.stream_offset;
+                            x->end = section.stream_offset + section.stream_size;
+                        } else {
+                            song_exec_t *other = &exec[1 - e];
+                            /* Two executors: the other one's tail must be over. */
+                            if (other->active || other->ended == now) return AFX_BAD_COMMAND;
+                            *other = (song_exec_t){1, section.stream_offset,
+                                                   section.stream_offset + section.stream_size, now, 0, 0};
+                        }
+                    }
+                    if (pool) {
+                        uint32_t held = popcount64(exec[0].mapped) + popcount64(exec[1].mapped);
+                        if (held > voices) voices = held;
+                    }
+                }
+            }
+        }
+        if (commands > work->peak_commands) work->peak_commands = commands;
+        if (writes > work->peak_register_writes) work->peak_register_writes = writes;
+    }
+    *out_voices = voices;
+    return AFX_OK;
+}
+
+afx_result_t afx_song_validate_profile(const void *data, uint32_t size, afx_song_header_t *out,
+                                       afx_validation_profile_t *profile) {
+    afx_song_header_t h;
+    afx_song_image_header_t ih;
+    afx_result_t result = afx_song_validate_layout(data, size, &h, &ih);
+    if (result) return result;
+    const uint8_t *image = (const uint8_t *)data + h.image_offset;
+    uint32_t channels, voices;
+    int pool;
+    afx_validation_profile_t work;
+    if ((result = song_sections_validate(image, &h, &ih, &channels, &pool))) return result;
+    if (channels != h.channels) return AFX_BAD_COMMAND;
+    if ((result = song_play(image, &ih, pool, &work, &voices))) return result;
+    if (voices != h.voices) return AFX_BAD_COMMAND;
+    if (out) *out = h;
+    if (profile) *profile = work;
+    return AFX_OK;
+}
+afx_result_t afx_song_validate(const void *data, uint32_t size, afx_song_header_t *out) {
+    return afx_song_validate_profile(data, size, out, NULL);
 }

@@ -18,9 +18,25 @@ def function(name):
 
 prefix = r'''
 #include <assert.h>
+#include <stddef.h>
 #include <string.h>
 #include <aicaflow/codec.h>
 #include "sample_address.h"
+/* AICA RAM by address: a flow's stream at STREAM_BASE, a song from SONG_BASE. */
+#define STREAM_BASE 0x4000u
+#define SONG_BASE 0x10000u
+static uint8_t stream_bytes[64];
+static _Alignas(4) uint8_t song_ram[0x800];
+static uintptr_t aica_ptr(uint32_t address) {
+    if (address >= SONG_BASE) {
+        assert(address - SONG_BASE < sizeof(song_ram));
+        return (uintptr_t)(song_ram + (address - SONG_BASE));
+    }
+    assert(address >= STREAM_BASE && address - STREAM_BASE < sizeof(stream_bytes));
+    return (uintptr_t)(stream_bytes + (address - STREAM_BASE));
+}
+#define AICA_RAM(address) aica_ptr(address)
+static uint16_t song_position[AFX_MAX_FLOW_SLOTS];
 static volatile uint32_t registers[64][32];
 #undef AFX_AICA_REG_BASE
 #define AFX_AICA_REG_BASE ((uintptr_t)registers)
@@ -46,9 +62,6 @@ static uint32_t clock_value;
 #define AFX_TEMPO_MIN 16u
 #define AFX_TEMPO_MAX 4096u
 #define AFX_TEMPO_WAIT_CHUNK (UINT32_MAX / AFX_TEMPO_MAX)
-/* The executor reads its stream from AICA RAM by address; here from a buffer. */
-#define STREAM_BASE 0x4000u
-static uint8_t stream_bytes[64];
 static _Alignas(4) uint8_t image_bytes[64]; /* A flow image at STREAM_BASE, for its bank table. */
 static uint8_t setup_bytes[AFX_SETUP_BYTES];
 static afx_observed_t observed_records[AFX_MAX_FLOW_SLOTS];
@@ -58,6 +71,12 @@ static uint32_t loop_position, loop_deadline, loop_publishes;
 static int physical_channel(const volatile afx_runtime_slot_t *context,
                             uint32_t local, uint32_t *out) {
     if (local >= context->channels) return 0;
+    if (context->channel_map >= SONG_BASE) { /* A song's map; flows map local i to voice i. */
+        uint32_t physical = *(volatile uint8_t *)aica_ptr(context->channel_map + local);
+        if (physical >= 64) return 0;
+        *out = physical;
+        return 1;
+    }
     *out = local;
     return 1;
 }
@@ -73,18 +92,19 @@ static void publish(uint32_t index, uint32_t reference, uint32_t state, uint32_t
 '''
 globals_ = source[source.index("static const uint8_t gain_attenuation"):
                   source.index("static uint32_t dsp_owner")]
+globals_ += "\n#define SONG_FIELD(image, field) image_word(image, offsetof(afx_song_image_header_t, field))\n"
 names = ("range", "asset_range", "clear_words", "dsp_returns", "dsp_disable", "dsp_nop", "scene_result", "dsp_control", "reference_index",
          "multiply_gain", "apply_gain", "projected_mix", "projected_direct",
          "projected_pitch", "projected_dsp_send", "write_projection", "release_voice", "keyoff",
-         "stream_position", "state_word", "install_voice", "write_restore", "set_instance_gain", "set_lanes", "rebuild",
-         "lifecycle", "tick_due", "schedule_wait", "record_lateness", "complete", "write_note",
-         "write_patch", "patch", "service", "bank_table_valid")
+         "image_word", "song_control", "song_executor", "song_enter",
+         "stream_position", "state_word", "install_voice", "write_restore", "pool_take", "pool_give",
+         "song_map", "song_unmap", "song_start", "tick_due", "schedule_wait", "record_lateness",
+         "complete", "song_next", "set_instance_gain", "set_lanes", "rebuild",
+         "lifecycle", "write_note", "write_patch", "patch", "execute", "service", "bank_table_valid")
 body = "\n".join(function(name) for name in names)
 # Keep production validation/installation intact; only translate staging pointers.
 assert body.count("(request.states_address +") == 2
 body = body.replace("(request.states_address +", "((uintptr_t)restore_states +")
-assert body.count("(const uint8_t *)context->pc,") == 1
-body = body.replace("(const uint8_t *)context->pc,", "stream_bytes + (context->pc - STREAM_BASE),")
 assert body.count("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)") == 1
 body = body.replace("(const uint8_t *)(context->setups + event->setup * AFX_SETUP_BYTES)", "setup_bytes")
 assert body.count("(activate->image_base + table + slot * 4u)") == 1
@@ -251,48 +271,131 @@ int main(void) {
     bend.values[0] = 0;
     set_lanes(1, AFX_LANE_PITCH, (const uint8_t *)&bend);
     assert(registers[0][AFX_FIELD_PITCH] == 256);
-    /* A looping stream: WAIT8 2, KEYOFF 0, WAIT8 3, LOOP back to the KEYOFF.
-     * The LOOP moves the cursor in the tick it is due; the deadline carries on. */
+    /* A continue-only song: intro (KEYOFF 0, WAIT 2), then a body (KEYOFF 0,
+     * WAIT 3) looping to itself. Each NEXT continue moves the cursor in the
+     * tick it is due, on the same executor and voices; the wrap is a loop. */
     (void)setup_bytes;
-    memset(stream_bytes, 0, sizeof(stream_bytes));
-    stream_bytes[0] = AFX_OP_WAIT8; stream_bytes[1] = 2;
-    stream_bytes[2] = AFX_OP_KEYOFF; stream_bytes[3] = 0;
-    stream_bytes[4] = AFX_OP_WAIT8; stream_bytes[5] = 3;
-    stream_bytes[6] = AFX_OP_LOOP; afx_write32(stream_bytes + 7, 2);
-    volatile afx_runtime_slot_t *loop = &contexts[2];
-    *loop = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 1,
-        .image_base = STREAM_BASE, .stream_start = 0, .pc = STREAM_BASE, .end = STREAM_BASE + 11,
-        .flags = AFX_FLAG_LOOP, .tempo_period_q8_8 = 256, .gain = 255};
+    memset(song_ram, 0, sizeof(song_ram));
+    uint8_t *image = song_ram;
+    const uint8_t intro[] = {AFX_OP_KEYOFF, 0, AFX_OP_WAIT8, 2, AFX_OP_NEXT, AFX_JOIN_CONTINUE, AFX_OP_END};
+    const uint8_t body[] = {AFX_OP_KEYOFF, 0, AFX_OP_WAIT8, 3, AFX_OP_NEXT, AFX_JOIN_CONTINUE, AFX_OP_END};
+    afx_write32(image, 2); afx_write32(image + 4, 2); afx_write32(image + 8, 1);
+    afx_write32(image + 12, 0x40); afx_write32(image + 16, 0x58); afx_write32(image + 20, 0x60);
+    afx_write32(image + 24, sizeof(intro) + sizeof(body)); afx_write32(image + 28, 1);
+    afx_write32(image + 0x40, 0x60); afx_write32(image + 0x44, sizeof(intro)); afx_write32(image + 0x48, 2);
+    afx_write32(image + 0x4c, 0x60 + sizeof(intro)); afx_write32(image + 0x50, sizeof(body));
+    afx_write32(image + 0x54, 3);
+    afx_write16(image + 0x58, 0); afx_write16(image + 0x5a, 1);
+    memcpy(image + 0x60, intro, sizeof(intro));
+    memcpy(image + 0x60 + sizeof(intro), body, sizeof(body));
+    volatile afx_runtime_slot_t *song = &contexts[2];
+    *song = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 1,
+        .image_base = SONG_BASE, .flags = AFX_FLAG_SONG, .tempo_period_q8_8 = 256, .gain = 255};
+    song_enter(song, SONG_BASE, 0);
+    song_position[2] = 0;
+    loop_publishes = 0;
     voice_flags[0] = VOICE_LATCHED;
     clock_value = 0;
     service(2);
-    assert(loop->deadline == 2 && loop->pc == STREAM_BASE + 2 && loop->loops == 0);
+    assert(song->deadline == 2 && song->pc == SONG_BASE + 0x60 + 4);
     clock_value = 2;
-    service(2); /* KEYOFF, WAIT 3 */
-    assert(loop->deadline == 5 && loop->pc == STREAM_BASE + 6 && !loop_publishes);
+    service(2); /* NEXT continue into the body, KEYOFF, WAIT 3: one tick. */
+    assert(song_position[2] == 1 && song->deadline == 5 && song->loops == 0 && !loop_publishes);
     clock_value = 5;
-    service(2); /* LOOP, KEYOFF, WAIT 3: one tick, no gap */
-    assert(loop->loops == 1 && loop->deadline == 8 && loop->pc == STREAM_BASE + 6);
-    assert(loop_publishes == 1 && loop_position == 2 && loop_deadline == 5);
-    assert(last_state == (AFX_RUNNING | (1u << AFX_STATE_LOOPS_SHIFT)) && last_result == AFX_OK);
+    service(2); /* The body's NEXT wraps to the loop index: a loop. */
+    assert(song->loops == 1 && song->deadline == 8 && song_position[2] == 1);
+    assert(loop_publishes == 1 && loop_position == AFX_SONG_POSITION(1, 0) && loop_deadline == 5);
+    assert(last_state == (AFX_RUNNING | (1u << AFX_STATE_LOOPS_SHIFT)));
     clock_value = 8;
-    service(2); /* The second loop: the body is WAIT 3 long, so it comes 3 ticks later. */
-    assert(loop->loops == 2 && loop->deadline == 11 && loop->pc == STREAM_BASE + 6);
-    assert(last_state == (AFX_RUNNING | (2u << AFX_STATE_LOOPS_SHIFT)));
-    /* Without the flag, LOOP ends the flow in error. */
-    loop->flags = 0;
-    clock_value = 11;
     service(2);
-    assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !loop->reference);
-    /* A loop body that never waits (which validation refuses) ends it too. */
-    stream_bytes[0] = AFX_OP_KEYOFF; stream_bytes[1] = 0;
-    stream_bytes[2] = AFX_OP_LOOP; afx_write32(stream_bytes + 3, 0);
-    *loop = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 1,
-        .image_base = STREAM_BASE, .stream_start = 0, .pc = STREAM_BASE, .end = STREAM_BASE + 7,
-        .flags = AFX_FLAG_LOOP, .tempo_period_q8_8 = 256, .gain = 255};
+    assert(song->loops == 2 && song->deadline == 11);
+    /* The position: order position 1, offset 4 in the body's stream. */
+    assert(stream_position(2, song) == AFX_SONG_POSITION(1, 4));
+    /* NEXT in a flow, or a new-play join in a song without a pool, is refused. */
+    song->flags = AFX_FLAG_SONG; song_enter(song, SONG_BASE, 0);
+    image[0x60 + 5] = AFX_JOIN_NEW;
+    song_position[2] = 0; song->deadline = 11; clock_value = 13;
+    service(2);
+    assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !song->reference);
+
+    /* A song with a pool of two voices (5 and 9): A (KEYOFF 0, WAIT 10, NEXT new,
+     * then a tail KEYOFF 0, WAIT 2, END) played A, A, looping to the first. */
+    memset(song_ram, 0, sizeof(song_ram));
+    const uint8_t a[] = {AFX_OP_KEYOFF, 0, AFX_OP_WAIT8, 10, AFX_OP_NEXT, AFX_JOIN_NEW,
+                         AFX_OP_KEYOFF, 0, AFX_OP_WAIT8, 2, AFX_OP_END};
+    afx_write32(image, 1); afx_write32(image + 4, 2); afx_write32(image + 8, 0);
+    afx_write32(image + 12, 0x40); afx_write32(image + 16, 0x4c); afx_write32(image + 20, 0x50);
+    afx_write32(image + 24, sizeof(a)); afx_write32(image + 28, 1);
+    afx_write32(image + 0x40, 0x50); afx_write32(image + 0x44, sizeof(a)); afx_write32(image + 0x48, 10);
+    afx_write16(image + 0x4c, 0); afx_write16(image + 0x4e, 0);
+    memcpy(image + 0x50, a, sizeof(a));
+    song_ram[0x100] = 5; song_ram[0x101] = 9; /* The pool. */
+    const uint32_t block = SONG_BASE + 0x200;
+    *song = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 2,
+        .channel_map = SONG_BASE + 0x100, .image_base = SONG_BASE, .pc = block,
+        .flags = AFX_FLAG_SONG | AFX_FLAG_POOL, .tempo_period_q8_8 = 256, .gain = 255};
+    volatile afx_song_control_t *control = song_control(song);
+    control->free_low = 3;
+    /* Pause before the first new-play join: executor 1 has never run. Its
+     * empty map must not be followed to address 0. */
+    song_start(song, 0, 0, 0, 0);
+    lifecycle(AFX_CMD_PAUSE, 3, 30);
+    assert(song->state == AFX_PAUSED && control->free_low == 3);
+    song->state = AFX_RUNNING;
+    song_start(song, 0, 0, 0, 0);
+    song_position[2] = 0;
+    loop_publishes = 0;
+    volatile afx_runtime_slot_t *x0 = song_executor(song, 0), *x1 = song_executor(song, 1);
+    volatile uint8_t *map0 = (volatile uint8_t *)aica_ptr(block + AFX_SONG_MAP_OFFSET(0));
+    volatile uint8_t *map1 = (volatile uint8_t *)aica_ptr(block + AFX_SONG_MAP_OFFSET(1));
+    clock_value = 0;
+    service(2); /* The first play takes voice 5 at its first event. */
+    assert(map0[0] == 5 && map0[1] == AFX_SONG_UNMAPPED && control->free_low == 2 && x0->deadline == 10);
+    clock_value = 10;
+    service(2); /* NEXT new: the second play starts with voice 9; the first plays its tail. */
+    assert(x1->state == AFX_RUNNING && control->newest == 1 && map1[0] == 9 && !control->free_low);
+    assert(x0->deadline == 12 && x1->deadline == 20 && song_position[2] == 1);
+    assert(stream_position(2, song) == AFX_SONG_POSITION(1, 4));
+    clock_value = 12;
+    service(2); /* The first play ends: its voice goes back to the pool. */
+    assert(x0->state == 0 && map0[0] == AFX_SONG_UNMAPPED && control->free_low == 1);
+    assert(song->state == AFX_RUNNING && !loop_publishes);
+    clock_value = 20;
+    service(2); /* The loop: the first executor plays again, newest. */
+    assert(song->loops == 1 && loop_publishes == 1 && control->newest == 0 && x1->deadline == 22);
+    service(2); /* It was started by executor 1, so it runs in the next pass. */
+    assert(map0[0] == 5 && x0->deadline == 30);
+    /* Pause keeps the newest play and frees every voice; rebuild resumes it. */
+    lifecycle(AFX_CMD_PAUSE, 3, 40);
+    assert(song->state == AFX_PAUSED && control->free_low == 3 && x1->state == 0);
+    afx_rebuild_payload_t resume = {.stream_position = AFX_SONG_POSITION(1, 4), .remaining_wait = 0,
+                                    .next_deadline = 50};
+    rebuild(3, 41, AFX_REBUILD_RUN, (const uint8_t *)&resume);
+    assert(last_result == AFX_OK && song->state == AFX_RUNNING && song_position[2] == 1);
+    assert(x0->pc == SONG_BASE + 0x50 + 4 && x0->deadline == 50 && control->newest == 0);
+    resume.stream_position = AFX_SONG_POSITION(2, 0); /* Past the order. */
+    lifecycle(AFX_CMD_PAUSE, 3, 42);
+    rebuild(3, 43, AFX_REBUILD_RUN, (const uint8_t *)&resume);
+    assert(last_result == AFX_BAD_COMMAND);
+    resume.stream_position = AFX_SONG_POSITION(1, sizeof(a)); /* Past the section. */
+    rebuild(3, 44, AFX_REBUILD_RUN, (const uint8_t *)&resume);
+    assert(last_result == AFX_BAD_COMMAND);
+    /* A tail still playing at the next new-play join ends the song in error. */
+    resume.stream_position = AFX_SONG_POSITION(0, 0);
+    rebuild(3, 45, AFX_REBUILD_RUN, (const uint8_t *)&resume);
+    image[0x50 + 9] = 30; /* A tail of 30 ticks. */
+    for (clock_value = 50; song->reference && clock_value < 120; ++clock_value) service(2);
+    assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && clock_value - 1 == 70);
+    /* An empty pool ends it too. */
+    memset(song_ram + 0x200, 0, 0x200);
+    image[0x50 + 9] = 2;
+    *song = (afx_runtime_slot_t){.reference = 3, .state = AFX_RUNNING, .channels = 2,
+        .channel_map = SONG_BASE + 0x100, .image_base = SONG_BASE, .pc = block,
+        .flags = AFX_FLAG_SONG | AFX_FLAG_POOL, .tempo_period_q8_8 = 256, .gain = 255};
+    song_start(song, 0, 0, 0, 0);
     clock_value = 0;
     service(2);
-    assert(last_state == AFX_ERROR && last_result == AFX_BAD_COMMAND && !loop->reference);
+    assert(last_state == AFX_ERROR && last_result == AFX_NO_CHANNELS);
     /* A PATCH command on a channel that has not sounded holds for its first
      * NOTE, which keeps the patched words instead of its template's, plain and
      * projected alike; the NOTE after it takes the template's again. */
@@ -371,4 +474,4 @@ with tempfile.TemporaryDirectory() as directory:
                     "-I" + str(root / "driver/arm7"),
                     str(path / "check.c"), "-o", str(path / "check")], check=True)
     subprocess.run([str(path / "check")], check=True)
-print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore, LOOP, held PATCH and bank tables: PASS")
+print("ARM7 gain, pan, lifecycle races, voice flags, checkpoint restore, songs (continue and new-play joins, pool, pause and resume), held PATCH and bank tables: PASS")

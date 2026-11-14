@@ -1,5 +1,5 @@
 /* Hardware check of AFS scenes (make -C driver scenes-check), with the looping
- * quickstart fixture of loop-check. A permanent scene (the core bank, a flow
+ * long quickstart fixture of tests/make_fixtures.py. A permanent scene (the core bank, a flow
  * and the DSP ring) stays loaded while a level scene and its song slot are
  * loaded, played and released again and again. The level's flow plays from
  * the core bank and from its own, read back from the AICA's sample address
@@ -16,10 +16,10 @@ alignas(32) static const unsigned char firmware[] = {
 #embed "../../firmware/aicaflow.drv"
 };
 alignas(32) static const unsigned char flow_file[] = {
-#embed "../build/loop.afx"
+#embed "../build/long.afx"
 };
 alignas(32) static const unsigned char bank_file[] = {
-#embed "../build/loop.afb"
+#embed "../build/long.afb"
 };
 
 #define LEVELS 8u
@@ -143,7 +143,7 @@ static int channel0_note(const afx_file_header_t *header, uint32_t *tick_out,
         }
         if (event.opcode == AFX_OP_WAIT8 || event.opcode == AFX_OP_WAIT16 || event.opcode == AFX_OP_WAIT32)
             tick += event.wait;
-        if (event.opcode == AFX_OP_LOOP || event.opcode == AFX_OP_END) break;
+        if (event.opcode == AFX_OP_END) break;
         at += event.bytes;
     }
     return found != 0;

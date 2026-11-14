@@ -1,5 +1,5 @@
 /* Hardware check of firmware ABI 13 (make -C driver banks-check), with the
- * looping quickstart fixture of loop-check: a flow whose setup plays from bank
+ * long quickstart fixture of tests/make_fixtures.py: a flow whose setup plays from bank
  * slot 1 sounds from that bank, read back from the AICA's sample address
  * registers beside an unchanged one-bank instance, and keeps both banks until
  * it is freed. */
@@ -14,10 +14,10 @@ alignas(32) static const unsigned char firmware[] = {
 #embed "../../firmware/aicaflow.drv"
 };
 alignas(32) static const unsigned char flow_file[] = {
-#embed "../build/loop.afx"
+#embed "../build/long.afx"
 };
 alignas(32) static const unsigned char bank_file[] = {
-#embed "../build/loop.afb"
+#embed "../build/long.afb"
 };
 
 static int failures;
@@ -98,7 +98,7 @@ static int channel0_note(const afx_file_header_t *header, uint32_t *tick_out,
         }
         if (event.opcode == AFX_OP_WAIT8 || event.opcode == AFX_OP_WAIT16 || event.opcode == AFX_OP_WAIT32)
             tick += event.wait;
-        if (event.opcode == AFX_OP_LOOP || event.opcode == AFX_OP_END) break;
+        if (event.opcode == AFX_OP_END) break;
         at += event.bytes;
     }
     return found != 0;

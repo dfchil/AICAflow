@@ -4,7 +4,7 @@
 
 /* Version of this public source interface, independent of repository releases,
  * asset-format versions below, and the host/firmware ABI in protocol.h. */
-#define AFX_FORMAT_API_VERSION 5
+#define AFX_FORMAT_API_VERSION 6
 #define AFX_FILE_MAGIC 0x32584641
 #define AFX_CHECKPOINT_MAGIC 0x31504b43
 #define AFX_CHECKPOINT_VERSION 1
@@ -40,16 +40,23 @@ enum {
     AFX_OP_END = 0, AFX_OP_WAIT8 = 1, AFX_OP_WAIT16 = 2, AFX_OP_WAIT32 = 3,
     AFX_OP_NOTE = 0x10, AFX_OP_PATCH = 0x11, AFX_OP_KEYOFF = 0x12,
     AFX_OP_PARK = 0x13, AFX_OP_NOTE_PL = 0x14, AFX_OP_PATCH_LEVEL = 0x15,
-    AFX_OP_LOOP = 0x16, /* Terminal: continue at a stream-relative byte offset, in the same tick. */
-    AFX_OP_PATCH_ENV = 0x17, AFX_OP_PATCH_ENV_LEVEL = 0x18
+    /* 0x16 was LOOP, gone with format API 6: a song's continue join replaces it. */
+    AFX_OP_PATCH_ENV = 0x17, AFX_OP_PATCH_ENV_LEVEL = 0x18,
+    /* Songs only (AFM): NEXT mode ends a section's body; FREE channel gives a
+     * local channel's voice back to the song's pool. */
+    AFX_OP_NEXT = 0x19, AFX_OP_FREE = 0x1a
 };
-/* AFX_FLAG_LOOP: the stream ends with LOOP instead of END, and the header's
- * loop_tick is the authored tick of the loop target.
- * AFX_FLAG_BANKS: the flow plays samples from up to AFX_MAX_FLOW_BANKS banks
- * (see AFX_BANK_SLOT_SHIFT). */
+/* How a song goes on at a section's NEXT: the next section starts on the
+ * song's other executor with voices of its own while this one plays its
+ * tail, or this executor jumps to it and keeps its voices. */
+enum { AFX_JOIN_NEW = 0, AFX_JOIN_CONTINUE = 1 };
+/* AFX_FLAG_BANKS: the flow plays samples from up to AFX_MAX_FLOW_BANKS banks
+ * (see AFX_BANK_SLOT_SHIFT). AFX_FLAG_SONG and AFX_FLAG_POOL mark a song's
+ * activation, not a file: a song, and one with a new-play join, which plays
+ * from a voice pool with a runtime block of its own. Bit 32 was LOOP. */
 enum { AFX_FLAG_CONTROLLED = 1, AFX_FLAG_MUSIC = 2, AFX_FLAG_METADATA = 4,
-       AFX_FLAG_MUSIC_CHORUS = 8, AFX_FLAG_LANES = 16, AFX_FLAG_LOOP = 32,
-       AFX_FLAG_BANKS = 64 };
+       AFX_FLAG_MUSIC_CHORUS = 8, AFX_FLAG_LANES = 16, AFX_FLAG_BANKS = 64,
+       AFX_FLAG_SONG = 128, AFX_FLAG_POOL = 256 };
 
 /* With AFX_FLAG_BANKS, bits 21-22 of a bank-relative sample address select
  * the bank slot that holds the sample; the bits below are the offset in that
@@ -95,7 +102,25 @@ enum { AFX_PCM16 = 0, AFX_PCM8 = 1, AFX_ADPCM = 2 };
 #define AFX_SCENE_ENTRY_BYTES 32u
 #define AFX_SCENE_RING_ALIGN 2048u
 #define AFX_SCENE_RING_MIN_BYTES 0x4000u
-enum { AFX_SCENE_BANK = 1, AFX_SCENE_FLOW = 2, AFX_SCENE_SLOT = 3, AFX_SCENE_RING = 4 };
+enum { AFX_SCENE_BANK = 1, AFX_SCENE_FLOW = 2, AFX_SCENE_SLOT = 3, AFX_SCENE_RING = 4,
+       AFX_SCENE_SONG = 5 };
+/* AFM is a song: sections played in an order (docs/design/song-sections.md).
+ * A 96-byte header, the relocations and bank list as in an AFX, then the
+ * 32-byte aligned image, uploaded as it is: a 32-byte image header, the
+ * setups, the lane map, the section table, the order, the streams and, with
+ * AFX_FLAG_BANKS, the bank table after them. A loaded song is followed in
+ * AICA RAM by AFX_SONG_RUNTIME_BYTES for its executors when it has a pool. */
+#define AFX_SONG_MAGIC 0x314d4641u /* "AFM1" in little-endian byte order. */
+#define AFX_SONG_VERSION 1u
+#define AFX_SONG_HEADER_BYTES 96u
+#define AFX_SONG_IMAGE_HEADER_BYTES 32u
+#define AFX_SONG_SECTION_BYTES 12u
+#define AFX_SONG_NO_LOOP 0xffffffffu
+/* A song's position packs the order position above a stream offset. */
+#define AFX_SONG_POSITION_SHIFT 20u
+#define AFX_SONG_MAX_ORDER (1u << (32u - AFX_SONG_POSITION_SHIFT))
+#define AFX_SONG_MAX_STREAM (1u << AFX_SONG_POSITION_SHIFT)
+#define AFX_SONG_POSITION(order, offset) (((uint32_t)(order) << AFX_SONG_POSITION_SHIFT) | (offset))
 
 #define AFX_FILE_HEADER_BYTES 80u
 #define AFX_WORK_PROFILE(commands, writes) (((uint32_t)(commands) << 16) | (uint16_t)(writes))
@@ -116,7 +141,7 @@ typedef struct {
     uint32_t bank_id_high; /* High 32 bits of the required AFB identity. */
     uint32_t relocations_offset; /* Binding-table byte offset from the beginning of the file. */
     uint32_t relocation_count; /* Number of 12-byte binding records. */
-    uint32_t loop_tick; /* With AFX_FLAG_LOOP, the authored tick of the LOOP target; otherwise zero. */
+    uint32_t reserved; /* Zero; was loop_tick before format API 6. */
     uint32_t banks_offset; /* With AFX_FLAG_BANKS, file-relative offset of the bank list; otherwise zero. */
     uint32_t required_channels; /* Local voice count required by the flow, 1..64. */
     uint32_t tick_rate_num; /* Numerator of authored ticks per second. */
@@ -156,6 +181,34 @@ typedef struct {
     uint32_t reserved; /* Zero. */
 } afx_scene_entry_t;
 
+typedef struct {
+    uint32_t magic; /* AFX_SONG_MAGIC. */
+    uint32_t version; /* AFX_SONG_VERSION. */
+    uint32_t total_size; /* Complete AFM file length in bytes. */
+    uint32_t flags; /* AFX_FLAG_MUSIC, with AFX_FLAG_LANES and AFX_FLAG_BANKS as in an AFX. */
+    uint32_t image_offset; /* Upload image: file offset, a multiple of 32. */
+    uint32_t image_size; /* Upload image length in bytes. */
+    uint32_t setup_count; /* Setups at image offset AFX_SONG_IMAGE_HEADER_BYTES, one relocation each. */
+    uint32_t relocations_offset; /* File offset of setup_count 12-byte relocations, as in an AFX. */
+    uint32_t banks_offset; /* With AFX_FLAG_BANKS, the bank list as in an AFX; otherwise zero. */
+    uint32_t bank_id_low, bank_id_high; /* Bank slot 0's identity; zero for a song without samples. */
+    uint32_t channels; /* Local channels used: one more than the highest any section uses. */
+    uint32_t voices; /* The pool a song with a new-play join needs; zero for a continue-only song. */
+    uint32_t tick_rate_num, tick_rate_den; /* Authored ticks per second. */
+    uint32_t work_profile; /* Peak commands and writes in a tick, both executors together. */
+    uint32_t control_id; /* afx_control_id() of the image. */
+    uint32_t reserved[7]; /* Zero. */
+} afx_song_header_t;
+/* The start of a song's image; offsets are relative to the image. */
+typedef struct {
+    uint32_t section_count, order_count;
+    uint32_t loop_index; /* The order position after the last one, or AFX_SONG_NO_LOOP. */
+    uint32_t sections_offset; /* section_count entries: stream offset, stream size, body ticks. */
+    uint32_t order_offset; /* order_count 16-bit section indices. */
+    uint32_t streams_offset, streams_size; /* All streams; the bank table follows them. */
+    uint32_t channels; /* Local channels, as in the AFM header; the lane map has as many bytes. */
+} afx_song_image_header_t;
+
 /* One AFC checkpoint channel record; also used by runtime rebuild requests. */
 typedef struct {
     uint32_t local_channel; /* Local channel index restored by this checkpoint record. */
@@ -170,6 +223,8 @@ typedef struct {
 AFX_FORMAT_ASSERT(sizeof(afx_file_header_t) == 80, "file header");
 AFX_FORMAT_ASSERT(sizeof(afx_sample_t) == 16 && sizeof(afx_relocation_t) == 12, "host tables");
 AFX_FORMAT_ASSERT(sizeof(afx_checkpoint_channel_t) == 40, "checkpoint channel");
+AFX_FORMAT_ASSERT(sizeof(afx_song_header_t) == AFX_SONG_HEADER_BYTES &&
+                  sizeof(afx_song_image_header_t) == AFX_SONG_IMAGE_HEADER_BYTES, "song headers");
 AFX_FORMAT_ASSERT(sizeof(afx_scene_header_t) == AFX_SCENE_HEADER_BYTES &&
                   sizeof(afx_scene_entry_t) == AFX_SCENE_ENTRY_BYTES, "scene tables");
 #undef AFX_FORMAT_ASSERT

@@ -85,11 +85,14 @@ being updated and even when stable; SH-4 reads a matching stable epoch. It
 contains the reference, state, command sequence, result, stream position, next
 deadline and maximum lateness detail. The state word holds the AFX_* state in
 its low byte (`AFX_STATE_MASK`); for a live instance (RUNNING, PAUSED, PARKED)
-the number of LOOPs it has taken, modulo 256, sits above it
+the number of loops a song has taken, modulo 256, sits above it
 (`AFX_STATE_LOOPS_SHIFT`), so a loop changes the word and is news. DONE, ERROR
-and FREE records carry the plain state. The record a LOOP publishes has the
-loop target as its position (image-relative, like every position) and, as
-next_deadline, the hardware tick the flow continued at.
+and FREE records carry the plain state. A flow's position is image-relative; a
+song's is `AFX_SONG_POSITION(order position, stream offset)` of its newest
+section, and the record a loop publishes has the join's tick as next_deadline.
+REBUILD takes a song's position in the same form. ACTIVATE of a song with a
+pool (`AFX_FLAG_POOL`) names its voices through the channel map and its
+runtime block through `runtime_units` (address / 32).
 
 ### Status reports
 

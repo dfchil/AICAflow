@@ -5,7 +5,10 @@
 #include <aicaflow/limits.h>
 #include <aicaflow/result.h>
 
-/* ABI 13: a flow with AFX_FLAG_BANKS plays samples from up to four banks,
+/* ABI 14: songs (AFX_FLAG_SONG): sections in an order, joined by NEXT and
+ * playing from a voice pool with a runtime block per instance when a join
+ * starts a new play (AFX_FLAG_POOL); LOOP is gone, which an ABI 13 firmware
+ * still runs; ABI 13: a flow with AFX_FLAG_BANKS plays samples from up to four banks,
  * which an ABI 12 firmware refuses at activation; ABI 12: a PATCH command on a channel that has not sounded since activation
  * holds for that channel's first NOTE, which an ABI 11 firmware lets overwrite
  * it; ABI 11: AFX_LANE_PITCH, which an ABI 10 firmware ignores; ABI 10: the
@@ -15,7 +18,7 @@
  * bank-relative playback, compact state and allocated DSP rings.
  * Firmware/host must match.
  * Shared with the assembler and linker. All wire integers are LE. */
-#define AFX_ABI_VERSION 13
+#define AFX_ABI_VERSION 14
 #define AFX_FIRMWARE_MAGIC 0x32524641
 #define AFX_STATUS_MAGIC 0x32534641
 #define AFX_LAYOUT_ID 0x20261009
@@ -172,9 +175,26 @@ typedef struct {
     uint32_t flags; /* Accepted AFX_FLAG_* playback options. */
     uint32_t start_tick; /* First execution deadline in wrapping hardware timer ticks. */
     uint16_t bank_base_units; /* Bound bank AICA byte address divided by 32; zero without a bank. */
-    uint16_t reserved; /* Must be zero. */
+    uint16_t runtime_units; /* With AFX_FLAG_POOL, the instance's runtime block address / 32; else zero. */
     uint32_t bank_bytes; /* Bound bank payload length in bytes; zero for a bankless flow. */
 } afx_activation_t;
+/* A song with a pool (AFX_FLAG_POOL) runs from a runtime block that the SH-4
+ * allocates for the instance and zeroes before activation; then only the
+ * ARM7 writes it. The activation's channel map lists the pool's voices; a
+ * song's image header is at image_base. Its two executors are runtime slots,
+ * each with a 64-entry local-to-physical map (AFX_SONG_UNMAPPED for none);
+ * with AFX_FLAG_LANES, the song's lane values follow, a 64-byte row per
+ * AFX_LANE_* modifier. */
+typedef struct {
+    uint32_t newest; /* The executor that plays the newest section, 0 or 1. */
+    uint32_t free_low, free_high; /* Pool entries without a local channel. */
+    uint32_t reserved[5];
+} afx_song_control_t;
+#define AFX_SONG_UNMAPPED 0xffu
+#define AFX_SONG_EXECUTOR_OFFSET(e) (32u + (e) * 128u)
+#define AFX_SONG_MAP_OFFSET(e) (96u + (e) * 128u)
+#define AFX_SONG_LANES_OFFSET 288u
+#define AFX_SONG_RUNTIME_BYTES(lanes) (AFX_SONG_LANES_OFFSET + ((lanes) ? 5u * 64u : 0u))
 typedef struct {
     uint8_t local_channel; /* Local channel index within the instance. */
     uint8_t reserved[3]; /* Must be zero. */
@@ -265,6 +285,7 @@ AFX_ASSERT(sizeof(afx_firmware_info_t) == AFX_FIRMWARE_INFO_BYTES, "firmware man
 AFX_ASSERT(sizeof(afx_cmd_t) == AFX_CMD_BYTES, "IPC command");
 AFX_ASSERT(sizeof(afx_observed_t) == AFX_OBSERVED_BYTES, "observed record");
 AFX_ASSERT(sizeof(afx_activation_t) == 48 && sizeof(afx_runtime_slot_t) == 64, "context");
+AFX_ASSERT(sizeof(afx_song_control_t) == 32, "song control");
 AFX_ASSERT(sizeof(afx_patch_payload_t) == 48 && offsetof(afx_patch_payload_t, values) == 8, "IPC fields");
 AFX_ASSERT(sizeof(afx_rebuild_payload_t) == 48 && sizeof(afx_gain_payload_t) == 48 &&
            sizeof(afx_tempo_payload_t) == 48 && sizeof(afx_dsp_payload_t) == 48 &&

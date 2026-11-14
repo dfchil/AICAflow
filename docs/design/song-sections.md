@@ -1,6 +1,7 @@
 # Design: songs made of sections
 
-Status: decided 2026-11-14, being built (firmware ABI 14, format API 6).
+Status: decided and built 2026-11-14 (firmware ABI 14, format API 6); see
+[As built](#as-built).
 Daniel decided the direction (relayed by daytona-arcade-recomp-d2) and
 answered the open questions of the first draft; SM64 (sm64-dc-f9) and Daytona
 reviewed it. `REPEAT` (AICAflow #24) is dropped, and so is `LOOP`: sections
@@ -72,7 +73,7 @@ The image is uploaded unchanged (bank table filled in by the loader):
 | Image offset | Contents |
 |---|---|
 | 0 | image header (32 bytes): section count, order count, loop index (0xffffffff for none), section table offset, order offset, streams offset, streams size, 0 |
-| 32 | setups (setup count × 40 bytes) |
+| 32 | setups (setup count × 36 bytes) |
 | … | lane map (`channels` bytes, with `LANES`), padded to 4 |
 | … | section table: per section its stream offset, stream size and body ticks (12 bytes) |
 | … | order: section indices, 16 bits each, padded to 4 |
@@ -169,3 +170,18 @@ AFS scenes gain a song entry kind, so a scene places songs as it places flows.
    continue-only song, `afx_scene` song entries, the loop entries removed.
 3. The host backend (#22) follows main; Daytona's `afx_vgm` and SM64's
    converter target step 2.
+
+## As built
+
+- A local channel takes its pool voice at its first event in a play, not at
+  the section's start, so a pool holds only voices that sound. The validator
+  plays the order the same way.
+- The runtime block is 288 bytes, or 608 with `AFX_FLAG_LANES`: the song's
+  lane values follow, so a voice that takes a lane later starts from them.
+- The firmware's new song code reaches AICA RAM through `AICA_RAM` in
+  `driver/arm7/aica_access.h`, the macro the host backend (#22) uses, so the
+  ARM7 harness (`tests/test_arm7.py`) runs it on a fake RAM.
+- A patch command (`afx_instance_patch`) on a song with a pool is refused: its
+  local channels have no fixed voice.
+- The console checks: `song-check` (`tests/check_song.c`) replaces
+  `loop-check`; the commands, banks and scenes checks play a long plain flow.
