@@ -45,6 +45,7 @@ a missing or early terminal instruction are rejected.
 | 16 | LOOP | target:u32 | 5 | Continue at the stream-relative byte offset `target`, in the same tick. Must be the final instruction and requires AFX_FLAG_LOOP. |
 | 17 | PATCH_ENV | channel:u8 env_ad:u16 | 4 | Compact PATCH form: only ENV_AD (attack and decay rates) changes. |
 | 18 | PATCH_ENV_LEVEL | channel:u8 env_ad:u16 mix:u16 | 6 | Compact PATCH form: ENV_AD and MIX/TOTAL_LEVEL change. |
+| 19 | REPEAT | target:u32 count:u8 | 6 | Play the span from the stream-relative byte offset `target` to here `count` (1–255) more times, then continue after it; each jump in the same tick. Requires AFX_FLAG_REPEAT (firmware ABI 14). |
 
 NOTE_PL, PATCH_LEVEL, PATCH_ENV and PATCH_ENV_LEVEL are compact encodings of
 NOTE and PATCH; `afx_compact_opcode()` picks the one for a mask. PATCH_ENV
@@ -66,6 +67,18 @@ burst. Voices sounding when the LOOP runs keep sounding unless the stream keys
 them off first; a NOTE at the target replaces the voice on its channel. The
 instance never completes by itself: the host stops it. Each loop is reported
 to the host (the loop count in the observed state word; `afx_set_loop_callback`).
+
+A section that plays several times in a row, such as a song's A in intro, A,
+A, B, is stored once and followed by REPEAT. Each instance keeps one counter:
+the first arrival at the REPEAT sets it to `count` and jumps back, each later
+arrival takes one more jump, and the arrival with none left falls through and
+clears it. A LOOP back into the span therefore repeats it again in full: in
+intro, A, A, B with a LOOP into A, the REPEAT after the loop's part of A plays
+A once more before B. Like LOOP, a jump is a cursor move in the tick it is due,
+so the repeat is gapless and the burst at the target joins the one before the
+REPEAT. Spans do not nest. `afx_flow_duration()` counts each span as often as
+it plays. Seeking such a flow is refused, since a checkpoint inside a span does
+not say which play it belongs to.
 
 ## NOTE and PATCH field masks
 
@@ -103,7 +116,13 @@ and source are set by NOTE; use KEYOFF to release a voice.
 - Only a flow with AFX_FLAG_LOOP may end with LOOP, and such a flow must. The
   target is the offset of an instruction before the LOOP, at least one WAIT
   lies between them, and the header's `loop_tick` is the authored tick of the
-  target (the sum of the WAITs before it).
+  target (the sum of the WAITs before it, a REPEAT's span counted once). The
+  loop must wait before it reaches a REPEAT, which would jump again in the
+  same tick.
+- Only a flow with AFX_FLAG_REPEAT may contain REPEAT, and such a flow must.
+  Its target is the offset of an instruction before the REPEAT and not inside
+  an earlier REPEAT's span, at least one WAIT lies between them, and its count
+  is 1 to 255.
 - A normal flow must use END; keying off a voice does not automatically retire
   the instance.
 - The AFX header tick-rate numerator and denominator define authored ticks.

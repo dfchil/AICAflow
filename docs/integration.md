@@ -198,6 +198,12 @@ the loop target as the status position (image-relative) and the hardware tick
 the flow continued at as `next_deadline`; `afx_instance_status()` counts them in
 `loops`. Seek ticks address the authored first pass.
 
+A flow can also store a section that plays several times in a row once,
+followed by `REPEAT` (header flag `AFX_FLAG_REPEAT`, firmware ABI 14). A song
+of intro, A, A, B that loops back into A takes A's bytes once; the firmware
+plays the span again, gaplessly, and repeats it again when the loop comes back
+into it. Such a flow cannot be seeked (`AFX_UNSUPPORTED`).
+
 ## Seek, DSP and player metadata
 
 Seeking requires a matching AFC and a paused music instance. SH4 selects the

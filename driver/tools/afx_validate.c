@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
     free(bytes);
     if (result) return fprintf(stderr, "invalid AFX: %u\n", result), 1;
     if (header.flags & AFX_FLAG_LOOP) printf("loops at authored tick %u\n", header.loop_tick);
+    if (header.flags & AFX_FLAG_REPEAT) printf("repeats a span of its stream\n");
     printf("valid AFX: %ld bytes, %u channels, %u setups, %u stream bytes\n", size,
            header.required_channels, header.setup_count, header.stream_size);
     return 0;

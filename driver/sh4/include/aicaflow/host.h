@@ -141,12 +141,15 @@ int afx_instance_stop(afx_instance_t instance);
 int afx_instance_pause(afx_instance_t instance);
 /* SH-4 has reconstructed complete unscaled channel words from a checkpoint.
  * Sample addresses are bank-relative; ARM7 resolves them and optionally re-keys voices. Position
- * is image-relative; staging remains host-owned until ARM acknowledges it. */
+ * is image-relative; staging remains host-owned until ARM acknowledges it. A
+ * position in a REPEAT's span resumes as its first play. */
 int afx_instance_rebuild(afx_instance_t instance, const afx_restore_channel_t *states,
                          uint32_t state_count, uint32_t stream_position,
                          uint32_t remaining_wait, uint32_t next_deadline, bool run);
 /* Restore the latest AFC checkpoint at or before tick and resume. Requires a
- * paused instance. No AFX replay occurs between checkpoints. */
+ * paused instance. No AFX replay occurs between checkpoints. A flow with
+ * AFX_FLAG_REPEAT returns -AFX_UNSUPPORTED: its checkpoints do not say which
+ * play of a span they are in. */
 int afx_instance_seek(afx_instance_t instance, uint32_t tick);
 /* As above; on success, optionally return the authored tick actually selected. */
 int afx_instance_seek_checkpoint(afx_instance_t instance, uint32_t tick, uint32_t *out_tick);

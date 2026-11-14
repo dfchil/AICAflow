@@ -7,6 +7,20 @@ the commit history.
 
 ### Added
 
+- Counted repeats (firmware ABI 14, format API 6). `REPEAT` (opcode 0x19,
+  target and count, header flag `AFX_FLAG_REPEAT`) plays the span of the
+  stream before it 1 to 255 more times, so a song of intro, A, A, B stores A
+  once. Each instance keeps one counter, set on the first arrival and cleared
+  when the last play falls through, so a `LOOP` back into the span repeats it
+  again. Jumps are gapless cursor moves, like `LOOP`'s, and the validator
+  joins the burst at the target to the one before the `REPEAT`. Spans do not
+  nest, and a `LOOP` must wait before it meets a `REPEAT`.
+  `afx_flow_duration()` counts each span as often as it plays. Seeking such a
+  flow returns `AFX_UNSUPPORTED`, since a checkpoint in a span does not say
+  which play it is in. An ABI 13 firmware refuses such flows at activation.
+  Checked on hardware by `make -C driver loop-check`: a loop whose body a
+  `REPEAT` plays three times lasts 24480 ticks, three times the body's 8160,
+  to the tick.
 - A host backend for PCs and browsers (`driver/host`). The SH4 library and
   the firmware's executor (`driver/arm7/driver.c`, compiled natively behind
   the new `driver/arm7/aica_access.h`; the console image is unchanged) run

@@ -22,7 +22,8 @@ typedef struct {
     uint8_t channel; /* Local channel index for NOTE, PATCH and KEYOFF. */
     uint16_t setup; /* Setup template index used by NOTE. */
     uint32_t wait; /* Authored tick duration for a WAIT instruction. */
-    uint32_t target; /* Stream-relative byte offset a LOOP continues at. */
+    uint32_t target; /* Stream-relative byte offset a LOOP or REPEAT continues at. */
+    uint32_t count; /* Extra plays of a REPEAT's span, 1 to 255. */
     uint32_t mask; /* Selected AFX_FIELD_* bits for NOTE/PATCH values. */
     uint32_t bytes; /* Total encoded instruction length in bytes. */
     const uint8_t *values; /* Borrowed pointer to packed little-endian 16-bit selected values. */
@@ -47,6 +48,7 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     case AFX_OP_WAIT16: prefix = 3; break;
     case AFX_OP_WAIT32: prefix = 5; break;
     case AFX_OP_LOOP: prefix = 5; break;
+    case AFX_OP_REPEAT: prefix = 6; break;
     case AFX_OP_KEYOFF: prefix = 2; break;
     case AFX_OP_NOTE: prefix = 8; break;
     case AFX_OP_NOTE_PL: prefix = 4; break;
@@ -79,7 +81,8 @@ static inline afx_result_t afx_decode_event(const uint8_t *p, uint32_t size,
     if (e.opcode == AFX_OP_WAIT8) e.wait = p[1];
     if (e.opcode == AFX_OP_WAIT16) e.wait = afx_read16(p + 1);
     if (e.opcode == AFX_OP_WAIT32) e.wait = afx_read32(p + 1);
-    if (e.opcode == AFX_OP_LOOP) e.target = afx_read32(p + 1);
+    if (e.opcode == AFX_OP_LOOP || e.opcode == AFX_OP_REPEAT) e.target = afx_read32(p + 1);
+    if (e.opcode == AFX_OP_REPEAT && !(e.count = p[5])) return AFX_BAD_COMMAND;
     if (e.opcode >= AFX_OP_WAIT8 && e.opcode <= AFX_OP_WAIT32 && !e.wait)
         return AFX_BAD_COMMAND;
     e.bytes = prefix + afx_field_value_bytes(e.mask);
@@ -150,7 +153,8 @@ void afx_file_bank_identity(const void *data, const afx_file_header_t *header, u
 /* Stable non-zero identity of an AFX control image. Authors use this after
  * assembling the image; the runtime only compares the stored value. */
 uint32_t afx_control_id(const void *image, uint32_t size);
-/* Validates an AFX file and totals its WAIT instructions. Outputs are written
+/* Validates an AFX file and totals its WAIT instructions, a REPEAT's span as
+ * often as it plays: the length of one pass to the end. Outputs are written
  * only on success. */
 afx_result_t afx_flow_duration(const void *data, uint32_t size, uint64_t *out_ticks,
                                uint32_t *out_tick_rate_num, uint32_t *out_tick_rate_den);

@@ -11,6 +11,9 @@
  * this normal ARM context, which keeps the explicitly reserved FIQ stack free
  * of decoder and register-write pressure. */
 static volatile afx_runtime_slot_t contexts[AFX_MAX_FLOW_SLOTS];
+/* Per instance, the REPEAT being played: zero when none is, otherwise one
+ * more than the jumps it has left. Spans do not nest, so one counter does. */
+static uint16_t repeat_state[AFX_MAX_FLOW_SLOTS];
 static volatile uint32_t initialized_data_probe = 0x41584632;
 /* KOS's linear 0..255 gain to AICA logarithmic TL attenuation table.  It is
  * static so NOTE/PATCH avoid floating point or a runtime table rebuild. */
@@ -426,9 +429,28 @@ static void service(uint32_t index) {
             }
             context->pc = stream + event.target;
             context->loops++;
+            repeat_state[index] = 0;
             looped = 1;
             publish(index, context->reference, state_word(context), context->sequence, AFX_OK,
                     stream_position(context), context->deadline, context->max_lateness);
+            break;
+        }
+        case AFX_OP_REPEAT: {
+            /* The first arrival arms the counter, each arrival takes one jump
+             * back to the span's start in this same tick, and the arrival
+             * with none left falls through and disarms it, so a LOOP back
+             * into the span repeats it again. */
+            uint32_t stream = context->image_base + context->stream_start;
+            if (!(context->flags & AFX_FLAG_REPEAT) || looped ||
+                event.target >= context->pc - event.bytes - stream) {
+                complete(index, context, AFX_ERROR, AFX_BAD_COMMAND, now - context->deadline);
+                return;
+            }
+            if (!repeat_state[index]) repeat_state[index] = (uint16_t)(event.count + 1u);
+            if (--repeat_state[index]) {
+                context->pc = stream + event.target;
+                looped = 1;
+            }
             break;
         }
         case AFX_OP_NOTE:
@@ -515,7 +537,7 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
               (activate.setups_offset + activate.setup_count * AFX_SETUP_BYTES))) ||
         !map_valid(activate.channel_map, activate.required_channels) ||
         (activate.flags & ~(AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC | AFX_FLAG_MUSIC_CHORUS |
-                            AFX_FLAG_LANES | AFX_FLAG_LOOP | AFX_FLAG_BANKS)) ||
+                            AFX_FLAG_LANES | AFX_FLAG_LOOP | AFX_FLAG_BANKS | AFX_FLAG_REPEAT)) ||
         ((activate.flags & AFX_FLAG_BANKS) && !bank_table_valid(&activate))) {
         publish(index, reference, AFX_ERROR, sequence, AFX_BAD_COMMAND, 0, 0, 0);
         return;
@@ -563,6 +585,7 @@ static void activation(uint32_t reference, uint32_t sequence, const uint8_t payl
     context->max_lateness = 0;
     context->tempo_period_q8_8 = AFX_TEMPO_NORMAL;
     context->tempo_fraction = 0;
+    repeat_state[index] = 0;
     publish(index, reference, AFX_RUNNING, sequence, AFX_OK, activate.stream_offset,
             activate.start_tick, 0);
     STATUS->reserved = 0xa1070000u;
@@ -678,6 +701,7 @@ static void rebuild(uint32_t reference, uint32_t sequence, uint32_t flags,
     }
     context->pc = context->image_base + request.stream_position;
     context->remaining_wait = request.remaining_wait;
+    repeat_state[index] = 0; /* A rebuild enters a REPEAT's span unarmed. */
     context->deadline = request.next_deadline;
     context->state = (flags & AFX_REBUILD_RUN) ? AFX_RUNNING : AFX_PAUSED;
     context->sequence = sequence;

@@ -76,7 +76,7 @@ $(TEST_BUILD)/libaicaflow_test.a: $(LIB_SRCS) $(LIB_HEADERS)
 			-c $(CURDIR)/$$src -o $$(echo $$src | tr '/.' '__').o || exit 1; done
 	ar rcs $@ $(TEST_BUILD)/lib/*.o
 
-../build/loop.afx ../build/loop.afb: ../tests/make_loop_fixture.py ../tests/fixtures/quickstart.afx.hex ../tests/fixtures/quickstart.afb.hex
+../build/loop.afx ../build/repeat.afx ../build/loop.afb: ../tests/make_loop_fixture.py ../tests/fixtures/quickstart.afx.hex ../tests/fixtures/quickstart.afb.hex
 	mkdir -p ../build
 	python3 ../tests/make_loop_fixture.py ../build
 
@@ -85,9 +85,9 @@ $(TEST_BUILD)/test_aica: tests/test_aica.c $(TEST_BUILD)/libaicaflow_test.a
 		tests/test_aica.c $(TEST_BUILD)/libaicaflow_test.a -lm -o $@
 
 # Sources with #embed are expanded first; see tests/expand_embed.py.
-$(TEST_BUILD)/src/%.c: tests/%.c tests/expand_embed.py ../build/loop.afx ../build/loop.afb ../../firmware/aicaflow.drv
+$(TEST_BUILD)/src/%.c: tests/%.c tests/expand_embed.py ../build/loop.afx ../build/repeat.afx ../build/loop.afb ../../firmware/aicaflow.drv
 	$(EXPAND) $< $@
-$(TEST_BUILD)/src/check_%.c: ../tests/check_%.c tests/expand_embed.py ../build/loop.afx ../build/loop.afb ../../firmware/aicaflow.drv
+$(TEST_BUILD)/src/check_%.c: ../tests/check_%.c tests/expand_embed.py ../build/loop.afx ../build/repeat.afx ../build/loop.afb ../../firmware/aicaflow.drv
 	$(EXPAND) $< $@
 
 $(TEST_BUILD)/test_host: $(TEST_BUILD)/src/test_host.c tests/host_clock.c tests/kos.h $(TEST_BUILD)/libaicaflow_test.a

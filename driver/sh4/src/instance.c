@@ -146,7 +146,7 @@ static int activation_send(const activation_plan_t *plan, afx_instance_t *out) {
         .channel_map = plan->map_address, .required_channels = plan->count,
         .flags = flow->flags & (AFX_FLAG_CONTROLLED | AFX_FLAG_MUSIC |
                                        AFX_FLAG_MUSIC_CHORUS | AFX_FLAG_LANES | AFX_FLAG_LOOP |
-                                       AFX_FLAG_BANKS),
+                                       AFX_FLAG_BANKS | AFX_FLAG_REPEAT),
         .start_tick = start_tick, .bank_base_units = (uint16_t)(plan->bank_base >> 5),
         .bank_bytes = plan->bank_bytes
     };
@@ -390,6 +390,8 @@ int afx_instance_seek_checkpoint(afx_instance_t instance, uint32_t tick, uint32_
     if (!resolve_instance(instance, &index)) return -AFX_STALE_GENERATION;
     afx_instance_slot_t *slot = &g_instances[index];
     if (slot->pending || slot->status.state != AFX_PAUSED) return -AFX_BUSY;
+    /* A checkpoint in a REPEAT's span does not say which play it is in. */
+    if (g_assets[slot->asset_index].flags & AFX_FLAG_REPEAT) return -AFX_UNSUPPORTED;
     afx_restore_channel_t *states;
     uint32_t checkpoint_tick, count, position, remaining;
     int result = checkpoint_states(&g_assets[slot->asset_index], tick, &states, &count,

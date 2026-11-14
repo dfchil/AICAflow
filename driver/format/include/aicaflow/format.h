@@ -4,7 +4,7 @@
 
 /* Version of this public source interface, independent of repository releases,
  * asset-format versions below, and the host/firmware ABI in protocol.h. */
-#define AFX_FORMAT_API_VERSION 5
+#define AFX_FORMAT_API_VERSION 6
 #define AFX_FILE_MAGIC 0x32584641
 #define AFX_CHECKPOINT_MAGIC 0x31504b43
 #define AFX_CHECKPOINT_VERSION 1
@@ -41,7 +41,10 @@ enum {
     AFX_OP_NOTE = 0x10, AFX_OP_PATCH = 0x11, AFX_OP_KEYOFF = 0x12,
     AFX_OP_PARK = 0x13, AFX_OP_NOTE_PL = 0x14, AFX_OP_PATCH_LEVEL = 0x15,
     AFX_OP_LOOP = 0x16, /* Terminal: continue at a stream-relative byte offset, in the same tick. */
-    AFX_OP_PATCH_ENV = 0x17, AFX_OP_PATCH_ENV_LEVEL = 0x18
+    AFX_OP_PATCH_ENV = 0x17, AFX_OP_PATCH_ENV_LEVEL = 0x18,
+    /* Plays the span from a stream-relative byte offset back to here again,
+     * count more times, then falls through; in the same tick, as LOOP. */
+    AFX_OP_REPEAT = 0x19
 };
 /* AFX_FLAG_LOOP: the stream ends with LOOP instead of END, and the header's
  * loop_tick is the authored tick of the loop target.
@@ -49,7 +52,7 @@ enum {
  * (see AFX_BANK_SLOT_SHIFT). */
 enum { AFX_FLAG_CONTROLLED = 1, AFX_FLAG_MUSIC = 2, AFX_FLAG_METADATA = 4,
        AFX_FLAG_MUSIC_CHORUS = 8, AFX_FLAG_LANES = 16, AFX_FLAG_LOOP = 32,
-       AFX_FLAG_BANKS = 64 };
+       AFX_FLAG_BANKS = 64, AFX_FLAG_REPEAT = 128 };
 
 /* With AFX_FLAG_BANKS, bits 21-22 of a bank-relative sample address select
  * the bank slot that holds the sample; the bits below are the offset in that

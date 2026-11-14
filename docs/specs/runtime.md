@@ -24,11 +24,13 @@ sample relocation.
 
 The relevant stream operations are `WAIT8`, `WAIT16`, `WAIT32`, `NOTE`,
 `NOTE_PL`, `PATCH`, `PATCH_LEVEL`, `PATCH_ENV`, `PATCH_ENV_LEVEL`, `KEYOFF`,
-`PARK`, `LOOP` and `END`. A finite
+`PARK`, `LOOP`, `REPEAT` and `END`. A finite
 sound must explicitly reach `KEYOFF` then `END`, even if its source sample
 loops. `PARK` is only for a controlled flow that the SH-4 will resume or stop.
 `LOOP` ends a repeating flow (AFX_FLAG_LOOP): the ARM7 continues at its target
 in the same tick, gaplessly, and reports each loop; the SH-4 stops the instance.
+`REPEAT` (AFX_FLAG_REPEAT, firmware ABI 14) plays the span before it a counted
+number of times more, without storing it again.
 
 [AFX instruction language](../../driver/format/docs/instruction-language.md) specifies every opcode,
 field mask, byte layout and stream validation rule. [SH-4 ↔ ARM7 IPC](ipc.md)
