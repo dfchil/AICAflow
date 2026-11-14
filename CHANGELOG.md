@@ -207,6 +207,10 @@ the commit history.
 
 ### Fixed
 
+- A song with `AFX_FLAG_BANKS` played its slot 1 to 3 samples silent in every
+  section but the last: the firmware looked for the bank table after the
+  section playing instead of after the song's last stream. Found by SM64,
+  whose level songs bind a level bank and the core bank.
 - A call that found the driver lock held in the moment the event thread took
   or gave it back returned `AFX_BUSY` instead of waiting. The event thread
   now marks itself before it takes the lock and after it gives it back. Seen

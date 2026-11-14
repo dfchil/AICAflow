@@ -10,11 +10,18 @@ enum {
     AFX_BANK_ADDRESS_UNIT_SHIFT = 5u /* Bank bases are stored in 32-byte units. */
 };
 
-/* A slot's bank table entry. The table follows the stream in the flow image;
- * the host test reads it from a buffer instead. */
+/* A slot's bank table entry; the host test reads it from a buffer instead.
+ * The table follows a flow's stream, which ends at context->end, and a song's
+ * last stream: context->end there is only the end of the section playing. */
 #ifndef AFX_BANK_TABLE_READ
+static uint32_t bank_table_address(const volatile afx_runtime_slot_t *context) {
+    if (!(context->flags & AFX_FLAG_SONG)) return AFX_BANK_TABLE_OFFSET(context->end);
+    const volatile afx_song_image_header_t *image =
+        (const volatile afx_song_image_header_t *)AICA_RAM(context->image_base);
+    return context->image_base + AFX_BANK_TABLE_OFFSET(image->streams_offset + image->streams_size);
+}
 #define AFX_BANK_TABLE_READ(context, slot) \
-    (*(volatile const uint32_t *)AICA_RAM(AFX_BANK_TABLE_OFFSET((context)->end) + (slot) * 4u))
+    (*(volatile const uint32_t *)AICA_RAM(bank_table_address(context) + (slot) * 4u))
 #endif
 
 /* Convert only the sample address bits; preserve format, loop and key flags.
