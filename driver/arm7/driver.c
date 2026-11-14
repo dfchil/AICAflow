@@ -326,12 +326,16 @@ static void complete(uint32_t index, volatile afx_runtime_slot_t *context,
 static uint32_t state_word(const volatile afx_runtime_slot_t *context) {
     return (uint32_t)context->state | ((uint32_t)context->loops << AFX_STATE_LOOPS_SHIFT);
 }
-/* Install a complete NOTE/RESTORE state; key-on is always the final write. */
+/* Install a complete NOTE/RESTORE state; key-on is always the final write.
+ * The AICA ignores a key-on on a voice still keyed on, so a voice that is
+ * keyed on is keyed off first and the note starts again, as on MultiPCM.
+ * The field writes then stand between the key-off and the key-on. */
 static afx_result_t install_voice(const volatile afx_runtime_slot_t *context,
                                   uint32_t physical, uint16_t words[AFX_FIELD_COUNT], int run) {
     afx_result_t result = resolve_sample_address(context, &words[AFX_FIELD_CONTROL],
                                                 &words[AFX_FIELD_SAMPLE_LOW]);
     if (result) return result;
+    if (run && (voice_control[physical] & AFX_KEYON)) release_voice(physical);
     uint32_t held = voice_held[physical];
     voice_held[physical] = 0;
     voice_flags[physical] = (voice_flags[physical] & VOICE_MUTED) | VOICE_LATCHED;
