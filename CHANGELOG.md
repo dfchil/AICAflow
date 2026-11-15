@@ -207,6 +207,14 @@ the commit history.
 
 ### Fixed
 
+- The host backend's software AICA started a one-shot sample again after it
+  had ended, whenever another voice was keyed on: the end left the channel's
+  KYONB set, and KYONEX started every keyed channel that was silent. The end of
+  a sample without a loop now clears KYONB, as MAME's AICA does. A flow whose
+  note outlives its sample (SM64's Peach letter under the song that starts with
+  it) played the sample twice; the Dreamcast never did. On the SM64 sound test,
+  the host now matches a console capture where it was 5–14 dB off for four
+  sounds. Firmware and ABI are unchanged.
 - A `NOTE` on a voice still keyed on starts the note again. The AICA ignores
   a key-on on a keyed-on voice, so the firmware left such a voice playing its
   old note with the new note's registers. It now keys the voice off first, then

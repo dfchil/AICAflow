@@ -521,7 +521,10 @@ static bool voice_sample(aica_t *chip, uint32_t ch, float *out) {
     if (moved >= lea && !noise) {
         v->lpend = true;
         if (!loop || lea <= lsa) {
+            /* The end of a sample without a loop stops the channel and clears its KYONB, as
+             * MAME's AICA does: another channel's KYONEX must not start it again. */
             v->active = false;
+            CH(chip, ch)[F_CONTROL] &= ~0x4000u;
         } else {
             uint32_t length = (lea - lsa) << 12;
             while ((v->position >> 12) >= lea) v->position -= length;

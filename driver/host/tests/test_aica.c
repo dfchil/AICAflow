@@ -119,6 +119,20 @@ static void test_one_shot_and_release(void) {
     printf("one-shot of 1000 samples: last sound at %d, voice %s\n", last, chip.voice[0].active ? "on" : "off");
     assert(last >= 995 && last <= 1000 && !chip.voice[0].active);
 
+    /* The ended one-shot is still keyed on as far as its writer knows, but another
+     * voice's key-on (KYONEX applies every channel's KYONB) must not start it again:
+     * its end cleared its KYONB. Voice 1 is silent (DISDL 0), so any sound is voice 0. */
+    for (int i = 0; i < 100; ++i) put16(0x20000u + i * 2u, 8000);
+    voice(1, PCM16, true, 0x20000, 0, 100, 0, 0, 0);
+    field(1, 9, 0);
+    key(1, true);
+    aica_render(&chip, out, 1200);
+    last = -1;
+    for (int i = 0; i < 1200; ++i) if (out[i * 2] || out[i * 2 + 1]) last = i;
+    printf("another voice keyed on after the one-shot: voice 0 %s, last sound at %d\n",
+           chip.voice[0].active ? "on" : "off", last);
+    assert(!chip.voice[0].active && last < 0 && !(chip.reg[0] & 0x4000u));
+
     /* Release at RR 16 is rate 32 with key scaling off: 690 ms for the full
      * 96 dB in MAME's table, after which the voice stops. */
     reset();
