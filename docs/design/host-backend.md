@@ -192,9 +192,14 @@ the same flow rendered on the host.
   web-check` runs them under Node from an Emscripten build without threads.
   The checks use `#embed`; `tests/expand_embed.py` expands it for compilers
   without it, such as CI's clang 18.
-- **Level.** Unity gain, as Flycast has it. DKR's music at its in-game gain
-  (96/255) renders at about −16 dBFS RMS, between the console captures of its
-  race (−12 dBFS) and title (−18 dBFS) music.
+- **Level.** The mix leaves the chip 1 dB below unity, before the int16
+  clamp (`AICA_OUTPUT_TRIM`). At unity, as Flycast has it, SM64's sound test
+  matched the console's RMS and crest factor within 0.3 dB but clipped 764
+  samples in 14 sounds, where the console's capture had 4 single samples at
+  full scale and no flat tops: the console's output path has more room above
+  full scale than an int16 sum. DKR's music at its in-game gain (96/255)
+  renders at about −17 dBFS RMS, between the console captures of its race
+  (−12 dBFS) and title (−18 dBFS) music.
 
 ## Known limits
 

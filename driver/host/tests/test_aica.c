@@ -89,7 +89,7 @@ static void test_pitch(void) {
                cases[c].format == PCM16 ? "pcm16" : "pcm8", cases[c].oct, cases[c].fns, hz,
                cases[c].hz, rms(out, 44100, 0));
         assert(fabs(hz - cases[c].hz) < 0.5);
-        assert(fabs(rms(out, 44100, 0) - 16000 / sqrt(2.0)) < 400);
+        assert(fabs(rms(out, 44100, 0) - 16000 * AICA_OUTPUT_TRIM / sqrt(2.0)) < 400);
     }
 }
 
@@ -180,7 +180,7 @@ static void test_adpcm(void) {
     aica_render(&chip, out, FRAMES);
     int worst = 0;
     for (int i = 0; i < FRAMES - 1; ++i) {
-        int error = abs(out[i * 2] - want[i]);
+        int error = abs(out[i * 2] - (int)(want[i] * AICA_OUTPUT_TRIM));
         if (error > worst) worst = error;
     }
     printf("adpcm: %d samples, largest difference from AICAforge's decoder %d\n", FRAMES, worst);

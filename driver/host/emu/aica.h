@@ -62,6 +62,11 @@ void aica_key_off_all(aica_t *chip);
  * ARM7 0x800000 + offset). Only the low 16 bits of a register are kept. */
 uint32_t aica_reg_read(aica_t *chip, uint32_t offset);
 void aica_reg_write(aica_t *chip, uint32_t offset, uint32_t value);
+/* The mix leaves aica_render 1 dB below unity, before the int16 clamp. With
+ * the same mix, RMS and crest factor as the console, SM64's sound test
+ * clipped 764 samples at unity and 4 on the console, whose output path has
+ * more room above full scale. */
+#define AICA_OUTPUT_TRIM 0.891251f
 /* Produces interleaved stereo at 44.1 kHz, running the timers (and the fiq
  * hook), the voices and the DSP one sample at a time. */
 void aica_render(aica_t *chip, int16_t *stereo, uint32_t frames);
