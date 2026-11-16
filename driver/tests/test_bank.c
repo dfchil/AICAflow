@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Supplies the simulated SPU transport used by the real allocator and loader. */
@@ -564,40 +565,71 @@ static void bank_file(uint8_t data[96], uint32_t low, uint32_t high) {
     afx_write32(data + 24, 96);
 }
 
-/* Another thread holding the driver lock, as an AICAflow call from an audio
- * thread does for a moment while the game thread loads a bank file. */
+/* Another thread holding the driver lock: an upload, which holds it for the
+ * whole transfer (holder_long), or an AICAflow call from an audio thread, which
+ * holds it for a moment while the game thread loads a bank file. */
 static pthread_mutex_t holder_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t holder_condition = PTHREAD_COND_INITIALIZER;
 static pthread_t holder;
-static int holder_holds, holder_release;
+static int holder_holds, holder_release, holder_long;
 static unsigned holder_passes;
 static void *hold_driver_lock(void *ignored) {
     (void)ignored;
     pthread_mutex_lock(&g_host_mutex);
+    bool outer = host_long_begin();
+    if (!holder_long) host_long_end(&outer);
     pthread_mutex_lock(&holder_mutex);
     holder_holds = 1;
     pthread_cond_broadcast(&holder_condition);
-    while (!holder_release) pthread_cond_wait(&holder_condition, &holder_mutex);
+    if (holder_long) {
+        while (!holder_release) pthread_cond_wait(&holder_condition, &holder_mutex);
+        host_long_end(&outer);
+    }
     pthread_mutex_unlock(&holder_mutex);
+    if (!holder_long) nanosleep(&(struct timespec){0, 20000000}, NULL); /* 20 ms */
     pthread_mutex_unlock(&g_host_mutex);
     return NULL;
 }
+static void holder_start(int long_hold) {
+    holder_holds = holder_release = 0;
+    holder_long = long_hold;
+    assert(!pthread_create(&holder, NULL, hold_driver_lock, NULL));
+    pthread_mutex_lock(&holder_mutex);
+    while (!holder_holds) pthread_cond_wait(&holder_condition, &holder_mutex);
+    pthread_mutex_unlock(&holder_mutex);
+}
+static void holder_stop(void) {
+    pthread_mutex_lock(&holder_mutex);
+    holder_release = 1;
+    pthread_cond_broadcast(&holder_condition);
+    pthread_mutex_unlock(&holder_mutex);
+    assert(!pthread_join(holder, NULL));
+}
 /* The first pass is the DMA poll's wait: the chunk completes and the lock is
- * taken, so the polls that follow find it busy until the third pass. */
+ * taken. An upload holding it makes the polls that follow find it busy until
+ * the third pass; a call holding it is waited out within the poll. */
 static void hold_lock_hook(void) {
-    if (++holder_passes == 1) {
-        holder_holds = holder_release = 0;
-        assert(!pthread_create(&holder, NULL, hold_driver_lock, NULL));
-        pthread_mutex_lock(&holder_mutex);
-        while (!holder_holds) pthread_cond_wait(&holder_condition, &holder_mutex);
-        pthread_mutex_unlock(&holder_mutex);
-    } else if (holder_passes == 3) {
-        pthread_mutex_lock(&holder_mutex);
-        holder_release = 1;
-        pthread_cond_broadcast(&holder_condition);
-        pthread_mutex_unlock(&holder_mutex);
-        assert(!pthread_join(holder, NULL));
-    }
+    if (++holder_passes == 1) holder_start(holder_long);
+    else if (holder_passes == 3 && holder_long) holder_stop();
+}
+static uint64_t now_us(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000000u + (uint64_t)t.tv_nsec / 1000u;
+}
+/* A call waits for another call holding the lock and returns busy at once
+ * while an upload holds it, without waiting for the upload. */
+static void test_lock_waits_for_calls(void) {
+    afx_mem_stats_t stats;
+    holder_start(0);
+    uint64_t start = now_us();
+    assert(afx_mem_stats(&stats) == AFX_OK && now_us() - start >= 10000u);
+    assert(!pthread_join(holder, NULL));
+    holder_start(1);
+    start = now_us();
+    assert(afx_mem_stats(&stats) == -AFX_BUSY && now_us() - start < 10000u);
+    holder_stop();
+    assert(!g_host_long_hold && afx_mem_stats(&stats) == AFX_OK);
 }
 static void test_bank_load_busy_lock(const uint8_t bank_data[96]) {
     char path[] = "/tmp/afx_test_bank_XXXXXX";
@@ -609,12 +641,22 @@ static void test_bank_load_busy_lock(const uint8_t bank_data[96]) {
     assert(afx_mem_stats(&before) == AFX_OK);
     afx_bank_t bank = {0};
     holder_passes = 0;
+    holder_long = 1;
     thd_pass_hook = hold_lock_hook;
     /* A busy lock during the load is waited out; giving up there left the
      * upload DMA claimed and the next load spinning on AFX_BUSY. */
     assert(afx_bank_load_file(&bank, path) == AFX_OK);
     thd_pass_hook = NULL;
     assert(holder_passes == 3 && !g_upload_dma_asset && bank.asset && bank.bytes == 64);
+    assert(afx_bank_release(&bank) == AFX_OK);
+    /* Another call holding the lock: the load's next call waits for it. */
+    holder_passes = 0;
+    holder_long = 0;
+    thd_pass_hook = hold_lock_hook;
+    assert(afx_bank_load_file(&bank, path) == AFX_OK);
+    thd_pass_hook = NULL;
+    assert(!pthread_join(holder, NULL));
+    assert(holder_passes == 1 && !g_upload_dma_asset && bank.asset && bank.bytes == 64);
     assert(!memcmp(ram + afx_asset_addr(bank.asset), bank_data + AFX_BANK_HEADER_BYTES, 64));
     assert(afx_bank_release(&bank) == AFX_OK);
     assert(afx_bank_load_file(&bank, path) == AFX_OK && afx_bank_release(&bank) == AFX_OK);
@@ -1389,6 +1431,7 @@ int main(int argc, char **argv) {
     assert(afx_mem_stats(&memory) == AFX_OK && memory.asset_limit == AFX_ASSET_MAX);
     bank_file(bank_data, 0x12345678u, 0x9abcdef0u);
     test_bank_load_busy_lock(bank_data);
+    test_lock_waits_for_calls();
     test_dsp_allocations();
     flow_file(flow_data, 0x12345678u, 0x9abcdef0u);
     assert(afx_file_validate(flow_data, sizeof(flow_data), NULL) == AFX_OK);

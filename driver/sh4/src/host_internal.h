@@ -112,18 +112,36 @@ extern bool g_upload_dma_stream;
 extern mutex_t g_host_mutex;
 extern uint32_t const g_spu_base;
 
-/* Set while the event thread holds the host lock or is about to take it,
- * which it does only briefly: a call that finds the lock held waits for it
- * then, and reports busy otherwise, as when an upload holds it. */
-extern volatile bool g_events_running;
+/* Set while an upload holds the host lock, which it holds for the whole
+ * transfer. Only the holder writes it. */
+extern volatile bool g_host_long_hold;
+/* A call that finds the lock held waits for it, a millisecond at a time,
+ * unless an upload holds it: then it reports busy rather than stall the
+ * program for the transfer. Another call or the event thread holds it only
+ * briefly. */
 static inline bool host_lock(void) {
-    return !mutex_trylock(&g_host_mutex) || (g_events_running && !mutex_lock(&g_host_mutex));
+    for (;;) {
+        if (!mutex_trylock(&g_host_mutex)) return true;
+        if (g_host_long_hold) return false;
+        if (!mutex_lock_timed(&g_host_mutex, 1)) return true;
+    }
 }
 static inline void host_unlock(mutex_t **guard) { if (*guard) mutex_unlock(*guard); }
 #define HOST_GUARD(failure) \
     mutex_t *host_guard __attribute__((cleanup(host_unlock))) = NULL; \
     if (!host_lock()) return failure; \
     host_guard = &g_host_mutex
+/* HOST_GUARD for an upload: the flag is up from the lock's taking until just
+ * before it is given back. An upload inside another keeps it up. */
+static inline bool host_long_begin(void) {
+    bool outer = g_host_long_hold;
+    g_host_long_hold = true;
+    return outer;
+}
+static inline void host_long_end(bool *outer) { g_host_long_hold = *outer; }
+#define HOST_GUARD_LONG(failure) \
+    HOST_GUARD(failure); \
+    bool host_long_outer __attribute__((cleanup(host_long_end))) = host_long_begin()
 
 uint32_t align_up(uint32_t value, uint32_t align);
 bool in_asset_arena(uint32_t address, uint32_t size);

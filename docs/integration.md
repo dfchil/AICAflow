@@ -47,7 +47,12 @@ application steps:
    reported, so an activation right after a stop can have them;
    `afx_instance_replace()` stops one instance and activates a flow in its
    place, or, if it cannot, leaves the old one playing. STOP and PAUSE never
-   return `AFX_BUSY` for an earlier command: the program need not retry them. `afx_set_end_callback()` reports each one with the status it ended
+   return `AFX_BUSY` for an earlier command: the program need not retry them.
+   A call that finds another thread's AICAflow call holding the driver lock
+   waits for it; only while an upload (a bank, flow, scene or slot load, a
+   DSP program) holds the lock does a call return `AFX_BUSY`, at once, having
+   changed nothing. A game that uploads on one thread and plays on another
+   retries those calls on its next frame. `afx_set_end_callback()` reports each one with the status it ended
    with, from the event thread. The callback must not wait for a lock that the
    program holds while waiting for an instance to end: the event thread would
    stop. Hand the report to the program's own thread instead, as DKR does with a

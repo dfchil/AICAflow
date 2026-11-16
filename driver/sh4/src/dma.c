@@ -100,7 +100,7 @@ int sample_bank_upload(const void *data, uint32_t bytes, uint32_t place, afx_ass
 
 
 int afx_sample_bank_upload(const void *data, uint32_t bytes, afx_asset_t *out) {
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     if (!out) return -AFX_BAD_BOUNDS;
     *out = AFX_ASSET_INVALID;
     if (!data || !bytes || bytes > g_asset_limit) return -AFX_BAD_BOUNDS;

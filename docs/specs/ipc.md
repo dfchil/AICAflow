@@ -121,7 +121,8 @@ When a record shows an instance DONE or ERROR, the worker frees its channels,
 as the ARM7 keeps no context for it, and queues RECYCLE; when the FREE
 acknowledgement arrives, it frees the instance's map and slot and calls the end
 callback, without the host lock held. While the worker holds the lock, other
-host calls wait for it instead of returning AFX_BUSY.
+host calls wait for it, as they wait for another call; only an upload holding
+it makes them return AFX_BUSY.
 
 STOP and PAUSE are queued behind whatever the instance already has in the
 queue, as the ARM7 takes commands in order; the host awaits only the latest

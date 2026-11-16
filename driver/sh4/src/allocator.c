@@ -203,7 +203,7 @@ int afx_mem_free(uint32_t address) {
     return free_allocation(address) ? AFX_OK : -AFX_BAD_BOUNDS;
 }
 int afx_mem_upload(uint32_t address, const void *data, uint32_t size) {
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     uint32_t rounded = align_up(size, 4);
     if (!g_ready || !data || !size || !rounded || (address & 3) ||
         !in_asset_arena(address, rounded)) return -AFX_BAD_BOUNDS;

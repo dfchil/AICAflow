@@ -37,7 +37,7 @@ uint32_t const g_spu_base = AFX_SPU_RAM_BASE_SH4;
  * ASIC_EVT_SPU_IRQ nowhere itself; a program that does must not use AICAflow. */
 #define AICA_REG_SH4(offset) (0xa0700000u + (offset))
 static volatile bool g_host_irq_seen;
-volatile bool g_events_running;
+volatile bool g_host_long_hold;
 static uint32_t g_event_tail, g_event_overflows;
 static void host_irq_mask(uint16_t code) {
     asic_evt_disable(code, ASIC_IRQ_DEFAULT);
@@ -74,10 +74,7 @@ static uint64_t events_take(void) {
 static void host_events(uint32_t code, void *data) {
     (void)code; (void)data;
     /* Blocking: an upload may hold the lock for a while, and this thread can
-     * wait it out where the program's calls cannot. The flag goes up before
-     * the lock is taken and down after it is given back: a call that found
-     * the lock held between the two used to report busy for no reason. */
-    g_events_running = true;
+     * wait it out where the program's calls cannot. */
     mutex_lock(&g_host_mutex);
     /* Clear before reading, and read the register back so the clear has landed:
      * news published before it is then visible to the reads that follow, and
@@ -92,7 +89,6 @@ static void host_events(uint32_t code, void *data) {
         if (g_endings_held) endings_send();
     }
     mutex_unlock(&g_host_mutex);
-    g_events_running = false;
     events_report_ended();
 }
 static void host_irq_stop(void) {

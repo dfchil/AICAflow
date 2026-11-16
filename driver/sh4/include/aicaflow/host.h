@@ -59,9 +59,11 @@ typedef struct {
  * Every byte, including final zero padding, uses DMA. */
 #define AFX_UPLOAD_DMA_STEP_BYTES 65536u
 /* Init/shutdown require all other host calls to be quiescent. Other host APIs
- * serialize bookkeeping and publication with a recursive try-lock: a call that
- * finds it held returns AFX_BUSY, except while AICAflow's event thread holds
- * it, briefly, when the call waits instead. Every
+ * serialize bookkeeping and publication with a recursive lock. A call that
+ * finds it held waits, as another call or AICAflow's event thread holds it
+ * only briefly, except while an upload holds it for its whole transfer (a
+ * bank, flow, seek index, scene, scene slot, DSP program or afx_mem_upload):
+ * then the call returns AFX_BUSY at once and changes nothing. Every
  * operation that can fail returns 0 on success and a negative afx_result_t on
  * failure. Handle/address getters use 0 only for an invalid query result.
  * Upload and seek hold the lock for their complete call. Status
