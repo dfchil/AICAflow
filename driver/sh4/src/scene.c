@@ -140,7 +140,7 @@ static void give_up(scene_slot_t *s) {
 
 int afx_scene_load(const void *data, uint32_t size, const afx_scene_t *parents,
                    uint32_t parent_count, afx_scene_t *out) {
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     afx_scene_header_t header;
     if (!out) return -AFX_BAD_BOUNDS;
     *out = 0;
@@ -304,7 +304,7 @@ static int slot_flow_upload(scene_slot_t *s, scene_entry_t *entry, const void *f
 
 int afx_scene_slot_load(afx_scene_t scene, const char *slot, const void *bank, uint32_t bank_size,
                         const void *flow, uint32_t flow_size, afx_asset_t *out) {
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     if (!out) return -AFX_BAD_BOUNDS;
     *out = AFX_ASSET_INVALID;
     scene_slot_t *s;
@@ -354,7 +354,7 @@ int afx_scene_slot_stream_begin(afx_scene_t scene, const char *slot, uint32_t ba
 
 int afx_scene_slot_flow(afx_scene_t scene, const char *slot, const void *flow, uint32_t flow_size,
                         afx_asset_t *out) {
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     if (!out) return -AFX_BAD_BOUNDS;
     *out = AFX_ASSET_INVALID;
     scene_slot_t *s;

@@ -133,6 +133,13 @@ the commit history.
 
 ### Changed
 
+- A call that finds another thread's call holding the driver lock waits for
+  it, a millisecond at a time, instead of returning `AFX_BUSY`. Only an upload
+  holding the lock (bank, flow, seek index, scene, scene slot, DSP program,
+  `afx_mem_upload`) still makes a call return `AFX_BUSY`, at once, so a game
+  thread does not stall for the transfer. SM64 on the host backend lost a
+  looping sound's STOP to `AFX_BUSY` while its audio thread was in AICAflow.
+  The event thread's flag (`g_events_running`) is gone; the same rule covers it.
 - STOP and PAUSE never return `AFX_BUSY` for an earlier command that is not
   yet acknowledged: they are queued behind it, as the ARM7 takes commands in
   order. Asking again queues nothing, so a program may repeat STOP until the

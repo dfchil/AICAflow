@@ -36,7 +36,7 @@ static int scene_command(uint32_t opcode, uint32_t bytes, bool host_init) {
     return -AFX_TIMEOUT;
 }
 static int dsp_scene_program(const void *data, uint32_t bytes, uint8_t rbl) {
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     const uint8_t *program = data;
     if (!program || bytes != AFX_DSP_PROGRAM_BYTES || rbl > 3) return -AFX_BAD_COMMAND;
     int memory_format = -1;

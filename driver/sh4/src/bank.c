@@ -129,7 +129,7 @@ int bank_upload(afx_bank_t *bank, const void *data, uint32_t size, uint32_t plac
 }
 
 int afx_bank_load_memory(afx_bank_t *bank, const void *data, uint32_t size) {
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     return bank_upload(bank, data, size, 0, 0);
 }
 
@@ -165,7 +165,7 @@ int afx_flow_seek_index_load_memory(afx_asset_t flow, const void *data, uint32_t
     seek_header_t header;
     uint32_t index;
     uint8_t *copy;
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     if (!resolve_asset(flow, &index) || !g_assets[index].flow || g_assets[index].references)
         return -AFX_INVALID_HANDLE;
     /* A song's positions name order positions; AFC checkpoints name a flow's. */

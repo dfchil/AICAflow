@@ -29,7 +29,7 @@ int flow_upload(const afx_bank_t *const banks[], uint32_t count, const void *dat
     afx_asset_t asset = AFX_ASSET_INVALID;
     int result = -AFX_BAD_FORMAT;
     afx_result_t valid;
-    HOST_GUARD(-AFX_BUSY);
+    HOST_GUARD_LONG(-AFX_BUSY);
     if (!out) return -AFX_BAD_BOUNDS;
     *out = AFX_ASSET_INVALID;
     if (!data || size < AFX_FILE_HEADER_BYTES) return -AFX_BAD_BOUNDS;
