@@ -278,6 +278,11 @@ void discard_asset(afx_asset_t asset) {
     if (g_upload_dma_asset == asset) upload_dma_wait();
     (void)free_asset_slot(index);
 }
+int afx_asset_reserve(uint32_t count) {
+    HOST_GUARD(-AFX_BUSY);
+    if (count > UINT16_MAX) return -AFX_BAD_BOUNDS;
+    return reserve_assets(count) ? AFX_OK : -AFX_NO_HOST_RAM;
+}
 afx_asset_t afx_asset_upload(const void *data, uint32_t size, uint32_t align) {
     HOST_GUARD(0);
     if (!data || !size) return 0;

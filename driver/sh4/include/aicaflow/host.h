@@ -98,6 +98,12 @@ int afx_sample_bank_stream_dma_begin(afx_asset_t bank, uint32_t byte_offset,
 /* out_complete reports the submitted DMA, not the complete bank. */
 int afx_sample_bank_stream_dma_poll(afx_asset_t bank, bool *out_complete);
 int afx_sample_bank_stream_finish(afx_asset_t bank);
+/* Makes the table of asset handles big enough for count assets at once
+ * (a power of two, at least 16; 84 bytes a handle): uploads up to that
+ * many live assets never grow it. It grows by itself otherwise, which moves
+ * it in the program's heap and leaves the old block as a hole there. It never
+ * shrinks, also not by afx_shutdown. -AFX_BAD_BOUNDS above 65535. */
+int afx_asset_reserve(uint32_t count);
 afx_asset_t afx_asset_upload(const void *data, uint32_t size, uint32_t align);
 int afx_asset_free(afx_asset_t asset);
 /* Frees asset now, or once nothing uses it: a flow when its last instance has

@@ -209,6 +209,27 @@ static void test_bounded_bank_upload(void) {
     assert(afx_asset_free(asset) == AFX_OK);
 }
 
+/* Reserved, the asset table holds that many assets without moving. */
+static void test_asset_reserve(void) {
+    static const uint8_t word[4] = {1, 2, 3, 4};
+    assert(afx_asset_reserve(UINT16_MAX + 1u) == -AFX_BAD_BOUNDS);
+    const uint32_t count = g_asset_capacity + 40u;
+    assert(afx_asset_reserve(count) == AFX_OK && g_asset_capacity >= count);
+    const afx_asset_slot_t *table = g_assets;
+    const uint32_t capacity = g_asset_capacity;
+    assert(afx_asset_reserve(1) == AFX_OK && g_assets == table && g_asset_capacity == capacity);
+    uint32_t unused = 0;
+    for (uint32_t i = 0; i < capacity; ++i)
+        unused += !g_assets[i].live && !g_assets[i].uploading && !g_assets[i].retired;
+    afx_asset_t *assets = calloc(unused + 1u, sizeof(*assets));
+    assert(assets);
+    for (uint32_t i = 0; i < unused; ++i) assert((assets[i] = afx_asset_upload(word, sizeof(word), 32)));
+    assert(g_assets == table && g_asset_capacity == capacity);
+    assert((assets[unused] = afx_asset_upload(word, sizeof(word), 32)) && g_asset_capacity > capacity);
+    for (uint32_t i = 0; i <= unused; ++i) assert(afx_asset_free(assets[i]) == AFX_OK);
+    free(assets);
+}
+
 static void test_direct_bank_upload(void) {
     const uint32_t bytes = 2u * 65536u + 17u;
     uint8_t *input = upload_image_alloc(bytes);
@@ -1425,6 +1446,7 @@ int main(int argc, char **argv) {
     firmware(fw); assert(afx_init(fw, sizeof(fw)) == AFX_OK);
     test_observation_cache();
     test_events();
+    test_asset_reserve();
     test_bounded_bank_upload();
     test_direct_bank_upload();
     test_queue_capacity();
