@@ -214,6 +214,11 @@ the commit history.
 
 ### Fixed
 
+- An instance slot was retired for good when its handle generation reached
+  65535, so a game that starts one-shots for days (an attract loop) ran out of
+  slots: about 4.2 million activations per boot, then every activation was
+  refused. The generation now wraps to 1. `afx_instance_activate()` documents
+  which refusals pass with time and should be retried.
 - The host backend's software AICA started a one-shot sample again after it
   had ended, whenever another voice was keyed on: the end left the channel's
   KYONB set, and KYONEX started every keyed channel that was silent. The end of

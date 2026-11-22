@@ -52,7 +52,13 @@ application steps:
    waits for it; only while an upload (a bank, flow, scene or slot load, a
    DSP program) holds the lock does a call return `AFX_BUSY`, at once, having
    changed nothing. A game that uploads on one thread and plays on another
-   retries those calls on its next frame. `afx_set_end_callback()` reports each one with the status it ended
+   retries those calls on its next frame. An activation can also be refused
+   for a moment: `AFX_IPC_FULL` until the ARM7 takes commands,
+   `AFX_NO_FLOW_SLOTS` while slots or channel-map space are taken (a stopped
+   instance keeps its map until it is recycled), and `AFX_NO_CHANNELS`. Treat
+   them like `AFX_BUSY`, or a sound that should play stays silent; the list
+   is beside `afx_instance_activate()` in `<aicaflow/host.h>`.
+   `afx_set_end_callback()` reports each one with the status it ended
    with, from the event thread. The callback must not wait for a lock that the
    program holds while waiting for an instance to end: the event thread would
    stop. Hand the report to the program's own thread instead, as DKR does with a

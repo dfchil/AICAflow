@@ -132,6 +132,16 @@ bool afx_asset_loops(afx_asset_t asset, uint32_t *out_loop_position);
  * applies them before the first authored deadline. A PATCH on a channel before
  * its first NOTE holds: that NOTE keeps the patched words instead of its
  * template's. */
+/* A refusal changes nothing, and most refusals pass as instances end or the
+ * ARM7 takes commands: retry them on a later frame.
+ *   AFX_IPC_FULL       the command ring is full until the ARM7's next pass.
+ *   AFX_NO_FLOW_SLOTS  all instance slots, or the channel-map space, are in
+ *                      use; a stopped instance keeps its map until recycled.
+ *   AFX_NO_CHANNELS    not enough free channels.
+ *   AFX_NO_AICA_RAM    no room for a song's runtime block.
+ *   AFX_BUSY           an upload holds the driver lock.
+ * AFX_INVALID_HANDLE (a stale or released flow) and AFX_BAD_SAMPLE (its bank
+ * is gone) do not pass. afx_instance_replace refuses the same way. */
 int afx_instance_activate(afx_asset_t flow_asset, afx_instance_t *out_instance);
 /* Stops old and activates flow in its place, which may take old's channels.
  * A refusal leaves old as it was. old may have ended, be stopping or be stale,
