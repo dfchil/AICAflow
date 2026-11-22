@@ -7,6 +7,11 @@ the commit history.
 
 ### Added
 
+- `<aicaflow/pan.h>`: `afx_pan_steps()` turns a pan position into signed
+  DIPAN steps by the equal-power law that libultra and most mixers use,
+  without floating point; `afx_dipan_add()` moves a DIPAN value by steps. A
+  straight line from position to steps pans four times too far near the
+  centre (DKR's sound effects did; dRxLaX puts centred sounds one step left).
 - Songs (firmware ABI 14, format API 6; `<aicaflow/song.h>`, the AFM file):
   sections played in an order with a loop index, one setup table, relocation
   set and bank slots for the whole song. A section's body ends with `NEXT`; a
