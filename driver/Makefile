@@ -3,11 +3,12 @@ ifeq ($(origin CC),default)
 CC := clang
 endif
 CFLAGS := -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
-smoke: build/test_protocol build/test_bank build/test_bank_trusted build/test_dsp build/afx_validate
+smoke: build/test_protocol build/test_bank build/test_bank_trusted build/test_dsp build/test_pan build/afx_validate
 	./build/test_protocol ../firmware/aicaflow.drv
 	./build/test_bank
 	./build/test_bank_trusted
 	./build/test_dsp
+	./build/test_pan
 
 check: smoke
 	$(MAKE) -C host check
@@ -30,6 +31,10 @@ build/test_bank build/test_bank_trusted: tests/test_bank.c tests/test_transport.
 build/test_dsp: tests/test_dsp.c sh4/src/dsp.c sh4/src/dsp_prefabs.c sh4/include/aicaflow/dsp.h include/aicaflow/protocol.h
 	mkdir -p build
 	$(CC) $(CFLAGS) -Ish4/include -Iformat/include -Iinclude tests/test_dsp.c sh4/src/dsp.c sh4/src/dsp_prefabs.c -lm -o $@
+
+build/test_pan: tests/test_pan.c include/aicaflow/pan.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iinclude tests/test_pan.c -lm -o $@
 
 build/afx_validate: tools/afx_validate.c format/src/codec.c format/include/aicaflow/codec.h include/aicaflow/protocol.h
 	mkdir -p build
