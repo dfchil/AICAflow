@@ -612,7 +612,7 @@ static bool voice_sample(aica_t *chip, uint32_t ch, float *out) {
 
 void aica_render(aica_t *chip, int16_t *stereo, uint32_t frames) {
     bool mono = chip->reg[REG(R_COMMON)] & 0x8000u;
-    float master = tables.level_gain[chip->reg[REG(R_COMMON)] & 15];
+    float master = tables.level_gain[chip->reg[REG(R_COMMON)] & 15] * AICA_OUTPUT_TRIM;
     for (uint32_t frame = 0; frame < frames; ++frame) {
         timers_tick(chip);
         float left = 0.0f, right = 0.0f;

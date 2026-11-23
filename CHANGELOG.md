@@ -133,6 +133,9 @@ the commit history.
 
 ### Changed
 
+- The host backend's mix leaves the chip 1 dB below unity, before the int16
+  clamp. At unity, SM64's sound test clipped in 14 sounds that are clean on
+  the console at the same level.
 - A call that finds another thread's call holding the driver lock waits for
   it, a millisecond at a time, instead of returning `AFX_BUSY`. Only an upload
   holding the lock (bank, flow, seek index, scene, scene slot, DSP program,
