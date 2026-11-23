@@ -347,6 +347,24 @@ static void test_coinciding_work(afx_asset_t flow) {
     afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
 }
 
+static void test_generation_wraps(afx_asset_t flow) {
+    /* A slot at the last generation wraps to 1 instead of retiring, and a
+     * handle from before the wrap no longer names the slot. */
+    afx_instance_t last, next;
+    g_instances[0].generation = UINT16_MAX;
+    assert(afx_instance_activate(flow, &last) == AFX_OK);
+    assert(AFX_HANDLE_INDEX(last) == 0 && AFX_HANDLE_GENERATION(last) == UINT16_MAX);
+    release_instance_preserving_generation(0);
+    assert(g_instances[0].generation == 1);
+    assert(afx_instance_activate(flow, &next) == AFX_OK);
+    assert(AFX_HANDLE_INDEX(next) == 0 && AFX_HANDLE_GENERATION(next) == 1 && next != last);
+    uint32_t index;
+    assert(!resolve_instance(last, &index) && resolve_instance(next, &index) && index == 0);
+    release_instance_preserving_generation(0);
+    assert(g_available_channels == UINT64_MAX);
+    afx_write32(ram + AFX_QUEUE_ADDR + offsetof(afx_cmd_queue_t, tail), queue_head());
+}
+
 static void recycle(uint32_t index) {
     afx_cmd_t command = queued(queue_head() - 1);
     assert(command.opcode == AFX_CMD_RECYCLE);
@@ -1486,6 +1504,7 @@ int main(int argc, char **argv) {
     assert(afx_asset_free(raw) == AFX_OK && g_assets[bank_index].references == 1);
     test_channel_maps(flow);
     test_coinciding_work(flow);
+    test_generation_wraps(flow);
     test_stop_behind_activate(flow);
     test_stop_held_back(flow);
     test_replace(flow);

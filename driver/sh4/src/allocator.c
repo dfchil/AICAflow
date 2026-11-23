@@ -86,14 +86,9 @@ bool allocator_reset(uint32_t dynamic_base) {
     }
     for (uint32_t i = 0; i < AFX_MAX_FLOW_SLOTS; ++i) {
         uint16_t generation = g_instances[i].generation;
-        bool retired = g_instances[i].retired;
-        if (g_instances[i].live) {
-            if (generation == UINT16_MAX) retired = true;
-            else ++generation;
-        }
+        if (g_instances[i].live) generation = afx_next_instance_generation(generation);
         memset(&g_instances[i], 0, sizeof(g_instances[i]));
         g_instances[i].generation = generation;
-        g_instances[i].retired = retired;
     }
     g_available_channels = UINT64_MAX;
     g_endings_held = 0;

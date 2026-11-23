@@ -71,19 +71,15 @@ bool resolve_instance(afx_instance_t instance, uint32_t *index) {
 }
 void release_instance_preserving_generation(uint32_t index) {
     afx_instance_slot_t *slot = &g_instances[index];
-    uint16_t generation = slot->generation;
-    bool retired = slot->retired;
+    uint16_t generation = afx_next_instance_generation(slot->generation);
     uint32_t asset_index = slot->asset_index;
     if (slot->staging_addr) (void)free_allocation(slot->staging_addr);
     if (slot->runtime_addr) (void)free_allocation(slot->runtime_addr);
     if (slot->ending && !slot->ending_queued) --g_endings_held;
     g_available_channels |= slot->channel_mask;
     map_release(slot);
-    if (generation == UINT16_MAX) retired = true;
-    else ++generation;
     memset(slot, 0, sizeof(*slot));
     slot->generation = generation;
-    slot->retired = retired;
     /* Last: it may free a released flow, and that flow's released bank. */
     asset_unreference(asset_index);
 }
@@ -112,7 +108,7 @@ static int activation_reserve(afx_asset_t asset, activation_plan_t *plan) {
      * runs every due event, key-on last, and reports how late it was. */
     uint8_t count = (uint8_t)flow->required_channels;
     uint32_t index = 0;
-    while (index < AFX_MAX_FLOW_SLOTS && (g_instances[index].live || g_instances[index].retired)) ++index;
+    while (index < AFX_MAX_FLOW_SLOTS && g_instances[index].live) ++index;
     if (index == AFX_MAX_FLOW_SLOTS) return -AFX_NO_FLOW_SLOTS;
     uint64_t channels = allocate_channels(count);
     if (!channels) return -AFX_NO_CHANNELS;

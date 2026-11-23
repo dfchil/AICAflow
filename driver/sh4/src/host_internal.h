@@ -65,9 +65,16 @@ typedef struct {
     uint32_t flow; /* Index of the flow in g_assets. */
     afx_asset_t banks[AFX_MAX_FLOW_BANKS - 1u]; /* Retained bank handles; invalid past the flow's count. */
 } afx_flow_banks_t;
+/* An instance slot's next handle generation. It wraps past 0 (no handle has
+ * generation 0) instead of retiring the slot: games start millions of one-shots
+ * per boot, and a retired slot is never usable again. A handle kept after its
+ * instance ended can then name a new instance, but only once its slot has been
+ * reused 65,535 times. */
+static inline uint16_t afx_next_instance_generation(uint16_t generation) {
+    return generation == UINT16_MAX ? 1u : (uint16_t)(generation + 1u);
+}
 typedef struct {
     bool live; /* Instance handle is allocated. */
-    bool retired; /* Slot is permanently retired to prevent generation wrap. */
     bool pending; /* Waiting for a lifecycle/rebuild command observation. */
     bool recycling; /* Waiting for RECYCLE acknowledgement before releasing the slot. */
     bool recycle_wanted; /* Ended; RECYCLE still to be queued (the queue was full). */
