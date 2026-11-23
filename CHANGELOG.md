@@ -101,6 +101,10 @@ the commit history.
   (no slot, no channels, no room in the queue) leaves the old instance as it
   was. An old handle that has ended, is stopping, is stale or is zero only
   activates.
+- `afx_asset_reserve()` sizes the table of asset handles at once, so a
+  program that knows how many assets it holds at most never has the table
+  grown under it. Growing moves the table in the program's heap and leaves
+  the old block as a hole there.
 - `afx_asset_release()` frees an asset at once if nothing uses it, and
   otherwise as soon as nothing does: a flow when its last instance has been
   recycled, a bank when the last flow that retains it is freed. A program no
